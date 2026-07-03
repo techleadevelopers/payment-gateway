@@ -24,7 +24,7 @@ type TransferRequestBody struct {
 
 func TestSigner_HDTransfer_IdenticoAoAnexo(t *testing.T) {
 	// Configurações baseadas no teu .env e script de teste anexado
-	signerURL := "http://localhost:4010" 
+	signerURL := "http://localhost:4010"
 	signerHmacSecret := "69ddb9dcc8bb00afa2406ca2b945fda01934c8310669f3486128ae020ed2088c"
 
 	// 1. Monta o Payload exatamente como o script do PowerShell
@@ -57,7 +57,7 @@ func TestSigner_HDTransfer_IdenticoAoAnexo(t *testing.T) {
 		// Se o teu segredo for string pura em vez de HEX, use: keyBytes := []byte(signerHmacSecret)
 		keyBytes = []byte(signerHmacSecret)
 	}
-	
+
 	mac := hmac.New(sha256.New, keyBytes)
 	mac.Write(dataToSign.Bytes())
 	sigHex := hex.EncodeToString(mac.Sum(nil))
