@@ -62,7 +62,7 @@ func (bw *BuySendWorker) processBuyOnchainSend(event Event) {
 		slog.Error("Erro ao buscar buy order", "buy_order_id", orderID, "error", err)
 		return
 	}
-	if buy == nil || buy.Status != "pago_pix" {
+	if buy == nil || (buy.Status != "pago_fiat" && buy.Status != "pago_pix") {
 		return
 	}
 
