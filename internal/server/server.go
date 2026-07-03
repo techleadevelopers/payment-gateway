@@ -46,17 +46,133 @@ func New(cfg *config.Config, db *database.DB, workerMgr *workers.WorkerManager, 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/price", s.handlePrice)
+	mux.HandleFunc("POST /api/buy", s.handleCreateBuy)
+	mux.HandleFunc("GET /api/buy/{id}", s.handleGetBuy)
+	mux.HandleFunc("GET /api/buy/{id}/stream", s.handleBuyStream)
 	mux.HandleFunc("POST /api/order", s.handleCreateOrder)
 	mux.HandleFunc("GET /api/order/{id}", s.handleGetOrder)
 	mux.HandleFunc("GET /api/order/{id}/stream", s.handleOrderStream)
 	mux.HandleFunc("POST /api/order/{id}/deposit", s.handleDeposit)
 	mux.HandleFunc("POST /api/order/{id}/payout", s.handlePayout)
 	mux.HandleFunc("POST /api/pix/webhook", s.handlePixWebhook)
+	mux.HandleFunc("POST /api/pix/webhook/buy", s.handlePixWebhookBuy)
 	mux.HandleFunc("POST /internal/sweep", s.handleInternalSweep)
 	mux.HandleFunc("POST /internal/email/test", s.handleEmailTest)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, map[string]any{"ok": true}) })
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	return securityHeaders(cors(s.cfg, logRequests(mux)))
+}
+
+func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
+	if !s.limiter.Allow("buy:" + clientIP(r)) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite de criaÃ§Ã£o de compras excedido"})
+		return
+	}
+	var req struct {
+		AmountBRL float64 `json:"amountBRL"`
+		Asset     string  `json:"asset"`
+		Address   string  `json:"address"`
+		PixCpf    string  `json:"pixCpf"`
+		PixPhone  string  `json:"pixPhone"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invÃ¡lido"})
+		return
+	}
+	if req.PixCpf == "" && req.PixPhone == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "pixCpf ou pixPhone Ã© obrigatÃ³rio"})
+		return
+	}
+	asset := strings.ToUpper(defaultString(req.Asset, "USDT"))
+	if asset != "USDT" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset nÃ£o suportado nesta fase (apenas USDT)"})
+		return
+	}
+	if !tron.IsAddress(req.Address) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "endereÃ§o TRON invÃ¡lido"})
+		return
+	}
+	if req.AmountBRL < s.cfg.OrderMinBrl || req.AmountBRL > s.cfg.OrderMaxBrl {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("valor fora dos limites (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
+		return
+	}
+	rate := s.workers.PriceWorker.GetCurrentPrice()
+	if rate <= 0 {
+		rate = 5.0
+	}
+	fee := math.Max(s.cfg.FeeMinBrl, req.AmountBRL*(float64(s.cfg.FeeBps)/10000))
+	payout := req.AmountBRL - fee
+	if payout <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valor insuficiente apÃ³s taxa"})
+		return
+	}
+	cryptoAmount := payout / rate
+	pixPayload := map[string]any{"pixKey": "chavepix@nexswap.com", "qrCodeUrl": "/images/qrcode.png"}
+	buy, err := s.db.CreateBuyOrder(r.Context(), database.BuyOrderInput{
+		Status:            "aguardando_pix",
+		AmountBRL:         req.AmountBRL,
+		FeeBRL:            fee,
+		PayoutBRL:         payout,
+		CryptoAmount:      cryptoAmount,
+		Asset:             asset,
+		DestAddress:       strings.TrimSpace(req.Address),
+		RateLocked:        rate,
+		RateLockExpiresAt: time.Now().Add(time.Duration(s.cfg.RateLockSec) * time.Second),
+		PixPayload:        pixPayload,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	_ = s.db.AddBuyEvent(r.Context(), buy.ID, "buy.meta", map[string]any{"ip": clientIP(r), "userAgent": r.UserAgent(), "pixCpf": req.PixCpf, "pixPhone": req.PixPhone})
+	s.workers.Bus.Publish(workers.Event{Type: "buy.created", OrderID: buy.ID, Payload: map[string]any{"amountBRL": req.AmountBRL}})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"buyId": buy.ID, "id": buy.ID, "status": buy.Status, "feeBRL": fee, "payoutBRL": payout,
+		"rate": rate, "cryptoAmount": cryptoAmount, "asset": asset, "destAddress": buy.DestAddress,
+		"pixKey": pixPayload["pixKey"], "qrCodeUrl": pixPayload["qrCodeUrl"],
+	})
+}
+
+func (s *Server) handleGetBuy(w http.ResponseWriter, r *http.Request) {
+	buy, err := s.db.GetBuyOrder(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if buy == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "compra nÃ£o encontrada"})
+		return
+	}
+	writeJSON(w, http.StatusOK, buy)
+}
+
+func (s *Server) handleBuyStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	var last string
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			buy, _ := s.db.GetBuyOrder(r.Context(), r.PathValue("id"))
+			if buy == nil {
+				continue
+			}
+			if buy.Status != last {
+				last = buy.Status
+				raw, _ := json.Marshal(map[string]any{"status": buy.Status, "txHash": buy.TxHashOut})
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+		}
+	}
 }
 
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +425,51 @@ func (s *Server) handlePixWebhook(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.UpdateOrderStatus(r.Context(), req.OrderID, status, extra); err != nil {
 		writeError(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handlePixWebhookBuy(w http.ResponseWriter, r *http.Request) {
+	raw, _ := io.ReadAll(r.Body)
+	secret := defaultString(s.cfg.PixWebhookSecret, s.cfg.WebhookSecret)
+	if !validHMAC(secret, raw, r.Header.Get("x-pagbank-signature")) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura invÃ¡lida"})
+		return
+	}
+	var req struct {
+		BuyID      string `json:"buyId"`
+		Status     string `json:"status"`
+		ProviderID string `json:"providerId"`
+		Error      string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil || req.BuyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload invÃ¡lido"})
+		return
+	}
+	if req.ProviderID != "" {
+		duplicate, err := s.db.HasBuyEvent(r.Context(), req.BuyID, "webhook.provider", "providerId", req.ProviderID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if duplicate {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": true})
+			return
+		}
+	}
+	status := "erro"
+	extra := map[string]any{"error": req.Error}
+	if strings.HasPrefix(strings.ToLower(req.Status), "conclu") {
+		status = "pago_pix"
+		extra = map[string]any{"txHashOut": req.ProviderID}
+	}
+	if err := s.db.UpdateBuyOrderStatus(r.Context(), req.BuyID, status, extra); err != nil {
+		writeError(w, err)
+		return
+	}
+	_ = s.db.AddBuyEvent(r.Context(), req.BuyID, "webhook.provider", map[string]any{"providerId": req.ProviderID, "status": req.Status})
+	if status == "pago_pix" {
+		s.workers.Bus.Publish(workers.Event{Type: "buy.paid", OrderID: req.BuyID, Payload: map[string]any{"providerId": req.ProviderID}})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
