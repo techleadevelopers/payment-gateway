@@ -31,47 +31,61 @@ A infraestrutura original em Node.js (Express) apresentava gargalos críticos pa
 
 ---
 
-## 🔐 3. Security Engineering & Mathematical Foundations
+## 🔐 3. Engenharia de Segurança e Fundamentos Criptográficos
 
-### End-to-End HMAC-SHA256 Authentication
+### Autenticação HMAC-SHA256 Baseada em Chave Simétrica
 
-Para impedir interceptações na rede interna, toda comunicação entre o Core e o serviço `signer` é autenticada utilizando HMAC-SHA256.
+Para impedir adulterações e garantir autenticidade entre o Core e o serviço `signer`, toda requisição é protegida utilizando **HMAC-SHA256**, um algoritmo de autenticação criptográfica baseado em chave simétrica.
 
-```text
-digest = HMAC_SHA256(
-    HMAC_SECRET,
-    x-ts || "." || x-nonce || "." || RawBody
-)
-```
+$$
+\text{Digest} =
+\operatorname{HMAC}_{SHA256}
+\left(
+\text{HMAC\_SECRET},
+\text{x-ts} \; || \; "." \; || \; \text{x-nonce} \; || \; "." \; || \; \text{RawBody}
+\right)
+$$
 
 Onde:
 
-- `||` representa a concatenação binária dos campos.
+- `||` representa a concatenação binária dos componentes.
 - `x-ts` corresponde ao Unix Timestamp da requisição.
-- `x-nonce` é um identificador aleatório utilizado para impedir reutilização da mesma requisição.
+- `x-nonce` identifica unicamente cada requisição.
 
-O Signer rejeita automaticamente qualquer requisição cuja diferença entre o horário atual e o timestamp recebido seja superior a 60 segundos.
+O Signer rejeita qualquer requisição cuja diferença entre o horário atual e o timestamp recebido exceda:
 
-```text
-| current_time - x_ts | > 60 seconds
-```
+$$
+|t_{now}-t_{request}|>60\,s
+$$
 
-Além disso, cada `x-nonce` é armazenado utilizando uma restrição `UNIQUE` no banco de dados. Caso o mesmo nonce seja reutilizado dentro da janela válida, a operação é imediatamente abortada, eliminando ataques de replay.
+eliminando ataques de replay.
+
+Cada `x-nonce` também é persistido com restrição `UNIQUE`, impedindo que uma mesma assinatura seja reutilizada dentro da janela válida.
+
+### O Escudo HMAC-SHA256 Ponta a Ponta
+Para impedir interceptações na rede interna, qualquer comunicação da API Core em direção ao `/hd/transfer` do `signer` é assinada usando uma equação de criptografia simétrica:
+
+$$\text{Digest} = \text{HMAC-SHA256}\Big(\text{HMAC\_SECRET}, \; \text{x-ts} \parallel \text{"."} \parallel \text{x-nonce} \parallel \text{"."} \parallel \text{RawBody}\Big)$$
+
+Onde:
+* $\parallel$ representa a concatenação binária exata dos componentes.
+* `x-ts` é o Unix Timestamp da requisição. O Signer rejeita requisições onde:
+
+$$| \text{Tempo\_Atual} - \text{x-ts} | > 60\text{s}$$
+
+eliminando **Ataques de Replay**.
+* `x-nonce` é um identificador único de 16 caracteres. O Signer salva cada nonce no banco com índice `UNIQUE`. Se o mesmo nonce for enviado duas vezes na janela válida de tempo, a transação sofre um *abort* imediato no banco de dados.
+
+### Derivação de Carteiras Determinísticas (Padrão BIP44)
+O sistema não gera um endereço estático para os usuários depositarem, evitando correlação pública de balanço. O `SweepWorker` utiliza a chave estendida privada (`TRON_XPRV`) para derivar caminhos matemáticos exclusivos por usuário:
+
+$$\text{Endereço} = \text{Derivar}\big(\text{XPRV}, \; m/44'/195'/0'/0/\text{index}\big)$$
+
+Isso permite gerar bilhões de endereços de depósitos monitorados pelo `OnchainWorker`, mantendo o controle centralizado sob uma única semente (*Seed Master*).
 
 ---
 
-### Deterministic Wallet Derivation (BIP-44)
-
-O sistema deriva endereços exclusivos para cada usuário utilizando uma única chave estendida privada (`TRON_XPRV`).
-
-```text
-Address = Derive(
-    XPRV,
-    m/44'/195'/0'/0/index
-)
-```
-
-Essa abordagem permite gerar bilhões de endereços determinísticos mantendo uma única Seed Master como raiz criptográfica do sistema. Cada endereço é monitorado continuamente pelo Onchain Worker até que seus fundos sejam automaticamente consolidados pelo Sweep Worker.
+## 4. Ciclo de Vida Transacional (Idempotência Célula-Mãe)
 
 Para evitar o pior cenário de um gateway financeiro — o **Duplo Gasto** ou **Dupla Liquidação** (enviar dois PIX para o mesmo depósito ou assinar duas transferências on-chain por instabilidade de rede), implementamos o padrão de **Idempotência Persistida**.
 
@@ -85,6 +99,7 @@ CREATE TABLE IF NOT EXISTS signer_idempotency (
     tx_hash VARCHAR(128) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+```
 
 ### O Algoritmo de Execução Segura
 
@@ -122,6 +137,7 @@ meu-gateway-go/
     └── api_order_integration_test.go # Testes E2E de criação e liquidação de ordens
 
     ### 🧪 6. Elite Automated Testing Suite
+```
 
 Para garantir confiabilidade de nível de produção antes de qualquer deploy, a estratégia de testes é dividida em duas camadas complementares.
 
