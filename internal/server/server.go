@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,6 +43,35 @@ func New(cfg *config.Config, db *database.DB, workerMgr *workers.WorkerManager, 
 		tron:    tron.NewClient(cfg),
 		email:   mailer,
 		limiter: newRateLimiter(cfg.OrderRateLimitWindowMs, cfg.OrderRateLimitMax),
+	}
+}
+
+func (s *Server) transactionFee(amountFiat float64, fiatCurrency string, rate float64) float64 {
+	percentFee := amountFiat * (float64(s.cfg.FeeBps) / 10000)
+	fixedFee := s.cfg.FeeFixedUsd
+	if strings.EqualFold(fiatCurrency, "BRL") {
+		fixedFee = s.cfg.FeeFixedUsd * rate
+	}
+	fee := percentFee + fixedFee
+	if strings.EqualFold(fiatCurrency, "BRL") && s.cfg.FeeMinBrl > fee {
+		fee = s.cfg.FeeMinBrl
+	}
+	return fee
+}
+
+func (s *Server) feePolicy(fiatCurrency string, rate float64) map[string]any {
+	fixedFiat := s.cfg.FeeFixedUsd
+	if strings.EqualFold(fiatCurrency, "BRL") {
+		fixedFiat = s.cfg.FeeFixedUsd * rate
+	}
+	return map[string]any{
+		"bps":             s.cfg.FeeBps,
+		"percent":         float64(s.cfg.FeeBps) / 100,
+		"fixedUsd":        s.cfg.FeeFixedUsd,
+		"fixedFiat":       fixedFiat,
+		"fiatCurrency":    strings.ToUpper(fiatCurrency),
+		"description":     "2% + US$2",
+		"backendEnforced": true,
 	}
 }
 
@@ -120,10 +148,7 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao ainda nao carregada"})
 		return
 	}
-	fee := amountFiat * (float64(s.cfg.FeeBps) / 10000)
-	if fiatCurrency == "BRL" {
-		fee = math.Max(s.cfg.FeeMinBrl, fee)
-	}
+	fee := s.transactionFee(amountFiat, fiatCurrency, rate)
 	payout := amountFiat - fee
 	if payout <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valor insuficiente apÃ³s taxa"})
@@ -167,7 +192,8 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"buyId": buy.ID, "id": buy.ID, "status": buy.Status, "amountFiat": amountFiat, "fiatCurrency": fiatCurrency, "paymentMethod": paymentMethod, "feeFiat": fee, "payoutFiat": payout,
 		"rate": rate, "cryptoAmount": cryptoAmount, "asset": asset, "destAddress": buy.DestAddress,
-		"pixKey": paymentPayload["pixKey"], "qrCodeUrl": paymentPayload["qrCodeUrl"], "payment": paymentPayload,
+		"feePolicy": s.feePolicy(fiatCurrency, rate),
+		"pixKey":    paymentPayload["pixKey"], "qrCodeUrl": paymentPayload["qrCodeUrl"], "payment": paymentPayload,
 	})
 }
 
@@ -283,10 +309,7 @@ func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao ainda nao carregada"})
 		return
 	}
-	fee := amountFiat * (float64(s.cfg.FeeBps) / 10000)
-	if fiatCurrency == "BRL" {
-		fee = math.Max(s.cfg.FeeMinBrl, fee)
-	}
+	fee := s.transactionFee(amountFiat, fiatCurrency, rate)
 	payout := amountFiat - fee
 	if payout <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valor insuficiente apos taxa"})
@@ -300,6 +323,7 @@ func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
 		"paymentMethod":     paymentMethod,
 		"feeFiat":           fee,
 		"payoutFiat":        payout,
+		"feePolicy":         s.feePolicy(fiatCurrency, rate),
 		"rate":              rate,
 		"cryptoAmount":      payout / rate,
 		"rateLockExpiresAt": time.Now().Add(time.Duration(s.cfg.RateLockSec) * time.Second),
@@ -372,7 +396,7 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	if rate <= 0 {
 		rate = 5.0
 	}
-	fee := math.Max(s.cfg.FeeMinBrl, req.AmountBRL*(float64(s.cfg.FeeBps)/10000))
+	fee := s.transactionFee(req.AmountBRL, "BRL", rate)
 	payout := req.AmountBRL - fee
 	if payout <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valor insuficiente após taxa"})
@@ -405,7 +429,7 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": order.ID, "orderId": order.ID, "status": order.Status, "address": depositAddress, "depositAddress": depositAddress,
 		"amountBRL": req.AmountBRL, "amountUSDT": amountUSDT, "btcAmount": amountUSDT, "feeBRL": fee, "payoutBRL": payout,
-		"rate": rate, "network": network,
+		"rate": rate, "network": network, "feePolicy": s.feePolicy("BRL", rate),
 	})
 }
 
