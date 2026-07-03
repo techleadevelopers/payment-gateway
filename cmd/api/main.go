@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +11,8 @@ import (
 
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
+	"payment-gateway/internal/email"
+	"payment-gateway/internal/server"
 	"payment-gateway/internal/workers"
 )
 
@@ -29,11 +32,27 @@ func main() {
 	defer cancel()
 
 	// 2. Inicializa o gerenciador e dispara os Workers de Produção
-	// Altere apenas a linha de inicialização no cmd/api/main.go:
-    workerMgr := workers.NewWorkerManager(db, cfg)
+	workerMgr := workers.NewWorkerManager(db, cfg)
 	workerMgr.StartAll(ctx)
 
-	log.Println("Todos os motores em background foram disparados e isolados.")
+	mailer := email.NewService(cfg)
+	api := server.New(cfg, db, workerMgr, mailer)
+	httpServer := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      api.Handler(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		log.Printf("API HTTP iniciada na porta %s", cfg.Port)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Erro fatal ao subir API HTTP: %v", err)
+		}
+	}()
+
+	log.Println("API e motores em background foram disparados e isolados.")
 
 	// 3. Captura sinais de desligamento do terminal (Ctrl+C, SIGTERM do Docker/Kubernetes)
 	stop := make(chan os.Signal, 1)
@@ -45,7 +64,10 @@ func main() {
 	// Cancela o contexto principal, avisando a todas as Goroutines de background para pararem imediatamente
 	cancel()
 
-	// Pequeno delay de cortesia para os workers fecharem conexões abertas com segurança
-	time.Sleep(1 * time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Erro ao desligar HTTP server: %v", err)
+	}
 	log.Println("Aplicação finalizada com 100% de segurança de dados.")
 }
