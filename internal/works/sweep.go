@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"time"
 
-	"meu-gateway-go/internal/config"
-	"meu-gateway-go/internal/database"
+	"payment-gateway/internal/config"
+	"payment-gateway/internal/database"
 )
 
 type SweepWorker struct {
@@ -79,7 +79,7 @@ func (sw *SweepWorker) executeSweeps(ctx context.Context) {
 
 	// --- CÁLCULO CRIPTOGRÁFICO DO HMAC ANTI-REPLAY ---
 	ts := fmt.Sprintf("%d", time.Now().Unix())
-	
+
 	// Gera um Nonce aleatório seguro de 8 bytes (substitui o crypto.randomBytes do Node)
 	nonceBytes := make([]byte, 8)
 	_, _ = rand.Read(nonceBytes)
@@ -87,7 +87,7 @@ func (sw *SweepWorker) executeSweeps(ctx context.Context) {
 
 	// Montagem do payload de assinatura: ts + "." + nonce + "." + rawBody
 	signatureRaw := fmt.Sprintf("%s.%s.%s", ts, nonce, string(bodyBytes))
-	
+
 	mac := hmac.New(sha256.New, []byte(sw.cfg.SignerHmacSecret))
 	mac.Write([]byte(signatureRaw))
 	computedHmac := hex.EncodeToString(mac.Sum(nil))
