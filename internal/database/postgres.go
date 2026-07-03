@@ -12,12 +12,15 @@ import (
 
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/models"
+	"payment-gateway/internal/privacy"
 
 	_ "github.com/lib/pq"
 )
 
 type DB struct {
-	SQL *sql.DB
+	SQL     *sql.DB
+	privacy *privacy.Codec
+	cfg     *config.Config
 }
 
 type OrderInput struct {
@@ -32,6 +35,7 @@ type OrderInput struct {
 	Network           string
 	RateLocked        float64
 	RateLockExpiresAt time.Time
+	RequestID         string
 	PixCpf            string
 	PixPhone          string
 	DerivationIndex   *int
@@ -66,6 +70,7 @@ type BuyOrderInput struct {
 	FiatCurrency      string
 	PaymentMethod     string
 	ProviderPaymentID string
+	RequestID         string
 	FeeBRL            float64
 	PayoutBRL         float64
 	CryptoAmount      float64
@@ -112,6 +117,11 @@ func ConnectPostgres(cfg *config.Config) (*DB, error) {
 		return nil, err
 	}
 	wrapped := &DB{SQL: db}
+	codec, err := privacy.New(cfg.LGPDSecret)
+	if err == nil {
+		wrapped.privacy = codec
+	}
+	wrapped.cfg = cfg
 	if err := wrapped.InitSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -139,16 +149,39 @@ func (db *DB) CreateOrder(ctx context.Context, order OrderInput) (*models.Order,
 	if order.ID == "" {
 		order.ID = NewID()
 	}
+	pixCpfHash := privacy.Hash(order.PixCpf, db.cfg.LGPDSecret)
+	pixPhoneHash := privacy.Hash(order.PixPhone, db.cfg.LGPDSecret)
 	_, err := db.SQL.ExecContext(ctx, `
-		INSERT INTO orders (id, status, amount_brl, btc_amount, fee_brl, payout_brl, address, asset, network, rate_locked, rate_lock_expires_at, created_at, pix_cpf, pix_phone, derivation_index)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),$12,$13,$14)`,
-		order.ID, order.Status, order.AmountBRL, order.AmountUSDT, order.FeeBRL, order.PayoutBRL, order.Address,
-		order.Asset, order.Network, order.RateLocked, order.RateLockExpiresAt, nullableString(order.PixCpf), nullableString(order.PixPhone), order.DerivationIndex,
+		INSERT INTO orders (id, request_id, status, amount_brl, btc_amount, fee_brl, payout_brl, address, asset, network, rate_locked, rate_lock_expires_at, created_at, pix_cpf_hash, pix_phone_hash, derivation_index)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),$13,$14,$15)`,
+		order.ID, nullableString(order.RequestID), order.Status, order.AmountBRL, order.AmountUSDT, order.FeeBRL, order.PayoutBRL, order.Address,
+		order.Asset, order.Network, order.RateLocked, order.RateLockExpiresAt, nullableString(pixCpfHash), nullableString(pixPhoneHash), order.DerivationIndex,
 	)
 	if err != nil {
 		return nil, err
 	}
-	_ = db.AddEvent(ctx, order.ID, "order.created", map[string]any{"amountBRL": order.AmountBRL, "amountUSDT": order.AmountUSDT})
+	if order.PixCpf != "" || order.PixPhone != "" {
+		if db.privacy == nil {
+			return nil, fmt.Errorf("LGPD_SECRET nao configurado para salvar dados pessoais")
+		}
+		pixCpfEnc, err := db.privacy.Encrypt(order.PixCpf)
+		if err != nil {
+			return nil, err
+		}
+		pixPhoneEnc, err := db.privacy.Encrypt(order.PixPhone)
+		if err != nil {
+			return nil, err
+		}
+		_, err = db.SQL.ExecContext(ctx, `
+			INSERT INTO order_private (order_id, pix_cpf_enc, pix_phone_enc)
+			VALUES ($1,$2,$3)
+			ON CONFLICT (order_id) DO UPDATE SET pix_cpf_enc = EXCLUDED.pix_cpf_enc, pix_phone_enc = EXCLUDED.pix_phone_enc`,
+			order.ID, nullableString(pixCpfEnc), nullableString(pixPhoneEnc))
+		if err != nil {
+			return nil, err
+		}
+	}
+	_ = db.AddEvent(ctx, order.ID, "order.created", map[string]any{"requestId": order.RequestID, "amountBRL": order.AmountBRL, "amountUSDT": order.AmountUSDT})
 	return db.GetOrder(ctx, order.ID)
 }
 
@@ -156,24 +189,28 @@ func (db *DB) GetOrder(ctx context.Context, id string) (*models.Order, error) {
 	row := db.SQL.QueryRowContext(ctx, `
 		SELECT id, status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
 		       rate_locked, rate_lock_expires_at, created_at, COALESCE(updated_at, created_at), tx_hash, error,
-		       deposit_tx, deposit_amount, pix_cpf, pix_phone, derivation_index
-		FROM orders WHERE id = $1`, id)
-	return scanOrder(row)
+		       deposit_tx, deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, derivation_index
+		FROM orders o
+		LEFT JOIN order_private op ON op.order_id = o.id
+		WHERE o.id = $1`, id)
+	return db.scanOrder(row)
 }
 
 func (db *DB) GetPendingOrders(ctx context.Context) ([]models.Order, error) {
 	rows, err := db.SQL.QueryContext(ctx, `
 		SELECT id, status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
 		       rate_locked, rate_lock_expires_at, created_at, COALESCE(updated_at, created_at), tx_hash, error,
-		       deposit_tx, deposit_amount, pix_cpf, pix_phone, derivation_index
-		FROM orders WHERE status = 'aguardando_deposito'`)
+		       deposit_tx, deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, derivation_index
+		FROM orders o
+		LEFT JOIN order_private op ON op.order_id = o.id
+		WHERE o.status = 'aguardando_deposito'`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []models.Order
 	for rows.Next() {
-		o, err := scanOrder(rows)
+		o, err := db.scanOrder(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -226,25 +263,28 @@ func (db *DB) StatsPixLast24h(ctx context.Context, pixCpf, pixPhone string) (Pix
 	}
 	var count int
 	var total float64
+	pixCpfHash := privacy.Hash(pixCpf, db.cfg.LGPDSecret)
+	pixPhoneHash := privacy.Hash(pixPhone, db.cfg.LGPDSecret)
 	err := db.SQL.QueryRowContext(ctx, `
 		SELECT COUNT(*)::int, COALESCE(SUM(amount_brl),0)::float8
 		FROM orders
 		WHERE created_at >= now() - interval '24 hours'
-		  AND (($1 <> '' AND pix_cpf = $1) OR ($2 <> '' AND pix_phone = $2))`,
-		pixCpf, pixPhone).Scan(&count, &total)
+		  AND (($1 <> '' AND pix_cpf_hash = $1) OR ($2 <> '' AND pix_phone_hash = $2))`,
+		pixCpfHash, pixPhoneHash).Scan(&count, &total)
 	return PixStats{Count: count, Total: total}, err
 }
 
 func (db *DB) CountCompletedOrdersForPix(ctx context.Context, pixCpf, pixPhone string) (int, error) {
 	var count int
+	pixCpfHash := privacy.Hash(pixCpf, db.cfg.LGPDSecret)
+	pixPhoneHash := privacy.Hash(pixPhone, db.cfg.LGPDSecret)
 	err := db.SQL.QueryRowContext(ctx, `
 		SELECT COUNT(*)::int FROM orders
-		WHERE status IN ('concluida','concluÃ­da')
-		  AND (($1 <> '' AND pix_cpf = $1) OR ($2 <> '' AND pix_phone = $2))`,
-		pixCpf, pixPhone).Scan(&count)
+		WHERE status IN ('concluida','concluída')
+		  AND (($1 <> '' AND pix_cpf_hash = $1) OR ($2 <> '' AND pix_phone_hash = $2))`,
+		pixCpfHash, pixPhoneHash).Scan(&count)
 	return count, err
 }
-
 func (db *DB) NextDerivationIndex(ctx context.Context) (int, error) {
 	var idx int
 	err := db.SQL.QueryRowContext(ctx, `SELECT COALESCE(MAX(derivation_index), -1) + 1 FROM orders`).Scan(&idx)
