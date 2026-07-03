@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -79,10 +80,13 @@ func main() {
 	cfg := LoadSignerConfig()
 	if cfg.HMACSecret == "" || cfg.EVMPrivateKey == "" {
 		slog.Error("HMAC_SECRET e EVM_PRIVATE_KEY sao obrigatorios")
-		return
+		os.Exit(1)
 	}
 
 	cache := newReplayCache()
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeSignerJSON(w, map[string]any{"ok": true, "service": "signer"})
+	})
 	http.HandleFunc("/hd/transfer", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "metodo nao permitido", http.StatusMethodNotAllowed)
