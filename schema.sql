@@ -143,3 +143,5 @@ CREATE INDEX IF NOT EXISTS idx_buy_orders_request_id ON buy_orders(request_id);
 CREATE INDEX IF NOT EXISTS idx_buy_order_events_lookup ON buy_order_events(buy_order_id, type);
 CREATE INDEX IF NOT EXISTS idx_buy_order_events_request_id ON buy_order_events(request_id);
 CREATE INDEX IF NOT EXISTS idx_sweeps_status ON sweeps(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_webhook_provider_once ON buy_order_events (buy_order_id, (payload ->> 'providerId')) WHERE type = 'webhook.provider' AND payload ? 'providerId';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_idempotency_once ON order_events (order_id, (payload ->> 'key')) WHERE type = 'idempotency' AND payload ? 'key';
