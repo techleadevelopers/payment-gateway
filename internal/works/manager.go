@@ -2,8 +2,8 @@ package workers
 
 import (
 	"context"
-	"meu-gateway-go/internal/config"
-	"meu-gateway-go/internal/database"
+	"payment-gateway/internal/config"
+	"payment-gateway/internal/database"
 )
 
 type WorkerManager struct {
@@ -19,7 +19,7 @@ type WorkerManager struct {
 
 func NewWorkerManager(db *database.DB, cfg *config.Config) *WorkerManager {
 	bus := NewEventBus()
-	
+
 	return &WorkerManager{
 		Bus:           bus,
 		PriceWorker:   NewPriceWorker(bus),
