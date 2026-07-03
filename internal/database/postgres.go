@@ -68,6 +68,7 @@ type BuyOrder struct {
 }
 
 type BuyOrderInput struct {
+	ID                string
 	Status            string
 	AmountBRL         float64
 	AmountFiat        float64
@@ -377,7 +378,10 @@ func (db *DB) OrdersToSweep(ctx context.Context) ([]models.Order, error) {
 }
 
 func (db *DB) CreateBuyOrder(ctx context.Context, buy BuyOrderInput) (*BuyOrder, error) {
-	id := NewID()
+	id := buy.ID
+	if id == "" {
+		id = NewID()
+	}
 	rawPayload, err := json.Marshal(buy.PixPayload)
 	if err != nil {
 		return nil, err
@@ -450,7 +454,8 @@ func (db *DB) UpdateBuyOrderStatus(ctx context.Context, id, status string, extra
 			settled_at = CASE WHEN $2 IN ('pago_fiat','pago_pix') AND settled_at IS NULL THEN now() ELSE settled_at END,
 			delivered_at = CASE WHEN $2 IN ('enviado','delivered','confirmado') AND delivered_at IS NULL THEN now() ELSE delivered_at END,
 			updated_at = now()
-		WHERE id = $1`, id, status, txHashOut, providerPaymentID, errMsg)
+		WHERE id = $1
+		  AND NOT (status IN ('enviado','delivered','confirmado') AND $2 = 'erro')`, id, status, txHashOut, providerPaymentID, errMsg)
 	if err != nil {
 		return err
 	}
@@ -733,4 +738,6 @@ CREATE TABLE IF NOT EXISTS buy_order_events (
 );
 
 ALTER TABLE buy_order_events ADD COLUMN IF NOT EXISTS request_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_webhook_provider_once ON buy_order_events (buy_order_id, (payload ->> 'providerId')) WHERE type = 'webhook.provider' AND payload ? 'providerId';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_idempotency_once ON order_events (order_id, (payload ->> 'key')) WHERE type = 'idempotency' AND payload ? 'key';
 `
