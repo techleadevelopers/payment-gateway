@@ -1,3 +1,5 @@
+//go:build integration
+
 package tests
 
 import (
@@ -69,7 +71,7 @@ func SetupTestDatabase(ctx context.Context) (*sql.DB, func(), error) {
 	}
 
 	// 4. Executa as Migrações / Criação de Tabelas
-	// Em produção real, tu lerias os teus arquivos .sql da pasta de migrations. 
+	// Em produção real, tu lerias os teus arquivos .sql da pasta de migrations.
 	// Aqui aplicamos o DDL idêntico ao schema esperado do teu projeto:
 	if err := runMigrations(ctx, db); err != nil {
 		_ = db.Close()
