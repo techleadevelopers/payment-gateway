@@ -2,30 +2,36 @@ package workers
 
 import (
 	"context"
-	"payment-gateway/internal/database"
+	"meu-gateway-go/internal/config"
+	"meu-gateway-go/internal/database"
 )
 
 type WorkerManager struct {
-	Bus         *EventBus
-	PriceWorker *PriceWorker
-	db          *database.DB
+	Bus           *EventBus
+	PriceWorker   *PriceWorker
+	PayoutWorker  *PayoutWorker
+	BuySendWorker *BuySendWorker
+	db            *database.DB
+	cfg           *config.Config
 }
 
-func NewWorkerManager(db *database.DB) *WorkerManager {
+func NewWorkerManager(db *database.DB, cfg *config.Config) *WorkerManager {
 	bus := NewEventBus()
+	
 	return &WorkerManager{
-		Bus:         bus,
-		PriceWorker: NewPriceWorker(bus),
-		db:          db,
+		Bus:           bus,
+		PriceWorker:   NewPriceWorker(bus),
+		PayoutWorker:  NewPayoutWorker(bus, db, cfg),
+		BuySendWorker: NewBuySendWorker(bus, db, cfg),
+		db:            db,
+		cfg:           cfg,
 	}
 }
 
-// StartAll dispara todos os workers em background dentro de Goroutines isoladas
+// StartAll dispara todos os workers em background dentro de Goroutines isoladas e protegidas
 func (wm *WorkerManager) StartAll(ctx context.Context) {
-	// A palavra-chave 'go' dispara a função em uma thread leve separada (Goroutine)
+	// Cada comando 'go' inicia um loop concorrente infinito isolado em memória
 	go wm.PriceWorker.Start(ctx)
-
-	// Próximas partes:
-	// go wm.OnchainWorker.Start(ctx)
-	// go wm.PayoutWorker.Start(ctx)
+	go wm.PayoutWorker.Start(ctx)
+	go wm.BuySendWorker.Start(ctx)
 }
