@@ -41,6 +41,10 @@ type BuyOrder struct {
 	ID                string          `json:"id"`
 	Status            string          `json:"status"`
 	AmountBRL         float64         `json:"amount_brl"`
+	AmountFiat        float64         `json:"amount_fiat"`
+	FiatCurrency      string          `json:"fiat_currency"`
+	PaymentMethod     string          `json:"payment_method"`
+	ProviderPaymentID *string         `json:"provider_payment_id,omitempty"`
 	FeeBRL            float64         `json:"fee_brl"`
 	PayoutBRL         float64         `json:"payout_brl"`
 	CryptoAmount      float64         `json:"crypto_amount"`
@@ -58,6 +62,10 @@ type BuyOrder struct {
 type BuyOrderInput struct {
 	Status            string
 	AmountBRL         float64
+	AmountFiat        float64
+	FiatCurrency      string
+	PaymentMethod     string
+	ProviderPaymentID string
 	FeeBRL            float64
 	PayoutBRL         float64
 	CryptoAmount      float64
@@ -329,25 +337,29 @@ func (db *DB) CreateBuyOrder(ctx context.Context, buy BuyOrderInput) (*BuyOrder,
 		return nil, err
 	}
 	_, err = db.SQL.ExecContext(ctx, `
-		INSERT INTO buy_orders (id, status, amount_brl, fee_brl, payout_brl, crypto_amount, asset, dest_address, rate_locked, rate_lock_expires_at, pix_payload)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		id, buy.Status, buy.AmountBRL, buy.FeeBRL, buy.PayoutBRL, buy.CryptoAmount, buy.Asset, buy.DestAddress, buy.RateLocked, buy.RateLockExpiresAt, rawPayload)
+		INSERT INTO buy_orders (id, status, amount_brl, amount_fiat, fiat_currency, payment_method, provider_payment_id, fee_brl, payout_brl, crypto_amount, asset, dest_address, rate_locked, rate_lock_expires_at, pix_payload)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		id, buy.Status, buy.AmountBRL, buy.AmountFiat, buy.FiatCurrency, buy.PaymentMethod, nullableString(buy.ProviderPaymentID),
+		buy.FeeBRL, buy.PayoutBRL, buy.CryptoAmount, buy.Asset, buy.DestAddress, buy.RateLocked, buy.RateLockExpiresAt, rawPayload)
 	if err != nil {
 		return nil, err
 	}
-	_ = db.AddBuyEvent(ctx, id, "buy.created", map[string]any{"amountBRL": buy.AmountBRL, "cryptoAmount": buy.CryptoAmount})
+	_ = db.AddBuyEvent(ctx, id, "buy.created", map[string]any{"amountFiat": buy.AmountFiat, "fiatCurrency": buy.FiatCurrency, "paymentMethod": buy.PaymentMethod, "cryptoAmount": buy.CryptoAmount})
 	return db.GetBuyOrder(ctx, id)
 }
 
 func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
 	row := db.SQL.QueryRowContext(ctx, `
-		SELECT id, status, amount_brl::float8, COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
+		SELECT id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
+		       COALESCE(fiat_currency, 'BRL'), COALESCE(payment_method, 'pix'), provider_payment_id,
+		       COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
 		       crypto_amount::float8, asset, dest_address, rate_locked::float8, rate_lock_expires_at,
 		       COALESCE(pix_payload, '{}'::jsonb), tx_hash_out, error, created_at, updated_at
 		FROM buy_orders WHERE id = $1`, id)
 	var buy BuyOrder
-	var txHashOut, errMsg sql.NullString
-	if err := row.Scan(&buy.ID, &buy.Status, &buy.AmountBRL, &buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
+	var providerPaymentID, txHashOut, errMsg sql.NullString
+	if err := row.Scan(&buy.ID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
+		&buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
 		&buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -357,6 +369,9 @@ func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
 	if txHashOut.Valid {
 		buy.TxHashOut = &txHashOut.String
 	}
+	if providerPaymentID.Valid {
+		buy.ProviderPaymentID = &providerPaymentID.String
+	}
 	if errMsg.Valid {
 		buy.Error = &errMsg.String
 	}
@@ -365,13 +380,15 @@ func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
 
 func (db *DB) UpdateBuyOrderStatus(ctx context.Context, id, status string, extra map[string]any) error {
 	txHashOut, _ := extra["txHashOut"].(string)
+	providerPaymentID, _ := extra["providerPaymentId"].(string)
 	errMsg, _ := extra["error"].(string)
 	_, err := db.SQL.ExecContext(ctx, `
 		UPDATE buy_orders SET status = $2,
 			tx_hash_out = COALESCE(NULLIF($3,''), tx_hash_out),
-			error = COALESCE(NULLIF($4,''), error),
+			provider_payment_id = COALESCE(NULLIF($4,''), provider_payment_id),
+			error = COALESCE(NULLIF($5,''), error),
 			updated_at = now()
-		WHERE id = $1`, id, status, txHashOut, errMsg)
+		WHERE id = $1`, id, status, txHashOut, providerPaymentID, errMsg)
 	if err != nil {
 		return err
 	}
@@ -396,10 +413,12 @@ func (db *DB) HasBuyEvent(ctx context.Context, buyOrderID, eventType, field, val
 
 func (db *DB) ListPendingBuys(ctx context.Context) ([]BuyOrder, error) {
 	rows, err := db.SQL.QueryContext(ctx, `
-		SELECT id, status, amount_brl::float8, COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
+		SELECT id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
+		       COALESCE(fiat_currency, 'BRL'), COALESCE(payment_method, 'pix'), provider_payment_id,
+		       COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
 		       crypto_amount::float8, asset, dest_address, rate_locked::float8, rate_lock_expires_at,
 		       COALESCE(pix_payload, '{}'::jsonb), tx_hash_out, error, created_at, updated_at
-		FROM buy_orders WHERE status = 'pago_pix'`)
+		FROM buy_orders WHERE status IN ('pago_fiat','pago_pix')`)
 	if err != nil {
 		return nil, err
 	}
@@ -407,13 +426,17 @@ func (db *DB) ListPendingBuys(ctx context.Context) ([]BuyOrder, error) {
 	var out []BuyOrder
 	for rows.Next() {
 		var buy BuyOrder
-		var txHashOut, errMsg sql.NullString
-		if err := rows.Scan(&buy.ID, &buy.Status, &buy.AmountBRL, &buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
+		var providerPaymentID, txHashOut, errMsg sql.NullString
+		if err := rows.Scan(&buy.ID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
+			&buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
 			&buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if txHashOut.Valid {
 			buy.TxHashOut = &txHashOut.String
+		}
+		if providerPaymentID.Valid {
+			buy.ProviderPaymentID = &providerPaymentID.String
 		}
 		if errMsg.Valid {
 			buy.Error = &errMsg.String
@@ -556,6 +579,10 @@ CREATE TABLE IF NOT EXISTS buy_orders (
   id UUID PRIMARY KEY,
   status VARCHAR(32) NOT NULL,
   amount_brl NUMERIC(18,2) NOT NULL,
+  amount_fiat NUMERIC(18,2),
+  fiat_currency VARCHAR(8) NOT NULL DEFAULT 'BRL',
+  payment_method VARCHAR(32) NOT NULL DEFAULT 'pix',
+  provider_payment_id TEXT,
   fee_brl NUMERIC(18,2),
   payout_brl NUMERIC(18,2),
   crypto_amount NUMERIC(28,8) NOT NULL,
@@ -569,6 +596,12 @@ CREATE TABLE IF NOT EXISTS buy_orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS amount_fiat NUMERIC(18,2);
+ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS fiat_currency VARCHAR(8) NOT NULL DEFAULT 'BRL';
+ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(32) NOT NULL DEFAULT 'pix';
+ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS provider_payment_id TEXT;
+UPDATE buy_orders SET amount_fiat = amount_brl WHERE amount_fiat IS NULL;
 
 CREATE TABLE IF NOT EXISTS buy_order_events (
   id UUID PRIMARY KEY,
