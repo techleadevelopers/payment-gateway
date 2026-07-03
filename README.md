@@ -1,205 +1,209 @@
-<div align="center">
-<img src="https://res.cloudinary.com/limpeja/image/upload/v1770993671/swap_1_mvctri.png" alt="Swappy Logo" width="320">
-<h3>Swappy Financial Core</h3>
-<p>Sistema financeiro moderno e inteligente para compra de stablecoins com BRL via PIX</p>
-</div>
+# Swappy Payment Gateway
 
----
+Backend Go para orquestracao instantanea de settlement fiat -> USDT.
 
-## 1. Visão Arquitetural do Ecossistema
+O sistema nao tenta ser um "crypto gateway simples". Ele opera como um **instant settlement orchestration system**: recebe fiat por rails tradicionais, confirma o pagamento, registra tudo de forma auditavel e dispara entrega cripto para a wallet do usuario.
 
-O **Swappy Financial Core** é um sistema financeiro moderno e inteligente para operações com **stablecoins**, conectando **BRL via PIX** a ativos digitais como **USDT (Tether)** e, futuramente, **EURUSD (nova stablecoin)**. A primeira fase do produto prioriza a experiência de compra de stablecoins com cotação travada, validação de pagamento, envio on-chain e auditoria transacional.
+## Fluxo Principal
 
-O sistema foi arquitetado sob o padrão de **Monorepo em Go**, separando estritamente a API pública de I/O, os Workers assíncronos orientados a eventos e o Cofre Criptográfico de Assinaturas (`signer`). Essa separação permite evoluir o produto com segurança para novos ativos, novas redes blockchain e integrações financeiras sem misturar regras de negócio, processamento assíncrono e custódia de chaves.
+### BUY BRL via Pix
 
-### Divisão de Responsabilidades (Isolamento de Processos)
-1. **API Gateway Core (`cmd/api`):** Camada de entrada pública, enxuta e endurecida. Responsável por expor endpoints REST, aplicar Rate Limiting, travar cotações com TTL estrito via cache em memória e persistir intenções de ordens no PostgreSQL com status `aguardando_deposito`.
-2. **Asynchronous Processing Workers (`internal/workers`):** Daemons assíncronos isolados que escutam um Barramento de Eventos de memória (com interface abstrata pronta para acoplamento em filas gerenciadas como AWS SQS ou Apache Kafka).
-   * **`PriceWorker`:** Sincroniza e faz o cache da cotação institucional com TTL controlado.
-   * **`OnchainWorker`:** Escuta ativamente os nós de RPC (TRON/BSC), processa eventos de blocos confirmados e valida se os depósitos dos usuários entraram com as confirmações matemáticas exigidas.
-   * **`PayoutWorker`:** Conecta-se às APIs bancárias reguladas (PIX/PagBank) para executar a liquidação em moeda fiduciária instantaneamente após a validação cripto.
-   * **`SweepWorker`:** Varre os endereços efêmeros de depósito dos usuários (*Child Addresses*) enviando os fundos para a carteira fria/tesouraria central.
-3. **Cofre Isolado Signer (`signer/`):** Microsserviço crítico rodando em sub-rede privada (*Air-gapped* lógico). É o único processo que retém as chaves privadas (`EVM_PRIVATE_KEY` / `TRON_XPRV`). Nenhuma outra parte do sistema tem acesso à memória onde as chaves operam.
+1. Usuario informa quanto quer pagar em BRL.
+2. `Quote Service` retorna cotacao travada e quanto USDT sera entregue.
+3. Usuario informa wallet TRON.
+4. Gateway cria `buy_order` com status `aguardando_pix`.
+5. Sistema gera payload/QR Pix da Swappy.
+6. Banking webhook confirma pagamento.
+7. `Settlement Engine` marca a ordem como `pago_fiat`.
+8. `BuySendWorker` entrega USDT para a wallet do usuario.
+9. Ordem recebe `tx_hash_out` e `delivered_at`.
 
----
+### BUY USD via Stripe
 
+1. Usuario informa quanto quer pagar em USD.
+2. `Quote Service` usa cotacao USDT/USD.
+3. Gateway cria `buy_order` com `fiat_currency=USD` e `payment_method=stripe`.
+4. Stripe confirma o charge via webhook.
+5. Settlement marca `pago_fiat`.
+6. Delivery cripto envia USDT para a wallet.
 
-A infraestrutura original em Node.js (Express) apresentava gargalos críticos para a escala financeira real que foram mitigados pela migração para Go:
+### SELL USDT -> Pix
 
-* **Gerenciamento de CPU-Bound vs I/O-Bound:** A validação e geração de assinaturas criptográficas (HMAC-SHA256 e Criptografia de Curva Elíptica ECDSA) são operações intensivas de CPU. No Node.js, isso bloqueava o *Event Loop Single-Threaded*, atrasando requisições HTTP de entrada. O Go resolve isto nativamente escalonando Goroutines entre múltiplos cores de CPU via *M:N Scheduler*.
-* **Segurança e Imutabilidade de Memória:** Strings em Node/V8 podem sofrer vazamento em buffers compartilhados em caso de *memory dumping* após falhas catastróficas. O Go oferece tipagem estática e total controle sobre ponteiros e arrays de bytes (`[]byte`), permitindo que dados sensíveis de chaves e buffers de criptografia sejam limpos da memória de forma previsível e segura.
-* **Race Detector Native:** Sistemas de criptografia que gerenciam saldos concorrentes não podem sofrer de *Race Conditions**. O compilador do Go traz a flag `-race`, utilizada em nossas esteiras de CI/CD para auditar matematicamente se duas threads tentaram atualizar ou liquidar a mesma ordem ao mesmo tempo.
+1. Usuario informa chave Pix e valor BRL.
+2. Gateway gera endereco de deposito TRON deterministico.
+3. `Blockchain Monitor` confirma deposito USDT.
+4. `PayoutWorker` liquida Pix para o usuario.
 
----
-
-## 🔐 3. Engenharia de Segurança e Fundamentos Criptográficos
-
-### Autenticação HMAC-SHA256 Baseada em Chave Simétrica
-
-Toda comunicação entre o **Core** e o serviço `signer` é autenticada utilizando **HMAC-SHA256**, um algoritmo de autenticação baseado em chave simétrica. Cada requisição gera um *digest* único calculado a partir do corpo da requisição e dos metadados enviados nos cabeçalhos HTTP.
-
-$$
-\text{Digest} =
-\text{HMAC-SHA256}
-(
-\text{HMAC\_SECRET},
-\text{x-ts} || "." || \text{x-nonce} || "." || \text{RawBody}
-)
-$$
-
-Onde:
-
-- `HMAC_SECRET` é a chave secreta compartilhada entre o Core e o Signer.
-- `||` representa a concatenação binária dos campos.
-- `x-ts` corresponde ao Unix Timestamp da requisição.
-- `x-nonce` identifica unicamente cada requisição.
-- `RawBody` representa o payload bruto transmitido.
-
-Para eliminar **Replay Attacks**, o Signer aceita apenas requisições cuja diferença entre o horário atual e o timestamp recebido seja inferior a **60 segundos**.
-
-$$
-|t_{now}-t_{request}|<60s
-$$
-
-Além disso, cada `x-nonce` é persistido utilizando uma restrição `UNIQUE`. Caso um mesmo nonce seja reutilizado durante a janela válida de autenticação, a transação é imediatamente rejeitada.
-
----
-
-### Derivação Determinística de Carteiras (BIP-44)
-
-O sistema utiliza uma única chave estendida privada (`TRON_XPRV`) para derivar endereços determinísticos exclusivos para cada usuário, evitando reutilização de endereços e reduzindo correlação pública entre depósitos.
-
-$$
-Address=Derive(XPRV,m/44'/195'/0'/0/index)
-$$
-
-Essa abordagem permite gerar bilhões de endereços independentes mantendo uma única **Seed Master** como raiz criptográfica do sistema. Todos os endereços derivados são monitorados continuamente pelo **Onchain Worker**, enquanto o **Sweep Worker** consolida automaticamente os ativos para a carteira principal de liquidação.
-
-## 4. Ciclo de Vida Transacional (Idempotência Célula-Mãe)
-
-Para evitar o pior cenário de um gateway financeiro — o **Duplo Gasto** ou **Dupla Liquidação** (enviar dois PIX para o mesmo depósito ou assinar duas transferências on-chain por instabilidade de rede), implementamos o padrão de **Idempotência Persistida**.
-
-### O Mecanismo da Trava Transacional (Idempotência no Postgres)
-
-Para blindar o fluxo contra falhas de rede, timeouts ou retentativas automáticas, o sistema utiliza o banco de dados como única fonte da verdade (*Single Source of Truth*), aplicando uma constraint de chave única (`PRIMARY KEY`) em um bloco transacional isolado:
-
-```sql
-CREATE TABLE IF NOT EXISTS signer_idempotency (
-    idempotency_key VARCHAR(128) PRIMARY KEY,
-    tx_hash VARCHAR(128) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-```
-
-### O Algoritmo de Execução Segura
-
-* **Entrada de Evento:** Um evento de liquidação de compra ou varredura entra com uma chave exclusiva (ex: `idempotencyKey: "sweep-order-550e8400"`).
-* **Abertura de Transação:** O worker inicia um bloco atômico no PostgreSQL (`BEGIN TRANSACTION;`).
-* **Verificação de Chave:** O sistema tenta ler a chave na tabela `signer_idempotency`:
-  * **Se a chave já existir (Cache Hit):** A transação sofre um *Rollback* instantâneo no banco de dados. O sistema recupera o `tx_hash` gravado anteriormente e responde com `StatusCode 200`. Nenhuma nova operação financeira ou chamada de assinatura blockchain é disparada.
-  * **Se a chave não existir (Cache Miss):** O sistema prossegue com a assinatura criptográfica via curva elíptica ECDSA, envia o payload para a rede (EVM/TRON), captura o hash retornado pela blockchain, insere o registro na tabela e executa o `COMMIT;`.
-
----
-
-### 📂 5. Organização do Código (Árvore Estrutural do Monorepo)
-
-O projeto está estruturado em um padrão limpo de camadas (*Clean Architecture*) usando pacotes desacoplados e tipagem estática:
+## Camadas
 
 ```text
-meu-gateway-go/
-├── cmd/
-│   └── api/                        # Ponto de entrada do servidor HTTP Core público
-├── internal/
-│   ├── config/                     # Validação e parser de variáveis de ambiente (.env)
-│   ├── database/                   # Repositórios SQL, pools do Postgres e migrações
-│   └── workers/                    # Daemons assíncronos orientados a eventos
-│       ├── bus.go                  # Event Bus concorrente thread-safe usando sync.RWMutex
-│       ├── onchain_worker.go       # Listener / Poller de nós RPC de Blockchain
-│       ├── payout_worker.go        # Executor de ordens de liquidação PIX (PagBank)
-│       ├── price_worker.go         # Sincronizador de cotação institucional com TTL
-│       └── sweep_worker.go         # Varredura automática de saldos de endereços filhos
-├── signer/                         # Microsserviço Cofre Isolado (Assinador EVM/TRON)
-│   ├── main.go                     # Servidor HTTP privado do Signer
-│   └── crypto_test.go              # Testes unitários matemáticos do escudo HMAC
-└── tests/                          # SUÍTE DE TESTES INTEGRADOS DE ALTA ESCALA
-    ├── test_helpers.go             # Helper do Testcontainers para ciclo de vida do Docker
-    ├── signer_integration_test.go  # Testes E2E do Signer baseados nos fluxos de payload (.ps1)
-    └── api_order_integration_test.go # Testes E2E de criação e liquidação de ordens
-
-    ### 🧪 6. Elite Automated Testing Suite
+User
+  -> Payment Rail Layer
+     -> Pix BRL
+     -> Stripe USD
+  -> Settlement Engine
+     -> quote lock
+     -> idempotencia
+     -> status transacional
+     -> auditoria
+  -> Crypto Delivery Layer
+     -> wallet engine
+     -> signer
+     -> broadcast / transfer USDT
+     -> tx hash
 ```
 
-Para garantir confiabilidade de nível de produção antes de qualquer deploy, a estratégia de testes é dividida em duas camadas complementares.
+## Componentes
 
-#### 6.1 Fast Unit Tests (In-Memory)
+- `cmd/api`: servidor HTTP publico.
+- `internal/server`: handlers REST, request id, rate limit, webhooks e SSE.
+- `internal/workers`: workers concorrentes para price, on-chain, payout, sweep e buy delivery.
+- `internal/database`: schema, repositorios, auditoria e persistencia LGPD.
+- `internal/privacy`: hash e criptografia AES-GCM para dados pessoais.
+- `internal/tron`: validacao/derivacao TRON.
+- `signer`: servico isolado de assinatura com HMAC anti-replay.
 
-Valida exclusivamente lógica de negócio, cálculos financeiros, manipulação de buffers, precisão decimal, criptografia HMAC, validações e componentes puros, sem qualquer dependência externa.
+## Endpoints
+
+### Quote
+
+```http
+GET /api/quote?mode=buy&amountBRL=150&asset=USDT
+GET /api/quote?mode=buy&amountUSD=150&fiatCurrency=USD&paymentMethod=stripe&asset=USDT
+POST /api/quote
+```
+
+Resposta principal:
+
+```json
+{
+  "mode": "buy",
+  "asset": "USDT",
+  "amountFiat": 150,
+  "fiatCurrency": "BRL",
+  "paymentMethod": "pix",
+  "rate": 5.43,
+  "cryptoAmount": 27.62,
+  "rateLockExpiresAt": "2026-07-03T03:00:00Z"
+}
+```
+
+### Buy
+
+```http
+POST /api/buy
+```
+
+Pix BRL:
+
+```json
+{
+  "amountBRL": 150,
+  "asset": "USDT",
+  "address": "T..."
+}
+```
+
+Stripe USD:
+
+```json
+{
+  "amountUSD": 150,
+  "fiatCurrency": "USD",
+  "paymentMethod": "stripe",
+  "asset": "USDT",
+  "address": "T..."
+}
+```
+
+BUY nao exige KYC nem CPF/telefone. A Swappy recebe o fiat e entrega USDT para a wallet informada.
+
+### Webhooks
+
+```http
+POST /api/pix/webhook/buy
+POST /api/stripe/webhook/buy
+```
+
+Ambos convergem para o mesmo settlement:
+
+```text
+aguardando_pix / aguardando_stripe -> pago_fiat -> enviado
+```
+
+## Auditoria
+
+Toda ordem tem UUID proprio e timestamps de ciclo de vida:
+
+- `id`: identificador imutavel da ordem.
+- `request_id`: correlacao HTTP/log/evento.
+- `created_at`: criacao.
+- `updated_at`: ultima alteracao.
+- `paid_at`: pagamento fiat confirmado.
+- `settled_at`: settlement interno concluido.
+- `delivered_at`: entrega USDT concluida.
+- `provider_payment_id`: id externo do banco/Stripe.
+- `tx_hash_out`: hash de entrega cripto.
+
+Eventos ficam em tabelas separadas:
+
+- `order_events`
+- `buy_order_events`
+
+Cada evento carrega `request_id`, `type`, `payload` e `created_at`.
+
+## LGPD
+
+BUY segue minimizacao de dados: nao coleta CPF/telefone.
+
+No SELL, quando chave Pix pessoal e necessaria:
+
+- CPF/telefone nao ficam expostos na resposta JSON.
+- Hashes ficam em `orders.pix_cpf_hash` e `orders.pix_phone_hash` para velocity/risk.
+- Valores reversiveis ficam separados em `order_private`.
+- `order_private` usa AES-GCM com `LGPD_SECRET`.
+- Sem `LGPD_SECRET`, o backend falha antes de persistir dado pessoal.
+
+Variavel obrigatoria para SELL com dados pessoais:
+
+```env
+LGPD_SECRET=use-um-segredo-forte-de-producao
+```
+
+## Idempotencia
+
+Webhooks usam `provider_payment_id` e eventos `webhook.provider` para evitar dupla liquidacao.
+
+Delivery usa `idempotencyKey` no signer/worker para evitar envio duplicado.
+
+## Variaveis Importantes
+
+```env
+DATABASE_URL=postgres://...
+LGPD_SECRET=...
+WEBHOOK_SECRET=...
+PIX_WEBHOOK_SECRET=...
+SIGNER_URL=http://signer:4010
+SIGNER_HMAC_SECRET=...
+TRON_XPUB=...
+TRON_USDT_CONTRACT=...
+TRON_FULLNODE_URL=...
+FEE_BPS=0
+FEE_MIN_BRL=0
+```
+
+## Verificacao Local
 
 ```bash
-# Execute only fast unit tests
-go test -v -short ./...
+go test -run TestDoesNotExist ./internal/privacy ./internal/config ./internal/database ./internal/server ./internal/workers ./cmd/api
 ```
 
-#### 6.2 Integration Tests with Real PostgreSQL (Testcontainers)
-
-A camada de integração utiliza **Testcontainers-Go** para provisionar automaticamente um banco PostgreSQL limpo durante cada execução.
-
-O helper de testes inicializa um container oficial (`postgres:15-alpine`), aplica todas as migrações reais do projeto, executa a suíte completa e remove completamente o ambiente ao término dos testes.
-
-Essa abordagem garante que toda a camada de persistência seja validada contra um banco real, eliminando inconsistências entre ambientes de desenvolvimento e produção.
-
-Além disso, todos os testes podem ser executados com o **Go Race Detector**, responsável por identificar condições de corrida (*data races*) entre goroutines concorrentes.
+Para subir a API:
 
 ```bash
-# Integration tests with Race Detector enabled
-go test -v -race ./tests/...
+go run ./cmd/api
 ```
 
----
+## Nota Operacional
 
-### 🐳 7. Production Deployment Pipeline
-
-A aplicação utiliza uma estratégia de **Multi-Stage Docker Build**, separando completamente o ambiente de compilação do ambiente de execução.
-
-No primeiro estágio, todas as dependências são resolvidas e o binário é compilado estaticamente.
-
-O segundo estágio gera uma imagem extremamente enxuta baseada em Alpine Linux, contendo apenas o executável final e os certificados necessários para comunicação TLS, reduzindo significativamente o tamanho da imagem e a superfície de ataque.
-
-```dockerfile
-# Stage 1 - Build
-FROM golang:1.21-alpine AS builder
-
-WORKDIR /app
-
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY . .
-
-RUN CGO_ENABLED=0 GOOS=linux \
-    go build -ldflags="-w -s" \
-    -o /engine ./cmd/api/main.go
-
-# Stage 2 - Runtime
-FROM alpine:3.19
-
-RUN apk --no-cache add ca-certificates tzdata
-
-WORKDIR /
-
-COPY --from=builder /engine /engine
-
-EXPOSE 4010
-
-USER 65534:65534
-
-ENTRYPOINT ["/engine"]
-```
-
-#### 🛡️ Production Security Notes
-
-- Multi-stage builds removem completamente o toolchain do Go da imagem final.
-- O processo é executado como usuário não privilegiado (`UID 65534`), evitando execução como **root**.
-- Apenas certificados CA e timezone são incluídos na imagem de produção.
-- As flags `-ldflags="-w -s"` removem símbolos e informações de depuração do executável, reduzindo significativamente seu tamanho e dificultando processos de engenharia reversa.
-- O resultado é um artefato leve, otimizado para produção e com menor superfície de ataque.
+O caminho rapido da UX fica no quote e na criacao da intencao de compra. Confirmacao fiat e delivery cripto rodam em workers para manter baixa latencia no frontend e preservar consistencia financeira no backend.
