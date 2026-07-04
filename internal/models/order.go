@@ -19,7 +19,7 @@ const (
 
 // Order representa a tabela 'orders' do seu banco de dados Postgres
 type Order struct {
-	ID                string      `json:"id"`          // UUID da ordem
+	ID                string      `json:"id"` // UUID da ordem
 	AccessToken       string      `json:"accessToken,omitempty"`
 	AmountBRL         float64     `json:"amount_brl"`  // Valor que o usuário quer receber em R$
 	AmountUSDT        float64     `json:"amount_usdt"` // Valor calculado em USDT que ele deve enviar
