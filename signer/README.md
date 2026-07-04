@@ -39,6 +39,18 @@ SIGNER_TOKEN_DECIMALS=18
 SIGNER_ALLOW_SIMULATION=false
 ```
 
+Custody guard opcional para EIP-7702:
+
+```env
+CUSTODY_GUARD_ENABLED=true
+CUSTODY_GUARD_POLL_MS=1500
+CUSTODY_TRUSTED_DELEGATES=0xContratoDelegateSeguro
+CUSTODY_ALLOWED_SELECTORS=
+CUSTODY_PROTECTED_WALLETS=
+```
+
+Quando ligado, o signer monitora transacoes EIP-7702 (`SET_CODE`, type `0x04`) em `pending` e `latest`. A hot wallet derivada de `EVM_PRIVATE_KEY` e as wallets em `CUSTODY_PROTECTED_WALLETS` entram na lista protegida. Se uma autorizacao 7702 apontar uma wallet protegida para delegate fora de `CUSTODY_TRUSTED_DELEGATES`, ou se o bytecode de um delegate confiavel mudar, o signer entra em lockdown e bloqueia `/hd/transfer`.
+
 Para staging sem envio real:
 
 ```env
