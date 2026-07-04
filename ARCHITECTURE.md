@@ -38,9 +38,9 @@ Cliente paga Pix -> Webhook confirma -> BuySendWorker dispara da wallet Swappy -
 
 - Go: `1.25.0`, conforme `go.mod`.
 - PostgreSQL.
-- Signer TRON dedicado para producao.
+- Signer BSC dedicado para producao.
 - Provedor PIX/PagBank configurado.
-- Full node/API TRON configurada.
+- Full node/API BSC configurada.
 
 ## Diagrama de Sequencia
 
@@ -53,10 +53,10 @@ sequenceDiagram
     participant PIX as Provedor PIX
     participant BUS as EventBus
     participant W as BuySendWorker
-    participant S as Signer TRON
-    participant T as Blockchain TRON
+    participant S as Signer BSC
+    participant T as Blockchain BSC
 
-    U->>F: Informa BRL e wallet TRON
+    U->>F: Informa BRL e wallet BSC
     F->>API: GET/POST /api/quote
     API-->>F: Cotacao, taxa, USDT estimado
     F->>API: POST /api/buy
@@ -70,7 +70,7 @@ sequenceDiagram
     API->>BUS: publish buy.paid
     BUS->>W: buy.paid
     W->>S: /hd/transfer HMAC
-    S->>T: Broadcast USDT TRC20
+    S->>T: Broadcast USDT BEP20
     T-->>S: tx hash
     S-->>W: txHash
     W->>DB: status = enviado, tx_hash_out
@@ -86,8 +86,8 @@ sequenceDiagram
 - `internal/workers`: price, on-chain, payout, sweep e buy delivery.
 - `internal/database`: schema, repositorios, eventos e persistencia LGPD.
 - `internal/privacy`: hash e criptografia AES-GCM.
-- `internal/tron`: validacao e derivacao TRON.
-- `signer`: servico isolado de assinatura. Em producao de TRON, usar signer com `SIGNER_NETWORK=tron`.
+- `internal/BSC`: validacao e derivacao BSC.
+- `signer`: servico isolado de assinatura. Em producao de BSC, usar signer com `SIGNER_NETWORK=BSC`.
 
 ## Fluxos Principais
 
@@ -101,7 +101,7 @@ sequenceDiagram
 6. API verifica duplicidade via `webhook.provider`.
 7. API marca `pago_fiat`.
 8. API publica `buy.paid`.
-9. `BuySendWorker` chama signer TRON.
+9. `BuySendWorker` chama signer BSC.
 10. Ordem vai para `enviado`.
 
 ### BUY USD via Stripe
@@ -121,7 +121,7 @@ Eventos aceitos como liquidacao:
 ### SELL USDT -> PIX
 
 1. Frontend cria `/api/order`.
-2. API gera ou aceita endereco TRON.
+2. API gera ou aceita endereco BSC.
 3. `OnchainWorker` monitora transferencias USDT.
 4. Deposito valido marca `pago`.
 5. `PayoutWorker` liquida PIX.
@@ -233,7 +233,7 @@ Payload:
 {
   "amountBRL": 150,
   "asset": "USDT",
-  "network": "TRON",
+  "network": "BSC",
   "pixCpf": "12345678901",
   "pixPhone": "11999999999"
 }
@@ -373,18 +373,18 @@ PAGSEGURO_API_TOKEN=token
 PAGSEGURO_API_BASE_URL=https://api.pagseguro.com
 PIX_CHARGE_ENDPOINT=/orders
 
-# Tron
-TRON_XPUB=xpub...
-TRON_USDT_CONTRACT=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
-TRON_FULLNODE_URL=https://api.trongrid.io
-TRON_SOLIDITY_URL=https://api.trongrid.io
-TRON_USDT_DECIMALS=6
-TRON_CONFIRMATIONS=20
-TRON_HMAC_SECRET=internal-hmac-secret
+# BSC
+BSC_XPUB=xpub...
+BSC_USDT_CONTRACT=0x55d398326f99059fF775485246999027B3197955
+BSC_FULLNODE_URL=https://api.BSCgrid.io
+BSC_SOLIDITY_URL=https://api.BSCgrid.io
+BSC_USDT_DECIMALS=6
+BSC_CONFIRMATIONS=20
+BSC_HMAC_SECRET=internal-hmac-secret
 
 # Signer
 SIGNER_URL=http://localhost:4010
-SIGNER_NETWORK=tron
+SIGNER_NETWORK=BSC
 SIGNER_HMAC_SECRET=signer-hmac-secret
 
 # Treasury
@@ -393,7 +393,7 @@ TREASURY_COLD=T...
 ENABLE_SWEEP_WORKER=false
 ENABLE_SWEEP_STUB=false
 SWEEP_FREQUENCY_MS=30000
-TRON_GAS_RESERVE_TRX=5
+BSC_GAS_RESERVE_BNB=5
 
 # SMTP / ops
 SMTP_HOST=smtp.example.com
@@ -411,7 +411,7 @@ Producao deve usar:
 ```env
 APP_ENV=production
 ALLOW_SIMULATIONS=false
-SIGNER_NETWORK=tron
+SIGNER_NETWORK=BSC
 ENABLE_SWEEP_STUB=false
 ```
 
@@ -443,11 +443,11 @@ WEBHOOK_SECRET=...
 PIX_WEBHOOK_SECRET=...
 PAGSEGURO_API_TOKEN=...
 SIGNER_URL=...
-SIGNER_NETWORK=tron
+SIGNER_NETWORK=BSC
 SIGNER_HMAC_SECRET=...
-TRON_XPUB=...
-TRON_USDT_CONTRACT=...
-TRON_FULLNODE_URL=...
+BSC_XPUB=...
+BSC_USDT_CONTRACT=...
+BSC_FULLNODE_URL=...
 TREASURY_HOT=...
 ```
 
@@ -509,7 +509,7 @@ go run ./cmd/benchflow -h
 
 1. Subir API com Postgres real.
 2. Configurar `PIX_WEBHOOK_SECRET`.
-3. Configurar signer TRON real se for medir `-mode e2e`.
+3. Configurar signer BSC real se for medir `-mode e2e`.
 4. Criar ordens BUY validas em `aguardando_pix`.
 5. Salvar os IDs em `buy_ids.txt`, um por linha.
 
@@ -592,8 +592,8 @@ BenchmarkEventBusPublishManySubscribers-4    1367 ns/op     0 B/op    0 allocs/o
 Leitura:
 
 - O barramento interno nao e gargalo relevante no caminho `webhook -> buy.paid -> BuySendWorker`.
-- `webhook_ack_ms` e `delivery_ms` precisam ser medidos em staging com Postgres, signer TRON, secrets reais e `buy_ids` validos.
-- O benchmark E2E real nao foi executado neste ambiente porque signer TRON e IDs de teste nao estavam disponiveis na sessao.
+- `webhook_ack_ms` e `delivery_ms` precisam ser medidos em staging com Postgres, signer BSC, secrets reais e `buy_ids` validos.
+- O benchmark E2E real nao foi executado neste ambiente porque signer BSC e IDs de teste nao estavam disponiveis na sessao.
 
 ### Teste de fluxo com dinheiro ficticio
 
@@ -629,7 +629,7 @@ Observacao: a API HTTP completa nao foi iniciada localmente porque o `DATABASE_U
 | --- | --- | --- | --- |
 | Postgres lento | `webhook_ack_ms` alto | `cmd/benchflow -mode ack` | indices, pool, menor payload em transacao |
 | Provider enviando webhook duplicado | `duplicate=true` frequente | eventos `webhook.provider` | manter idempotencia e observar taxa |
-| Signer/RPC TRON lento | `delivery_ms` alto | `cmd/benchflow -mode e2e` | signer dedicado, timeout, retry controlado, RPC redundante |
+| Signer/RPC BSC lento | `delivery_ms` alto | `cmd/benchflow -mode e2e` | signer dedicado, timeout, retry controlado, RPC redundante |
 | EventBus cheio | drops ou delivery sem evento | metricas de fila | aumentar buffer, fila persistente se necessario |
 | CoinGecko/price indisponivel | quote 503 | logs `PriceWorker` | cache, fallback controlado, provider alternativo |
 | PagBank indisponivel | erro ao criar PIX/payout | logs provider e status 5xx | retry com idempotency key, circuit breaker |
@@ -649,7 +649,7 @@ Erros comuns:
 - `DATABASE_URL nao configurado`: configurar Postgres.
 - `Configuracao invalida para producao`: alguma variavel obrigatoria esta ausente.
 - `ALLOW_SIMULATIONS deve ser false em producao`: ajustar variavel no Railway.
-- `SIGNER_NETWORK deve ser tron em producao`: evitar signer EVM por engano.
+- `SIGNER_NETWORK deve ser BSC em producao`: evitar signer EVM por engano.
 
 ### `/readyz` retorna `ok=false`
 
@@ -664,9 +664,9 @@ Campos comuns em `warnings`:
 - `pix_provider`: falta `PAGSEGURO_API_TOKEN`.
 - `pix_webhook`: falta `PIX_WEBHOOK_SECRET` ou `WEBHOOK_SECRET`.
 - `signer`: falta `SIGNER_URL` ou `SIGNER_HMAC_SECRET`.
-- `signer_tron`: `SIGNER_NETWORK` nao e `tron`.
-- `tron_contract`: falta `TRON_USDT_CONTRACT`.
-- `tron_fullnode`: falta `TRON_FULLNODE_URL`.
+- `signer_BSC`: `SIGNER_NETWORK` nao e `BSC`.
+- `BSC_contract`: falta `BSC_USDT_CONTRACT`.
+- `BSC_fullnode`: falta `BSC_FULLNODE_URL`.
 - `lgpd_secret`: falta `LGPD_SECRET`.
 
 ### Webhook PIX recebe 401
@@ -686,8 +686,8 @@ Verificar:
 - Logs do `BuySendWorker`.
 - `SIGNER_URL`.
 - `SIGNER_HMAC_SECRET`.
-- `TRON_USDT_CONTRACT`.
-- Se o signer e realmente TRON.
+- `BSC_USDT_CONTRACT`.
+- Se o signer e realmente BSC.
 
 ### Duplicidade de webhook
 
