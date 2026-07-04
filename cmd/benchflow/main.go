@@ -152,7 +152,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.BuyIDsFile, "buy-ids", "", "arquivo com buy IDs, um por linha")
 	flag.BoolVar(&cfg.CreateBuy, "create-buy", false, "cria buy orders antes de disparar webhooks")
 	flag.Float64Var(&cfg.AmountBRL, "amount-brl", 150, "valor BRL usado com --create-buy")
-	flag.StringVar(&cfg.Address, "address", "", "wallet TRON destino usada com --create-buy")
+	flag.StringVar(&cfg.Address, "address", "", "wallet BSC destino usada com --create-buy")
 	flag.DurationVar(&cfg.Timeout, "timeout", 2*time.Minute, "timeout total")
 	flag.DurationVar(&cfg.PollInterval, "poll", 250*time.Millisecond, "intervalo de polling no modo e2e")
 	flag.StringVar(&cfg.ProviderPrefix, "provider-prefix", "bench-pix", "prefixo de providerId")
