@@ -211,7 +211,7 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 		"buyId": buy.ID, "id": buy.ID, "accessToken": buy.AccessToken, "status": buy.Status, "amountFiat": totalFiat, "subtotalFiat": amountFiat, "fiatCurrency": fiatCurrency, "paymentMethod": paymentMethod, "feeFiat": fee, "totalFiat": totalFiat, "payoutFiat": payout,
 		"rate": rate, "cryptoAmount": cryptoAmount, "asset": asset, "network": deliveryNetwork, "destAddress": buy.DestAddress,
 		"feePolicy": s.feePolicy(fiatCurrency, rate),
-		"pixKey": paymentPayload["pixKey"], "qrCodeUrl": paymentPayload["qrCodeUrl"], "payment": paymentPayload,
+		"pixKey":    paymentPayload["pixKey"], "qrCodeUrl": paymentPayload["qrCodeUrl"], "payment": paymentPayload,
 		"statusUrl": fmt.Sprintf("/api/buy/%s?accessToken=%s", buy.ID, buy.AccessToken),
 		"streamUrl": fmt.Sprintf("/api/buy/%s/stream?accessToken=%s", buy.ID, buy.AccessToken),
 	})
@@ -807,6 +807,7 @@ func (s *Server) operationalGaps() []string {
 		"pix_webhook":    defaultString(s.cfg.PixWebhookSecret, s.cfg.WebhookSecret) != "",
 		"stripe_webhook": defaultString(s.cfg.StripeWebhookSecret, s.cfg.WebhookSecret) != "",
 		"signer":         s.cfg.SignerUrl != "" && s.cfg.SignerHmacSecret != "",
+		"signer_private": !strings.Contains(strings.ToLower(strings.TrimSpace(s.cfg.SignerUrl)), "up.railway.app"),
 		"lgpd_secret":    s.cfg.LGPDSecret != "",
 		"no_simulations": !s.cfg.AllowSimulations,
 		"sweep_not_stub": !s.cfg.EnableSweepStub,
