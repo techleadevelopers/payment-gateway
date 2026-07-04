@@ -394,7 +394,6 @@ func (db *DB) CreateBuyOrder(ctx context.Context, buy BuyOrderInput) (*BuyOrder,
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.SQL.ExecContext(ctx, `
 	if buy.AccessToken == "" {
 		buy.AccessToken = NewAccessToken()
 	}
