@@ -191,12 +191,118 @@ Configuração opcional no serviço do signer:
 ```env
 CUSTODY_GUARD_ENABLED=true
 CUSTODY_GUARD_POLL_MS=1500
-CUSTODY_TRUSTED_DELEGATES=0xContratoDelegateSeguro
+CUSTODY_TRUSTED_DELEGATES=
 CUSTODY_ALLOWED_SELECTORS=
 CUSTODY_PROTECTED_WALLETS=
 ```
 
 A hot wallet derivada de `EVM_PRIVATE_KEY` entra automaticamente na lista protegida. `CUSTODY_PROTECTED_WALLETS` serve para adicionar outras carteiras. `CUSTODY_TRUSTED_DELEGATES` deve conter somente contratos auditados e esperados. Se o bytecode de um delegate confiável mudar ou surgir delegate desconhecido, o signer bloqueia a assinatura até intervenção operacional.
+
+## Custodia Operacional em Producao
+
+O `CustodyGuard` fica no servico do signer, nao no fluxo PIX. O PIX continua sendo a entrada de pagamento do cliente; a protecao atua no caixa, hot wallet, treasury e assinatura on-chain.
+
+```text
+Cliente paga PIX
+        |
+Gateway confirma ordem
+        |
+Core solicita liquidacao ao signer
+        |
+CustodyGuard valida risco, nonce, limites e lifecycle
+        |
+Signer assina e envia token on-chain
+```
+
+### Protecao EIP-7702
+
+O signer monitora blocos `pending` e `latest` nos RPCs configurados. Quando encontra uma transacao EIP-7702 (`SET_CODE`, type `0x04`), ele:
+
+- le a `authorizationList`;
+- recupera a `authority`, que e a wallet que assinou a autorizacao;
+- verifica se a wallet esta protegida;
+- valida se o delegate esta em `CUSTODY_TRUSTED_DELEGATES`;
+- valida selector permitido, se `CUSTODY_ALLOWED_SELECTORS` estiver configurado;
+- confere se o bytecode hash do delegate confiavel nao mudou;
+- registra evento em `custody_events`;
+- em `paper` ou `live`, abre incidente em `custody_incidents` e bloqueia novas assinaturas.
+
+A hot wallet derivada de `EVM_PRIVATE_KEY` entra automaticamente na lista protegida. `CUSTODY_PROTECTED_WALLETS` adiciona outras carteiras.
+
+### Variaveis do Signer
+
+```env
+CUSTODY_GUARD_ENABLED=true
+CUSTODY_GUARD_POLL_MS=1500
+CUSTODY_MODE=paper
+CUSTODY_UNLOCK_COOLDOWN_SEC=900
+CUSTODY_TRUSTED_DELEGATES=
+CUSTODY_ALLOWED_SELECTORS=
+CUSTODY_PROTECTED_WALLETS=
+TREASURY_MIN_USDT=0
+TREASURY_TARGET_USDT=0
+TREASURY_MAX_USDT=0
+TREASURY_MAX_DAILY_OUTFLOW=0
+TREASURY_LOCKDOWN_THRESHOLD=0
+```
+
+Modos de custodia:
+
+- `shadow`: registra eventos, mas nao bloqueia transferencias. Bom para observar em staging ou no inicio da producao.
+- `paper`: registra incidente persistente e bloqueia `/hd/transfer`. Recomendado para producao inicial.
+- `live`: reservado para resposta automatica futura. Hoje aplica o mesmo bloqueio defensivo do `paper`.
+
+O destrave operacional usa `POST /custody/unlock` no signer, protegido pelo mesmo HMAC do signer: `x-ts`, `x-nonce` e `x-signer-hmac`. O destrave respeita `CUSTODY_UNLOCK_COOLDOWN_SEC`.
+
+### Nonce Manager Persistente
+
+Para evitar colisao de nonce em compras simultaneas, o signer reserva nonce no banco antes de assinar:
+
+```text
+PendingNonceAt(chain)
+        |
+signer_chain_nonces reserva proximo nonce por wallet/rede
+        |
+tx assinada
+        |
+nonce vira submitted ou failed
+```
+
+Tabela usada:
+
+- `signer_chain_nonces`: controla `reserved`, `submitted` e `failed` por `wallet`, `network` e `nonce`.
+
+Isso complementa a idempotencia por ordem. A idempotencia evita duplo envio da mesma ordem; o nonce manager evita conflito entre ordens diferentes sendo liquidadas ao mesmo tempo.
+
+### Lifecycle de Transacoes
+
+Toda transacao enviada pelo signer passa a ser registrada:
+
+- `signer_transactions`: guarda `tx_hash`, `idempotency_key`, origem, destino, token, valor, rede, nonce, status e confirmations.
+- status possiveis hoje: `submitted`, `confirmed`, `reverted`, `failed`.
+- um monitor consulta receipts nos RPCs e atualiza o status.
+
+Isso melhora suporte, auditoria e reconciliacao financeira.
+
+### Politica de Treasury
+
+O signer pode bloquear novas assinaturas quando a saida diaria ultrapassa limites configurados:
+
+- `TREASURY_MAX_DAILY_OUTFLOW`: limite operacional diario de saida.
+- `TREASURY_LOCKDOWN_THRESHOLD`: limite mais severo que retorna erro de lockdown antes de assinar.
+- `TREASURY_MIN_USDT`, `TREASURY_TARGET_USDT` e `TREASURY_MAX_USDT`: politica de caixa exibida no `/readyz` para operacao e alerta.
+
+Valores `0` deixam o limite desabilitado. Para producao com saldo real, configure limites pequenos no inicio e aumente depois de observar o fluxo.
+
+### Tabelas Criadas pelo Signer
+
+- `custody_events`: eventos de seguranca e auditoria.
+- `custody_incidents`: incidente ativo e historico de resolucao.
+- `signer_chain_nonces`: reserva atomica de nonce por wallet e rede.
+- `signer_transactions`: lifecycle das transacoes assinadas/enviadas.
+- `signer_idempotency`: resposta final por idempotency key.
+- `signer_idempotency_locks`: reserva transacional contra corrida de idempotencia.
+- `signer_nonces`: nonces HMAC contra replay.
 
 ## Arquitetura Tecnica
 
@@ -242,16 +348,41 @@ BSC_USDT_CONTRACT=...
 BSC_FULLNODE_URL=...
 TREASURY_HOT=...
 CUSTODY_GUARD_ENABLED=false
+CUSTODY_MODE=paper
+CUSTODY_UNLOCK_COOLDOWN_SEC=900
 CUSTODY_TRUSTED_DELEGATES=
+TREASURY_MIN_USDT=0
+TREASURY_TARGET_USDT=0
+TREASURY_MAX_USDT=0
+TREASURY_MAX_DAILY_OUTFLOW=0
+TREASURY_LOCKDOWN_THRESHOLD=0
 ```
 
 Mais detalhes em [ARCHITECTURE.md](./ARCHITECTURE.md#deploy).
+
+### Custodia, Treasury e EIP-7702
+
+O Custody Guard roda no signer e protege o fluxo financeiro de caixa/hot wallet. Ele nao altera o fluxo PIX: o PIX continua sendo a entrada de pagamento; o signer continua sendo a saida on-chain.
+
+Na camada de custodia, o signer agora possui:
+
+- eventos persistentes em `custody_events`;
+- incidente ativo em `custody_incidents`;
+- modo `shadow`, `paper` ou `live`;
+- cooldown para destrave operacional via `POST /custody/unlock`;
+- reserva atomica de nonce em `signer_chain_nonces`;
+- lifecycle de transacoes em `signer_transactions`;
+- politica de treasury para limitar saida diaria antes de assinar.
+
+Em producao, use `CUSTODY_MODE=paper` primeiro. `shadow` serve para observar sem bloquear. `live` fica reservado para uma etapa futura com resposta automatica depois de validacao operacional.
 
 ## Documentacao Tecnica
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md): especificacao tecnica e operacional.
 - [schema.sql](./schema.sql): estrutura SQL.
 - [signer/README.md](./signer/README.md): signer isolado.
+- [contracts/README.md](./contracts/README.md): contratos BSC editaveis para treasury, custody e delegates.
+- [contracts/AUDIT_NOTES.md](./contracts/AUDIT_NOTES.md): notas de auditoria e plano seguro de adocao.
 
 ## Licenca
 
