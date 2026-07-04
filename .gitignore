@@ -15,6 +15,13 @@ payment-gateway
 # Logs do sistema
 *.log
 
+# Node/Hardhat
+node_modules/
+contracts/node_modules/
+contracts/cache/
+contracts/artifacts/
+contracts/typechain-types/
+
 # Pastas de ferramentas ou IDEs (VS Code / JetBrains)
 .vscode/
 .idea/
