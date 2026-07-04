@@ -84,8 +84,14 @@ SIGNER_ALLOW_SIMULATION=true
 No service da API principal, configure:
 
 ```env
-SIGNER_URL=https://url-privada-ou-publica-do-signer
+SIGNER_URL=http://signer.railway.internal:4010
 SIGNER_HMAC_SECRET=mesmo-valor-do-HMAC_SECRET
+```
+
+Em producao, a API principal deve chamar o signer pela rede privada do Railway. Nao use `https://...up.railway.app` em `SIGNER_URL`; esse dominio e publico e a API bloqueia o boot por seguranca. Se o service do signer tiver outro nome no Railway, troque `signer` pelo nome real do service:
+
+```env
+SIGNER_URL=http://NOME_DO_SERVICE.railway.internal:4010
 ```
 
 Nota: o signer atual assina BSC/BEP20 e BSC/EVM no endpoint `POST /hd/transfer`, com `network` no payload. O campo `derivationIndex` fica bloqueado por padrão na hot wallet; sweep HD deve usar signer dedicado e política própria.
