@@ -23,6 +23,7 @@ const eip7702DelegationPrefix = "0xef0100"
 
 type CustodyGuard struct {
 	cfg             *SignerConfig
+	store           signerStore
 	protected       map[common.Address]bool
 	trusted         map[common.Address]common.Hash
 	allowedSelector map[[4]byte]bool
@@ -35,9 +36,10 @@ type rpcBlockWithTransactions struct {
 	Transactions []*types.Transaction `json:"transactions"`
 }
 
-func NewCustodyGuard(cfg *SignerConfig) (*CustodyGuard, error) {
+func NewCustodyGuard(cfg *SignerConfig, store signerStore) (*CustodyGuard, error) {
 	guard := &CustodyGuard{
 		cfg:             cfg,
+		store:           store,
 		protected:       parseAddressSet(cfg.CustodyProtectedRaw),
 		trusted:         make(map[common.Address]common.Hash),
 		allowedSelector: parseSelectorSet(cfg.CustodySelectorsRaw),
@@ -72,14 +74,36 @@ func (g *CustodyGuard) Locked() (bool, string) {
 }
 
 func (g *CustodyGuard) Lock(reason string) {
+	mode := "paper"
+	if g.cfg != nil {
+		mode = normalizeCustodyMode(g.cfg.CustodyMode)
+	}
+	g.recordEvent("signer_locked", reason, "", "")
+	if mode == "shadow" {
+		slog.Warn("custody guard detectou risco em shadow mode", "reason", reason)
+		return
+	}
 	g.locked.Store(true)
 	g.reason.Store(reason)
-	slog.Error("custody guard ativou lockdown", "reason", reason)
+	if g.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := g.store.OpenCustodyIncident(ctx, reason, mode); err != nil {
+			slog.Error("falha ao persistir incidente de custodia", "error", err)
+		}
+	}
+	slog.Error("custody guard ativou lockdown", "reason", reason, "mode", mode)
 }
 
 func (g *CustodyGuard) Start(ctx context.Context) {
 	if !g.Enabled() {
 		return
+	}
+	if g.store != nil {
+		if incident, ok, err := g.store.ActiveCustodyIncident(ctx); err == nil && ok {
+			g.locked.Store(true)
+			g.reason.Store("incidente persistente: " + incident.Reason)
+		}
 	}
 	poll := time.Duration(g.cfg.CustodyGuardPollMs) * time.Millisecond
 	if poll < 500*time.Millisecond {
@@ -89,7 +113,7 @@ func (g *CustodyGuard) Start(ctx context.Context) {
 		g.Lock("falha ao carregar hashes dos delegates confiaveis: " + err.Error())
 		return
 	}
-	slog.Info("custody guard EIP-7702 iniciado", "protected_wallets", len(g.protected), "trusted_delegates", len(g.trusted), "poll_ms", poll.Milliseconds())
+	slog.Info("custody guard EIP-7702 iniciado", "protected_wallets", len(g.protected), "trusted_delegates", len(g.trusted), "poll_ms", poll.Milliseconds(), "mode", g.cfg.CustodyMode)
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
@@ -151,12 +175,14 @@ func (g *CustodyGuard) inspectTransaction(source string, tx *types.Transaction) 
 		}
 		if len(g.allowedSelector) > 0 {
 			if _, ok := g.allowedSelector[selector]; !ok {
+				g.recordEvent("unknown_selector", "EIP-7702 selector nao permitido", tx.Hash().Hex(), authority.Hex())
 				g.Lock("EIP-7702 selector nao permitido source=" + source + " tx=" + tx.Hash().Hex())
 				return
 			}
 		}
 		expectedHash, trusted := g.trusted[auth.Address]
 		if !trusted {
+			g.recordEvent("unknown_delegate", "EIP-7702 delegate desconhecido", tx.Hash().Hex(), authority.Hex())
 			g.Lock("EIP-7702 delegate desconhecido source=" + source + " wallet=" + authority.Hex() + " delegate=" + auth.Address.Hex() + " tx=" + tx.Hash().Hex())
 			return
 		}
@@ -166,6 +192,56 @@ func (g *CustodyGuard) inspectTransaction(source string, tx *types.Transaction) 
 				return
 			}
 		}
+	}
+}
+
+func (g *CustodyGuard) Unlock(ctx context.Context, note string) error {
+	if g == nil {
+		return nil
+	}
+	if g.store != nil {
+		incident, ok, err := g.store.ActiveCustodyIncident(ctx)
+		if err != nil {
+			return err
+		}
+		if ok {
+			cooldownSeconds := 0
+			if g.cfg != nil {
+				cooldownSeconds = g.cfg.CustodyUnlockCooldown
+			}
+			cooldown := time.Duration(cooldownSeconds) * time.Second
+			if cooldown > 0 && time.Since(incident.CreatedAt) < cooldown {
+				return errors.New("cooldown de custodia ainda ativo")
+			}
+			if err := g.store.ResolveCustodyIncident(ctx, note); err != nil {
+				return err
+			}
+		}
+	}
+	g.locked.Store(false)
+	g.reason.Store("")
+	g.recordEvent("signer_unlocked", note, "", "")
+	return nil
+}
+
+func (g *CustodyGuard) recordEvent(kind, reason, txHash, wallet string) {
+	if g == nil || g.store == nil {
+		return
+	}
+	mode := "paper"
+	if g.cfg != nil {
+		mode = normalizeCustodyMode(g.cfg.CustodyMode)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := g.store.RecordCustodyEvent(ctx, CustodyEvent{
+		Kind:   kind,
+		Reason: reason,
+		Mode:   mode,
+		TxHash: txHash,
+		Wallet: wallet,
+	}); err != nil {
+		slog.Warn("falha ao registrar evento de custodia", "kind", kind, "error", err)
 	}
 }
 
