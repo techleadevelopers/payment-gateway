@@ -179,7 +179,7 @@ func (c *Config) ValidateProduction() error {
 	}
 	signerURL := strings.ToLower(strings.TrimSpace(c.SignerUrl))
 	if strings.Contains(signerURL, "up.railway.app") {
-		return fmt.Errorf("SIGNER_URL deve usar rede privada em producao, nao dominio publico Railway")
+		return fmt.Errorf("SIGNER_URL deve usar rede privada em producao, nao dominio publico Railway; exemplo: http://signer.railway.internal:4010")
 	}
 	return nil
 }
