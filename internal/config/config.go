@@ -31,21 +31,11 @@ type Config struct {
 	FeeMinBrl              float64
 	BuyHotDerivationIndex  int
 
-	// Tron / USDT TRC20
-	TronFullNodeURL   string
-	TronFullNodeUrl   string
-	TronSolidityURL   string
-	TronUsdtContract  string
-	TronUsdtDecimals  int
-	TronConfirmations int
-	TronXPub          string
-	TronHmacSecret    string
-
 	// Regras de Limite e Fraude
 	PixMaxOrdersPer24h      int
 	PixMaxBrlPer24h         float64
 	OrderHoldSecForNewDest  int
-	TronDepositTolerancePct float64
+	BscDepositTolerancePct  float64
 
 	// PagBank
 	PagSeguroApiToken   string
@@ -59,12 +49,14 @@ type Config struct {
 	SignerUrl         string
 	SignerNetwork     string
 	SignerHmacSecret  string
+	BscRpcUrls        string
+	BscUsdtContract   string
 	EnableSweepWorker bool
 	EnableSweepStub   bool
 	SweepBatchUsdtMin float64
 	SweepBatchUsdtMax float64
 	SweepFrequencyMs  int
-	TronGasReserveTrx float64
+	BscGasReserveBNB  float64
 
 	// SMTP / mensagens
 	SMTPHost      string
@@ -106,19 +98,10 @@ func LoadConfig() *Config {
 		FeeMinBrl:              getEnvAsFloat("FEE_MIN_BRL", 0),
 		BuyHotDerivationIndex:  getEnvAsInt("BUY_HOT_DERIVATION_INDEX", 0),
 
-		TronFullNodeURL:   getEnv("TRON_FULLNODE_URL", ""),
-		TronFullNodeUrl:   getEnv("TRON_FULLNODE_URL", ""),
-		TronSolidityURL:   getEnv("TRON_SOLIDITY_URL", ""),
-		TronUsdtContract:  getEnv("TRON_USDT_CONTRACT", ""),
-		TronUsdtDecimals:  getEnvAsInt("TRON_USDT_DECIMALS", 6),
-		TronConfirmations: getEnvAsInt("TRON_CONFIRMATIONS", 20),
-		TronXPub:          getEnv("TRON_XPUB", ""),
-		TronHmacSecret:    getEnv("TRON_HMAC_SECRET", ""),
-
 		PixMaxOrdersPer24h:      getEnvAsInt("PIX_MAX_ORDERS_PER_24H", 5),
 		PixMaxBrlPer24h:         getEnvAsFloat("PIX_MAX_BRL_PER_24H", 20000.0),
 		OrderHoldSecForNewDest:  getEnvAsInt("ORDER_HOLD_SEC_FOR_NEW_DEST", 180),
-		TronDepositTolerancePct: getEnvAsFloat("TRON_DEPOSIT_TOLERANCE_PCT", 0.02),
+		BscDepositTolerancePct:  getEnvAsFloat("BSC_DEPOSIT_TOLERANCE_PCT", 0.02),
 
 		PagSeguroApiToken:   getEnv("PAGSEGURO_API_TOKEN", ""),
 		PagSeguroApiBaseUrl: getEnv("PAGSEGURO_API_BASE_URL", "https://api.pagseguro.com"),
@@ -128,14 +111,16 @@ func LoadConfig() *Config {
 		TreasuryHot:       getEnv("TREASURY_HOT", ""),
 		TreasuryCold:      getEnv("TREASURY_COLD", ""),
 		SignerUrl:         getEnv("SIGNER_URL", ""),
-		SignerNetwork:     strings.ToLower(getEnv("SIGNER_NETWORK", "tron")),
+		SignerNetwork:     strings.ToLower(getEnv("SIGNER_NETWORK", "bsc")),
 		SignerHmacSecret:  getEnv("SIGNER_HMAC_SECRET", ""),
+		BscRpcUrls:        getBscRpcUrls(),
+		BscUsdtContract:   getEnv("BSC_USDT_CONTRACT", getEnv("BSC_TOKEN_CONTRACT", "")),
 		EnableSweepWorker: getEnvAsBool("ENABLE_SWEEP_WORKER", false),
 		EnableSweepStub:   getEnvAsBool("ENABLE_SWEEP_STUB", false),
 		SweepBatchUsdtMin: getEnvAsFloat("SWEEP_BATCH_USDT_MIN", 0),
 		SweepBatchUsdtMax: getEnvAsFloat("SWEEP_BATCH_USDT_MAX", 1_000_000),
 		SweepFrequencyMs:  getEnvAsInt("SWEEP_FREQUENCY_MS", 30000),
-		TronGasReserveTrx: getEnvAsFloat("TRON_GAS_RESERVE_TRX", 5),
+		BscGasReserveBNB:  getEnvAsFloat("BSC_GAS_RESERVE_BNB", 0.003),
 
 		SMTPHost:      getEnv("SMTP_HOST", ""),
 		SMTPPort:      getEnvAsInt("SMTP_PORT", 587),
@@ -165,11 +150,15 @@ func (c *Config) ValidateProduction() error {
 		"PIX_WEBHOOK_SECRET":  c.PixWebhookSecret,
 		"SIGNER_URL":          c.SignerUrl,
 		"SIGNER_HMAC_SECRET":  c.SignerHmacSecret,
-		"TRON_XPUB":           c.TronXPub,
-		"TRON_USDT_CONTRACT":  c.TronUsdtContract,
-		"TRON_FULLNODE_URL":   c.TronFullNodeURL,
 		"PAGSEGURO_API_TOKEN": c.PagSeguroApiToken,
 		"TREASURY_HOT":        c.TreasuryHot,
+	}
+	switch strings.ToLower(strings.TrimSpace(c.SignerNetwork)) {
+	case "bsc", "evm":
+		required["BSC_RPC_URLS"] = c.BscRpcUrls
+		required["BSC_USDT_CONTRACT"] = c.BscUsdtContract
+	default:
+		return fmt.Errorf("SIGNER_NETWORK deve ser bsc em producao")
 	}
 	var missing []string
 	for key, value := range required {
@@ -186,9 +175,6 @@ func (c *Config) ValidateProduction() error {
 	if c.EnableSweepStub {
 		return fmt.Errorf("ENABLE_SWEEP_STUB deve ser false em producao")
 	}
-	if strings.ToLower(strings.TrimSpace(c.SignerNetwork)) != "tron" {
-		return fmt.Errorf("SIGNER_NETWORK deve ser tron em producao")
-	}
 	return nil
 }
 
@@ -198,6 +184,19 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getBscRpcUrls() string {
+	if raw := strings.TrimSpace(getEnv("BSC_RPC_URLS", getEnv("RPC_URLS", getEnv("RPC_URL", "")))); raw != "" {
+		return raw
+	}
+	var urls []string
+	for _, key := range []string{"ALCHEMY_BSC_RPC_URL_1", "ALCHEMY_BSC_RPC_URL_2", "ALCHEMY_BSC_RPC_URL", "ALCHEMY_BSC_FALLBACK_RPC_URL"} {
+		if url := strings.TrimSpace(getEnv(key, "")); url != "" {
+			urls = append(urls, url)
+		}
+	}
+	return strings.Join(urls, ",")
 }
 
 func getEnvAsInt(key string, defaultValue int) int {
