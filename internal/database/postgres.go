@@ -25,6 +25,7 @@ type DB struct {
 
 type OrderInput struct {
 	ID                string
+	AccessToken       string
 	Status            string
 	AmountBRL         float64
 	AmountUSDT        float64
@@ -43,6 +44,7 @@ type OrderInput struct {
 
 type BuyOrder struct {
 	ID                string          `json:"id"`
+	AccessToken       string          `json:"accessToken,omitempty"`
 	Status            string          `json:"status"`
 	AmountBRL         float64         `json:"amount_brl"`
 	AmountFiat        float64         `json:"amount_fiat"`
@@ -69,6 +71,7 @@ type BuyOrder struct {
 
 type BuyOrderInput struct {
 	ID                string
+	AccessToken       string
 	Status            string
 	AmountBRL         float64
 	AmountFiat        float64
@@ -156,15 +159,18 @@ func (db *DB) CreateOrder(ctx context.Context, order OrderInput) (*models.Order,
 	if order.ID == "" {
 		order.ID = NewID()
 	}
+	if order.AccessToken == "" {
+		order.AccessToken = NewAccessToken()
+	}
 	if (order.PixCpf != "" || order.PixPhone != "") && db.privacy == nil {
 		return nil, fmt.Errorf("LGPD_SECRET nao configurado para salvar dados pessoais")
 	}
 	pixCpfHash := privacy.Hash(order.PixCpf, db.cfg.LGPDSecret)
 	pixPhoneHash := privacy.Hash(order.PixPhone, db.cfg.LGPDSecret)
 	_, err := db.SQL.ExecContext(ctx, `
-		INSERT INTO orders (id, request_id, status, amount_brl, btc_amount, fee_brl, payout_brl, address, asset, network, rate_locked, rate_lock_expires_at, created_at, pix_cpf_hash, pix_phone_hash, derivation_index)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),$13,$14,$15)`,
-		order.ID, nullableString(order.RequestID), order.Status, order.AmountBRL, order.AmountUSDT, order.FeeBRL, order.PayoutBRL, order.Address,
+		INSERT INTO orders (id, access_token, request_id, status, amount_brl, btc_amount, fee_brl, payout_brl, address, asset, network, rate_locked, rate_lock_expires_at, created_at, pix_cpf_hash, pix_phone_hash, derivation_index)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),$14,$15,$16)`,
+		order.ID, order.AccessToken, nullableString(order.RequestID), order.Status, order.AmountBRL, order.AmountUSDT, order.FeeBRL, order.PayoutBRL, order.Address,
 		order.Asset, order.Network, order.RateLocked, order.RateLockExpiresAt, nullableString(pixCpfHash), nullableString(pixPhoneHash), order.DerivationIndex,
 	)
 	if err != nil {
@@ -194,7 +200,7 @@ func (db *DB) CreateOrder(ctx context.Context, order OrderInput) (*models.Order,
 
 func (db *DB) GetOrder(ctx context.Context, id string) (*models.Order, error) {
 	row := db.SQL.QueryRowContext(ctx, `
-		SELECT id, status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
+		SELECT id, COALESCE(access_token, ''), status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
 		       rate_locked, rate_lock_expires_at, created_at, COALESCE(updated_at, created_at), tx_hash, error,
 		       deposit_tx, deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, derivation_index
 		FROM orders o
@@ -205,7 +211,7 @@ func (db *DB) GetOrder(ctx context.Context, id string) (*models.Order, error) {
 
 func (db *DB) GetPendingOrders(ctx context.Context) ([]models.Order, error) {
 	rows, err := db.SQL.QueryContext(ctx, `
-		SELECT id, status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
+		SELECT id, COALESCE(access_token, ''), status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
 		       rate_locked, rate_lock_expires_at, created_at, COALESCE(updated_at, created_at), tx_hash, error,
 		       deposit_tx, deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, derivation_index
 		FROM orders o
@@ -356,7 +362,7 @@ func (db *DB) MarkSweep(ctx context.Context, id, status, txHash string) error {
 
 func (db *DB) OrdersToSweep(ctx context.Context) ([]models.Order, error) {
 	rows, err := db.SQL.QueryContext(ctx, `
-		SELECT id, status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
+		SELECT id, COALESCE(access_token, ''), status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
 		       rate_locked, rate_lock_expires_at, created_at, COALESCE(updated_at, created_at), tx_hash, error,
 		       deposit_tx, deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, derivation_index
 		FROM orders o
@@ -389,9 +395,13 @@ func (db *DB) CreateBuyOrder(ctx context.Context, buy BuyOrderInput) (*BuyOrder,
 		return nil, err
 	}
 	_, err = db.SQL.ExecContext(ctx, `
-		INSERT INTO buy_orders (id, request_id, status, amount_brl, amount_fiat, fiat_currency, payment_method, provider_payment_id, fee_brl, payout_brl, crypto_amount, asset, dest_address, rate_locked, rate_lock_expires_at, pix_payload)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-		id, nullableString(buy.RequestID), buy.Status, buy.AmountBRL, buy.AmountFiat, buy.FiatCurrency, buy.PaymentMethod, nullableString(buy.ProviderPaymentID),
+	if buy.AccessToken == "" {
+		buy.AccessToken = NewAccessToken()
+	}
+	_, err = db.SQL.ExecContext(ctx, `
+		INSERT INTO buy_orders (id, access_token, request_id, status, amount_brl, amount_fiat, fiat_currency, payment_method, provider_payment_id, fee_brl, payout_brl, crypto_amount, asset, dest_address, rate_locked, rate_lock_expires_at, pix_payload)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		id, buy.AccessToken, nullableString(buy.RequestID), buy.Status, buy.AmountBRL, buy.AmountFiat, buy.FiatCurrency, buy.PaymentMethod, nullableString(buy.ProviderPaymentID),
 		buy.FeeBRL, buy.PayoutBRL, buy.CryptoAmount, buy.Asset, buy.DestAddress, buy.RateLocked, buy.RateLockExpiresAt, rawPayload)
 	if err != nil {
 		return nil, err
@@ -402,7 +412,7 @@ func (db *DB) CreateBuyOrder(ctx context.Context, buy BuyOrderInput) (*BuyOrder,
 
 func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
 	row := db.SQL.QueryRowContext(ctx, `
-		SELECT id, request_id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
+		SELECT id, COALESCE(access_token, ''), request_id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
 		       COALESCE(fiat_currency, 'BRL'), COALESCE(payment_method, 'pix'), provider_payment_id,
 		       COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
 		       crypto_amount::float8, asset, dest_address, rate_locked::float8, rate_lock_expires_at,
@@ -411,7 +421,7 @@ func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
 	var buy BuyOrder
 	var requestID, providerPaymentID, txHashOut, errMsg sql.NullString
 	var paidAt, settledAt, deliveredAt sql.NullTime
-	if err := row.Scan(&buy.ID, &requestID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
+	if err := row.Scan(&buy.ID, &buy.AccessToken, &requestID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
 		&buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
 		&buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &paidAt, &settledAt, &deliveredAt, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
@@ -545,7 +555,7 @@ func (db *DB) HasBuyEvent(ctx context.Context, buyOrderID, eventType, field, val
 
 func (db *DB) ListPendingBuys(ctx context.Context) ([]BuyOrder, error) {
 	rows, err := db.SQL.QueryContext(ctx, `
-		SELECT id, request_id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
+		SELECT id, COALESCE(access_token, ''), request_id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
 		       COALESCE(fiat_currency, 'BRL'), COALESCE(payment_method, 'pix'), provider_payment_id,
 		       COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
 		       crypto_amount::float8, asset, dest_address, rate_locked::float8, rate_lock_expires_at,
@@ -560,7 +570,7 @@ func (db *DB) ListPendingBuys(ctx context.Context) ([]BuyOrder, error) {
 		var buy BuyOrder
 		var requestID, providerPaymentID, txHashOut, errMsg sql.NullString
 		var paidAt, settledAt, deliveredAt sql.NullTime
-		if err := rows.Scan(&buy.ID, &requestID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
+		if err := rows.Scan(&buy.ID, &buy.AccessToken, &requestID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
 			&buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
 			&buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &paidAt, &settledAt, &deliveredAt, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
 			return nil, err
@@ -601,6 +611,32 @@ func NewID() string {
 	return fmt.Sprintf("%s-%s-%s-%s-%s", hex.EncodeToString(b[0:4]), hex.EncodeToString(b[4:6]), hex.EncodeToString(b[6:8]), hex.EncodeToString(b[8:10]), hex.EncodeToString(b[10:16]))
 }
 
+func NewAccessToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return NewID() + NewID()
+	}
+	return hex.EncodeToString(b)
+}
+
+func (db *DB) ValidateOrderAccess(ctx context.Context, id, token string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	var ok bool
+	err := db.SQL.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM orders WHERE id = $1 AND access_token = $2)`, id, token).Scan(&ok)
+	return ok, err
+}
+
+func (db *DB) ValidateBuyAccess(ctx context.Context, id, token string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	var ok bool
+	err := db.SQL.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM buy_orders WHERE id = $1 AND access_token = $2)`, id, token).Scan(&ok)
+	return ok, err
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -611,7 +647,7 @@ func (db *DB) scanOrder(row scanner) (*models.Order, error) {
 	var txHash, errMsg, depositTx, pixCpf, pixPhone sql.NullString
 	var depositAmount sql.NullFloat64
 	var derivationIndex sql.NullInt64
-	err := row.Scan(&o.ID, &status, &o.AmountBRL, &o.AmountUSDT, &o.FeeBRL, &o.PayoutBRL, &o.Address, &o.Asset, &o.Network,
+	err := row.Scan(&o.ID, &o.AccessToken, &status, &o.AmountBRL, &o.AmountUSDT, &o.FeeBRL, &o.PayoutBRL, &o.Address, &o.Asset, &o.Network,
 		&o.RateLocked, &o.RateLockExpiresAt, &o.CreatedAt, &o.UpdatedAt, &txHash, &errMsg, &depositTx, &depositAmount, &pixCpf, &pixPhone, &derivationIndex)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -677,6 +713,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS orders (
   id UUID PRIMARY KEY,
+  access_token TEXT,
   request_id TEXT,
   status VARCHAR(32) NOT NULL,
   amount_brl NUMERIC(18,2) NOT NULL,
@@ -700,6 +737,10 @@ CREATE TABLE IF NOT EXISTS orders (
   pix_phone_hash TEXT,
   derivation_index INT
 );
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS access_token TEXT;
+UPDATE orders SET access_token = encode(gen_random_bytes(32), 'hex') WHERE access_token IS NULL OR access_token = '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_access_token ON orders (access_token);
 
 CREATE TABLE IF NOT EXISTS order_private (
   order_id UUID PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
@@ -758,6 +799,7 @@ CREATE TABLE IF NOT EXISTS sweeps (
 
 CREATE TABLE IF NOT EXISTS buy_orders (
   id UUID PRIMARY KEY,
+  access_token TEXT,
   request_id TEXT,
   status VARCHAR(32) NOT NULL,
   amount_brl NUMERIC(18,2) NOT NULL,
@@ -782,6 +824,7 @@ CREATE TABLE IF NOT EXISTS buy_orders (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS access_token TEXT;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS amount_fiat NUMERIC(18,2);
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS request_id TEXT;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS fiat_currency VARCHAR(8) NOT NULL DEFAULT 'BRL';
@@ -791,6 +834,8 @@ ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 UPDATE buy_orders SET amount_fiat = amount_brl WHERE amount_fiat IS NULL;
+UPDATE buy_orders SET access_token = encode(gen_random_bytes(32), 'hex') WHERE access_token IS NULL OR access_token = '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_orders_access_token ON buy_orders (access_token);
 
 CREATE TABLE IF NOT EXISTS buy_order_events (
   id UUID PRIMARY KEY,
