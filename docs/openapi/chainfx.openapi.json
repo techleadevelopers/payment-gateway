@@ -66,7 +66,29 @@
           "amount": { "type": "number", "example": 500 },
           "wallet": { "type": "string", "example": "0x000000000000000000000000000000000000dEaD" },
           "paymentMethod": { "type": "string", "example": "pix" },
-          "customer": { "type": "object" }
+          "customer": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "example": "Maria Silva" },
+              "email": { "type": "string", "example": "maria@example.com" },
+              "cpf": { "type": "string", "example": "12345678909" },
+              "phone": { "type": "string", "example": "11999999999" },
+              "birthDate": { "type": "string", "example": "1990-05-20" },
+              "address": {
+                "type": "object",
+                "properties": {
+                  "line1": { "type": "string", "example": "Av Paulista" },
+                  "number": { "type": "string", "example": "1000" },
+                  "line2": { "type": "string", "example": "Apto 101" },
+                  "district": { "type": "string", "example": "Bela Vista" },
+                  "city": { "type": "string", "example": "Sao Paulo" },
+                  "state": { "type": "string", "example": "SP" },
+                  "postalCode": { "type": "string", "example": "01310100" },
+                  "country": { "type": "string", "example": "BR" }
+                }
+              }
+            }
+          }
         }
       },
       "SellRequest": {
