@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"math"
@@ -85,6 +86,18 @@ func (s *Server) feePolicy(fiatCurrency string, rate float64) map[string]any {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /developers", s.handleDevelopers)
+	mux.HandleFunc("GET /developers/dashboard", s.handleDevelopersDashboard)
+	mux.HandleFunc("GET /developers/api-keys", s.handleDeveloperAPIKeys)
+	mux.HandleFunc("GET /developers/logs", s.handleDeveloperLogs)
+	mux.HandleFunc("GET /openapi.json", s.handleOpenAPI)
+	mux.HandleFunc("GET /rates", s.handleChainFXRates)
+	mux.HandleFunc("POST /quote", s.handleChainFXQuote)
+	mux.HandleFunc("POST /buy", s.handleChainFXBuy)
+	mux.HandleFunc("POST /sell", s.handleChainFXSell)
+	mux.HandleFunc("GET /order/{id}", s.handleChainFXOrder)
+	mux.HandleFunc("POST /webhooks/test", s.handleChainFXWebhookTest)
+	mux.HandleFunc("POST /webhooks/retry", s.handleChainFXWebhookRetry)
 	mux.HandleFunc("GET /api/price", s.handlePrice)
 	mux.HandleFunc("GET /api/quote", s.handleQuote)
 	mux.HandleFunc("POST /api/quote", s.handleQuote)
@@ -291,6 +304,498 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		"usdtbrl": s.workers.PriceWorker.GetPrice("USDTBRL"),
 		"eurusd":  s.workers.PriceWorker.GetPrice("EURUSD"),
 		"btcusdt": s.workers.PriceWorker.GetPrice("BTCUSDT"),
+	})
+}
+
+// ChainFX Phase 1 exposes the infrastructure API without changing the legacy /api surface.
+func (s *Server) handleChainFXRates(w http.ResponseWriter, r *http.Request) {
+	price := s.workers.PriceWorker.GetCurrentPrice()
+	if price <= 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "rates are not loaded yet"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"brand":       "ChainFX",
+		"category":    "Digital FX Payments Infrastructure",
+		"description": "Accept PIX. Deliver digital dollars. Receive stablecoins. Pay out PIX.",
+		"base":        "USDT",
+		"rates": map[string]float64{
+			"USDT_BRL": s.workers.PriceWorker.GetPrice("BRL"),
+			"USDT_USD": s.workers.PriceWorker.GetPrice("USD"),
+			"USDT_EUR": s.workers.PriceWorker.GetPrice("EUR"),
+			"BTC_USDT": s.workers.PriceWorker.GetPrice("BTCUSDT"),
+			"EUR_USD":  s.workers.PriceWorker.GetPrice("EURUSD"),
+		},
+		"supportedAssets": []string{"USDT"},
+		"roadmapAssets":   []string{"EURUSDT", "BTC"},
+		"supportedFiat":   []string{"BRL", "USD"},
+		"rails": map[string][]string{
+			"buy":  {"pix", "stripe"},
+			"sell": {"pix"},
+		},
+		"sandbox": map[string]any{
+			"baseUrl":        "https://sandbox-api.chainfx.com",
+			"defaultTestKey": "sk_test_chainfx_local",
+			"features":       []string{"fake PIX", "fake QR", "fake wallet", "simulated webhooks", "test orders"},
+		},
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+func (s *Server) handleChainFXQuote(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Side          string  `json:"side"`
+		Fiat          string  `json:"fiat"`
+		Asset         string  `json:"asset"`
+		Amount        float64 `json:"amount"`
+		PaymentMethod string  `json:"paymentMethod"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	side := strings.ToLower(defaultString(req.Side, "buy"))
+	asset := strings.ToUpper(defaultString(req.Asset, "USDT"))
+	if side != "buy" && side != "sell" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "side must be buy or sell"})
+		return
+	}
+	if asset != "USDT" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset not supported in phase 1", "supportedAssets": []string{"USDT"}})
+		return
+	}
+	fiatCurrency, paymentMethod, amountFiat := normalizePaymentRail(req.Fiat, req.PaymentMethod, req.Amount, 0, 0)
+	if side == "sell" {
+		fiatCurrency, paymentMethod = "BRL", "pix"
+	}
+	if fiatCurrency == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payment rail not supported"})
+		return
+	}
+	if amountFiat <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amount must be greater than zero"})
+		return
+	}
+	if fiatCurrency == "BRL" && (amountFiat < s.cfg.OrderMinBrl || amountFiat > s.cfg.OrderMaxBrl) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("amount outside limits (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
+		return
+	}
+	rate := s.workers.PriceWorker.GetPrice(fiatCurrency)
+	if rate <= 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "rates are not loaded yet"})
+		return
+	}
+	fee := s.transactionFee(amountFiat, fiatCurrency, rate)
+	expiresAt := time.Now().Add(time.Duration(s.cfg.RateLockSec) * time.Second).UTC()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"quoteId":      "qt_" + strings.ReplaceAll(database.NewID(), "-", ""),
+		"side":         side,
+		"fiat":         fiatCurrency,
+		"asset":        asset,
+		"rate":         rate,
+		"fiatAmount":   amountFiat,
+		"feeFiat":      fee,
+		"totalFiat":    amountFiat + fee,
+		"cryptoAmount": amountFiat / rate,
+		"paymentRail":  paymentMethod,
+		"expiresAt":    expiresAt,
+		"sandbox":      s.chainFXAuthContext(r).Sandbox,
+	})
+}
+
+func (s *Server) handleChainFXBuy(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.authorizeChainFX(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		QuoteID       string  `json:"quoteId"`
+		Fiat          string  `json:"fiat"`
+		Asset         string  `json:"asset"`
+		Amount        float64 `json:"amount"`
+		Wallet        string  `json:"wallet"`
+		PaymentMethod string  `json:"paymentMethod"`
+		Customer      struct {
+			CPF   string `json:"cpf"`
+			Phone string `json:"phone"`
+			Email string `json:"email"`
+		} `json:"customer"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	wallet := strings.TrimSpace(req.Wallet)
+	if wallet == "" && auth.Sandbox {
+		wallet = chainFXFakeWallet()
+	}
+	payload := map[string]any{
+		"amountFiat":    req.Amount,
+		"fiatCurrency":  defaultString(req.Fiat, "BRL"),
+		"paymentMethod": defaultString(req.PaymentMethod, "pix"),
+		"asset":         defaultString(req.Asset, "USDT"),
+		"address":       wallet,
+		"pixCpf":        req.Customer.CPF,
+		"pixPhone":      req.Customer.Phone,
+		"email":         req.Customer.Email,
+	}
+	s.handleCreateBuy(w, cloneJSONRequest(r, payload))
+}
+
+func (s *Server) handleChainFXSell(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.authorizeChainFX(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		QuoteID        string  `json:"quoteId"`
+		Asset          string  `json:"asset"`
+		Network        string  `json:"network"`
+		Amount         float64 `json:"amount"`
+		AmountBRL      float64 `json:"amountBRL"`
+		DepositAddress string  `json:"depositAddress"`
+		Wallet         string  `json:"wallet"`
+		PixCPF         string  `json:"pixCpf"`
+		PixPhone       string  `json:"pixPhone"`
+		Pix            struct {
+			CPF   string `json:"cpf"`
+			Phone string `json:"phone"`
+		} `json:"pix"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	amountBRL := req.AmountBRL
+	if amountBRL <= 0 {
+		amountBRL = req.Amount
+	}
+	depositAddress := firstNonEmpty(req.DepositAddress, req.Wallet)
+	if depositAddress == "" && auth.Sandbox {
+		depositAddress = chainFXFakeWallet()
+	}
+	payload := map[string]any{
+		"amountBRL": amountBRL,
+		"address":   depositAddress,
+		"network":   defaultString(req.Network, "BSC"),
+		"asset":     defaultString(req.Asset, "USDT"),
+		"pixCpf":    firstNonEmpty(req.PixCPF, req.Pix.CPF),
+		"pixPhone":  firstNonEmpty(req.PixPhone, req.Pix.Phone),
+	}
+	s.handleCreateOrder(w, cloneJSONRequest(r, payload))
+}
+
+func (s *Server) handleChainFXOrder(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "order id is required"})
+		return
+	}
+	auth := s.chainFXAuthContext(r)
+	token := customerAccessToken(r)
+	if buy, ok := s.readChainFXBuy(r.Context(), id, token, auth.Valid); ok {
+		writeJSON(w, http.StatusOK, buy)
+		return
+	}
+	if order, ok := s.readChainFXSell(r.Context(), id, token, auth.Valid); ok {
+		writeJSON(w, http.StatusOK, order)
+		return
+	}
+	writeJSON(w, http.StatusNotFound, map[string]any{"error": "order not found"})
+}
+
+func (s *Server) handleChainFXWebhookTest(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.authorizeChainFX(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Event     string `json:"event"`
+		OrderID   string `json:"orderId"`
+		Asset     string `json:"asset"`
+		Amount    string `json:"amount"`
+		TargetURL string `json:"targetUrl"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	event := defaultString(req.Event, "payment.completed")
+	if !validChainFXEvent(event) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported event", "events": chainFXWebhookEvents()})
+		return
+	}
+	payload := map[string]any{
+		"event":     event,
+		"orderId":   defaultString(req.OrderID, "ord_test_123"),
+		"status":    chainFXEventStatus(event),
+		"asset":     defaultString(req.Asset, "USDT"),
+		"amount":    defaultString(req.Amount, "96.52"),
+		"timestamp": time.Now().UTC(),
+		"sandbox":   auth.Sandbox,
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"delivered":   false,
+		"simulated":   true,
+		"targetUrl":   req.TargetURL,
+		"payload":     payload,
+		"retryPolicy": "Phase 2: dashboard logs and webhook retry",
+	})
+}
+
+func (s *Server) handleChainFXWebhookRetry(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.authorizeChainFX(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Event     string `json:"event"`
+		OrderID   string `json:"orderId"`
+		Side      string `json:"side"`
+		TargetURL string `json:"targetUrl"`
+		Asset     string `json:"asset"`
+		Amount    string `json:"amount"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	req.OrderID = strings.TrimSpace(req.OrderID)
+	if req.OrderID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "orderId is required"})
+		return
+	}
+	event := defaultString(req.Event, "payment.completed")
+	if !validChainFXEvent(event) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported event", "events": chainFXWebhookEvents()})
+		return
+	}
+	source, payload, found := s.chainFXWebhookPayloadFromOrder(r.Context(), req.OrderID, req.Side, event, req.Asset, req.Amount, auth.Sandbox)
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "order not found"})
+		return
+	}
+	delivery := map[string]any{"attempted": false}
+	if strings.TrimSpace(req.TargetURL) != "" {
+		result := s.deliverChainFXWebhook(r.Context(), req.TargetURL, event, payload)
+		delivery = result
+	}
+	logPayload := map[string]any{
+		"requestId": requestID(r),
+		"event":     event,
+		"targetUrl": req.TargetURL,
+		"delivery":  delivery,
+		"sandbox":   auth.Sandbox,
+	}
+	if source == "buy" {
+		_ = s.db.AddBuyEvent(r.Context(), req.OrderID, "developer.webhook_retry", logPayload)
+	} else {
+		_ = s.db.AddEvent(r.Context(), req.OrderID, "developer.webhook_retry", logPayload)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"source":   source,
+		"payload":  payload,
+		"delivery": delivery,
+	})
+}
+
+func (s *Server) handleDeveloperAPIKeys(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.authorizeChainFX(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":              auth.Mode,
+		"sandbox":           auth.Sandbox,
+		"requireApiKey":     s.cfg.ChainFXRequireAPIKey,
+		"livePublicKeys":    maskCSVKeys(s.cfg.ChainFXLivePublicKeys),
+		"liveSecretKeys":    maskCSVKeys(s.cfg.ChainFXLiveSecretKeys),
+		"testPublicKeys":    maskCSVKeys(s.cfg.ChainFXTestPublicKeys),
+		"testSecretKeys":    maskCSVKeys(s.cfg.ChainFXTestSecretKeys),
+		"authentication":    "Authorization: Bearer sk_live_xxx",
+		"productionWarning": "Do not use sk_test keys on the production host.",
+	})
+}
+
+func (s *Server) handleDeveloperLogs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeChainFX(w, r); !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	events, err := s.db.ListDeveloperEvents(r.Context(), limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events": events,
+		"count":  len(events),
+	})
+}
+
+func (s *Server) handleDevelopersDashboard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeChainFX(w, r); !ok {
+		return
+	}
+	limit := 25
+	events, _ := s.db.ListDeveloperEvents(r.Context(), limit)
+	keys := map[string]any{
+		"livePublic": maskCSVKeys(s.cfg.ChainFXLivePublicKeys),
+		"liveSecret": maskCSVKeys(s.cfg.ChainFXLiveSecretKeys),
+		"testPublic": maskCSVKeys(s.cfg.ChainFXTestPublicKeys),
+		"testSecret": maskCSVKeys(s.cfg.ChainFXTestSecretKeys),
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	var rows strings.Builder
+	for _, event := range events {
+		rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td></tr>`,
+			html.EscapeString(event.CreatedAt.Format(time.RFC3339)),
+			html.EscapeString(event.Source),
+			html.EscapeString(event.Type),
+			html.EscapeString(event.OrderID),
+			html.EscapeString(strings.TrimSpace(string(event.Payload))),
+		))
+	}
+	apiKey := html.EscapeString(chainFXAPIKey(r))
+	_, _ = fmt.Fprintf(w, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChainFX Developer Dashboard</title>
+  <style>
+    :root{--bg:#eef4fa;--panel:#fff;--ink:#102a43;--muted:#64748b;--line:#d8e5f2;--blue:#1266d6;--cyan:#12b7d8}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 Inter,system-ui,Segoe UI,sans-serif}
+    header{padding:34px 28px;background:linear-gradient(135deg,#fff,#e8f8ff);border-bottom:1px solid var(--line)}
+    main{padding:24px 28px;max-width:1240px;margin:auto}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px;box-shadow:0 16px 40px rgba(16,42,67,.08)}
+    h1{margin:0 0 6px;font-size:34px}h2{margin:0 0 12px;font-size:18px}p{margin:0;color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+    table{width:100%%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f8fbff;color:#475569}td code{white-space:pre-wrap;word-break:break-word;font-size:12px}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}a{color:#fff;background:linear-gradient(135deg,var(--blue),var(--cyan));padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:700}.muted{color:var(--muted)}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}main,header{padding-left:18px;padding-right:18px}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ChainFX Developer Dashboard</h1>
+    <p>API keys, webhook logs and retry operations for Digital FX Payments.</p>
+    <div class="actions"><a href="/developers/api-keys?apiKey=%s">API Keys JSON</a><a href="/developers/logs?apiKey=%s">Logs JSON</a><a href="/openapi.json">OpenAPI</a></div>
+  </header>
+  <main>
+    <section class="grid">
+      <article class="card"><h2>Live Public</h2><p><code>%v</code></p></article>
+      <article class="card"><h2>Live Secret</h2><p><code>%v</code></p></article>
+      <article class="card"><h2>Test Public</h2><p><code>%v</code></p></article>
+      <article class="card"><h2>Test Secret</h2><p><code>%v</code></p></article>
+    </section>
+    <section style="margin-top:22px">
+      <h2>Recent Logs</h2>
+      <table><thead><tr><th>At</th><th>Source</th><th>Type</th><th>Order</th><th>Payload</th></tr></thead><tbody>%s</tbody></table>
+      <p class="muted" style="margin-top:14px">Retry endpoint: POST /webhooks/retry with Bearer API key, orderId, event and optional targetUrl.</p>
+    </section>
+  </main>
+</body>
+</html>`, apiKey, apiKey, keys["livePublic"], keys["liveSecret"], keys["testPublic"], keys["testSecret"], rows.String())
+}
+
+func (s *Server) handleDevelopers(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChainFX Developers</title>
+  <style>
+    :root{color-scheme:light;--ink:#102a43;--muted:#5f6c7b;--line:#dbe7f3;--blue:#0b72d9;--cyan:#0fb7d4;--bg:#f6f9fc}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+    header{padding:72px 24px 44px;background:linear-gradient(135deg,#fff,#edf8ff);border-bottom:1px solid var(--line)}
+    main{max-width:1120px;margin:auto;padding:32px 24px 64px}.hero,.grid{max-width:1120px;margin:auto}
+    h1{font-size:clamp(36px,5vw,68px);line-height:1;margin:0 0 18px}h2{margin:0 0 12px;font-size:22px}p{color:var(--muted);margin:0 0 18px}
+    code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}pre{overflow:auto;background:#0b1726;color:#dff7ff;padding:18px;border-radius:8px}
+    .pill{display:inline-flex;margin:0 8px 8px 0;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:20px;box-shadow:0 16px 42px rgba(16,42,67,.08)}
+    a{color:var(--blue);font-weight:700;text-decoration:none}.cta{display:inline-flex;padding:12px 16px;border-radius:8px;color:#fff;background:linear-gradient(135deg,var(--blue),var(--cyan))}
+    @media(max-width:820px){.grid{grid-template-columns:1fr}header{padding-top:44px}}
+  </style>
+</head>
+<body>
+  <header><section class="hero">
+    <span class="pill">Digital FX Payments Infrastructure</span>
+    <h1>ChainFX Developers</h1>
+    <p>Accept PIX. Deliver digital dollars. Receive stablecoins. Pay out PIX.</p>
+    <a class="cta" href="/openapi.json">OpenAPI JSON</a>
+  </section></header>
+  <main>
+    <section class="grid">
+      <article class="card"><h2>REST API</h2><p>GET /rates, POST /quote, POST /buy, POST /sell, GET /order/:id.</p></article>
+      <article class="card"><h2>Webhooks</h2><p>payment.created, payment.completed, payment.failed, order.confirmed, crypto.sent, crypto.confirmed, order.failed.</p></article>
+      <article class="card"><h2>Sandbox</h2><p>Use <code>sk_test_chainfx_local</code> with fake PIX, fake QR, fake wallet and simulated webhook payloads.</p></article>
+      <article class="card"><h2>API Keys</h2><p><code>Authorization: Bearer sk_live_xxx</code> or <code>sk_test_xxx</code>. Configure live keys with <code>CHAINFX_LIVE_SECRET_KEYS</code>.</p></article>
+      <article class="card"><h2>SDKs</h2><p>Phase 3 includes Node and Python SDKs in the repository. Go and PHP stay on the roadmap.</p></article>
+      <article class="card"><h2>Status</h2><p>Use <a href="/readyz">/readyz</a> for backend readiness and <a href="/rates">/rates</a> for rate availability.</p></article>
+      <article class="card"><h2>Dashboard</h2><p>Phase 2: <code>/developers/dashboard?apiKey=sk_live_xxx</code> with API keys, logs and webhook retry operations.</p></article>
+      <article class="card"><h2>Logs</h2><p><code>GET /developers/logs</code> reads recent buy/sell events from the gateway audit tables.</p></article>
+      <article class="card"><h2>Retry</h2><p><code>POST /webhooks/retry</code> rebuilds a webhook payload from an order and optionally posts it to a target URL.</p></article>
+    </section>
+    <h2 style="margin-top:32px">Quote Example</h2>
+    <pre>POST /quote
+{
+  "side": "buy",
+  "fiat": "BRL",
+  "asset": "USDT",
+  "amount": 500
+}</pre>
+    <h2>Node Example</h2>
+    <pre>const order = await chainfx.buy({
+  fiat: "BRL",
+  asset: "USDT",
+  amount: 500,
+  wallet: "0x..."
+});</pre>
+  </main>
+</body>
+</html>`))
+}
+
+func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"openapi": "3.1.0",
+		"info": map[string]any{
+			"title":       "ChainFX API",
+			"version":     "1.0.0-phase3",
+			"description": "Digital FX Payments API for PIX <> stablecoin flows. Phase 3 includes SDK Node/Python, OpenAPI and examples.",
+		},
+		"servers": []map[string]string{
+			{"url": "https://api.chainfx.com", "description": "Production"},
+			{"url": "https://sandbox-api.chainfx.com", "description": "Sandbox"},
+		},
+		"components": map[string]any{
+			"securitySchemes": map[string]any{
+				"bearerAuth": map[string]string{"type": "http", "scheme": "bearer"},
+			},
+		},
+		"paths": map[string]any{
+			"/rates":               map[string]any{"get": map[string]any{"summary": "Current FX and crypto rates"}},
+			"/quote":               map[string]any{"post": map[string]any{"summary": "Create a rate-locked quote"}},
+			"/buy":                 map[string]any{"post": map[string]any{"summary": "Create a PIX/card to USDT order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/sell":                map[string]any{"post": map[string]any{"summary": "Create a USDT to PIX BRL order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/order/{id}":          map[string]any{"get": map[string]any{"summary": "Read an order by ID"}},
+			"/webhooks/test":       map[string]any{"post": map[string]any{"summary": "Generate a simulated webhook payload", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/webhooks/retry":      map[string]any{"post": map[string]any{"summary": "Retry a webhook for an existing order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/developers/api-keys": map[string]any{"get": map[string]any{"summary": "List configured API keys masked", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/developers/logs":     map[string]any{"get": map[string]any{"summary": "List recent developer logs", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+		},
+		"x-chainfx": map[string]any{
+			"category":        "Digital FX Payments Infrastructure",
+			"phase":           "3",
+			"supportedAssets": []string{"USDT"},
+			"phase2":          []string{"Developer Dashboard", "API Keys", "Logs", "Webhook Retry"},
+			"phase3":          []string{"Node SDK", "Python SDK", "OpenAPI", "Examples"},
+			"notNow":          []string{"bridge", "pool", "AMM", "yield", "DEX", "LP"},
+		},
 	})
 }
 
@@ -827,6 +1332,291 @@ func (s *Server) operationalGaps() []string {
 	return gaps
 }
 
+type chainFXAuth struct {
+	Valid   bool
+	Sandbox bool
+	Mode    string
+}
+
+func (s *Server) authorizeChainFX(w http.ResponseWriter, r *http.Request) (chainFXAuth, bool) {
+	auth := s.chainFXAuthContext(r)
+	if auth.Valid {
+		if auth.Sandbox && s.cfg.IsProduction() {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "sandbox API keys cannot create live orders",
+				"hint":  "use https://sandbox-api.chainfx.com for sk_test_xxx keys",
+			})
+			return chainFXAuth{}, false
+		}
+		return auth, true
+	}
+	if !s.cfg.ChainFXRequireAPIKey && !s.cfg.IsProduction() {
+		return chainFXAuth{Valid: true, Sandbox: true, Mode: "development"}, true
+	}
+	writeJSON(w, http.StatusUnauthorized, map[string]any{
+		"error": "API key required",
+		"hint":  "send Authorization: Bearer sk_test_xxx or sk_live_xxx",
+	})
+	return chainFXAuth{}, false
+}
+
+func (s *Server) chainFXAuthContext(r *http.Request) chainFXAuth {
+	key := chainFXAPIKey(r)
+	if key == "" {
+		return chainFXAuth{}
+	}
+	if strings.HasPrefix(key, "sk_test_") || csvContains(s.cfg.ChainFXTestSecretKeys, key) {
+		return chainFXAuth{Valid: true, Sandbox: true, Mode: "test"}
+	}
+	if csvContains(s.cfg.ChainFXLiveSecretKeys, key) {
+		return chainFXAuth{Valid: true, Mode: "live"}
+	}
+	if strings.HasPrefix(key, "sk_live_") && !s.cfg.ChainFXRequireAPIKey && !s.cfg.IsProduction() {
+		return chainFXAuth{Valid: true, Mode: "live-dev"}
+	}
+	return chainFXAuth{}
+}
+
+func chainFXAPIKey(r *http.Request) string {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return strings.TrimSpace(auth[7:])
+	}
+	if key := strings.TrimSpace(r.Header.Get("X-Api-Key")); key != "" {
+		return key
+	}
+	return strings.TrimSpace(r.URL.Query().Get("apiKey"))
+}
+
+func csvContains(csv, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, item := range strings.Split(csv, ",") {
+		if strings.TrimSpace(item) == value {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneJSONRequest(r *http.Request, payload any) *http.Request {
+	raw, _ := json.Marshal(payload)
+	clone := r.Clone(r.Context())
+	clone.Body = io.NopCloser(bytes.NewReader(raw))
+	clone.ContentLength = int64(len(raw))
+	clone.Header = r.Header.Clone()
+	clone.Header.Set("Content-Type", "application/json")
+	return clone
+}
+
+func chainFXFakeWallet() string {
+	return "0x000000000000000000000000000000000000dEaD"
+}
+
+func chainFXWebhookEvents() []string {
+	return []string{"payment.created", "payment.completed", "payment.failed", "order.confirmed", "crypto.sent", "crypto.confirmed", "order.failed"}
+}
+
+func validChainFXEvent(event string) bool {
+	for _, allowed := range chainFXWebhookEvents() {
+		if event == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func chainFXEventStatus(event string) string {
+	switch event {
+	case "payment.created":
+		return "created"
+	case "payment.completed":
+		return "paid"
+	case "payment.failed", "order.failed":
+		return "failed"
+	case "order.confirmed", "crypto.confirmed":
+		return "confirmed"
+	case "crypto.sent":
+		return "sent"
+	default:
+		return "unknown"
+	}
+}
+
+func (s *Server) chainFXWebhookPayloadFromOrder(ctx context.Context, orderID, side, event, asset, amount string, sandbox bool) (string, map[string]any, bool) {
+	side = strings.ToLower(strings.TrimSpace(side))
+	if side == "" || side == "buy" {
+		if buy, err := s.db.GetBuyOrder(ctx, orderID); err == nil && buy != nil {
+			return "buy", map[string]any{
+				"event":     event,
+				"orderId":   buy.ID,
+				"status":    chainFXEventStatus(event),
+				"side":      "buy",
+				"asset":     defaultString(asset, buy.Asset),
+				"amount":    defaultString(amount, fmt.Sprintf("%.8f", buy.CryptoAmount)),
+				"timestamp": time.Now().UTC(),
+				"sandbox":   sandbox,
+			}, true
+		}
+	}
+	if side == "" || side == "sell" {
+		if order, err := s.db.GetOrder(ctx, orderID); err == nil && order != nil {
+			return "sell", map[string]any{
+				"event":     event,
+				"orderId":   order.ID,
+				"status":    chainFXEventStatus(event),
+				"side":      "sell",
+				"asset":     defaultString(asset, order.Asset),
+				"amount":    defaultString(amount, fmt.Sprintf("%.8f", order.AmountUSDT)),
+				"timestamp": time.Now().UTC(),
+				"sandbox":   sandbox,
+			}, true
+		}
+	}
+	return "", nil, false
+}
+
+func (s *Server) deliverChainFXWebhook(ctx context.Context, targetURL, event string, payload map[string]any) map[string]any {
+	targetURL = strings.TrimSpace(targetURL)
+	if !strings.HasPrefix(strings.ToLower(targetURL), "https://") && !strings.HasPrefix(strings.ToLower(targetURL), "http://") {
+		return map[string]any{"attempted": false, "error": "targetUrl must be http or https"}
+	}
+	raw, _ := json.Marshal(payload)
+	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, targetURL, bytes.NewReader(raw))
+	if err != nil {
+		return map[string]any{"attempted": false, "error": err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "ChainFX-Webhooks/1.0")
+	req.Header.Set("X-ChainFX-Event", event)
+	req.Header.Set("X-ChainFX-Signature", signChainFXWebhook(defaultString(s.cfg.WebhookSecret, s.cfg.PixWebhookSecret), raw))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return map[string]any{"attempted": true, "ok": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return map[string]any{
+		"attempted":  true,
+		"ok":         resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"statusCode": resp.StatusCode,
+		"body":       string(body),
+	}
+}
+
+func signChainFXWebhook(secret string, raw []byte) string {
+	if strings.TrimSpace(secret) == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(raw)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func maskCSVKeys(csv string) []string {
+	var out []string
+	for _, item := range strings.Split(csv, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		out = append(out, maskAPIKey(item))
+	}
+	return out
+}
+
+func maskAPIKey(key string) string {
+	key = strings.TrimSpace(key)
+	if len(key) <= 12 {
+		return key
+	}
+	return key[:8] + "..." + key[len(key)-4:]
+}
+
+func (s *Server) readChainFXBuy(ctx context.Context, id, accessToken string, apiKeyOK bool) (map[string]any, bool) {
+	if !apiKeyOK {
+		ok, err := s.db.ValidateBuyAccess(ctx, id, accessToken)
+		if err != nil || !ok {
+			return nil, false
+		}
+	}
+	buy, err := s.db.GetBuyOrder(ctx, id)
+	if err != nil || buy == nil {
+		return nil, false
+	}
+	return map[string]any{
+		"id":           buy.ID,
+		"side":         "buy",
+		"status":       buy.Status,
+		"fiat":         buy.FiatCurrency,
+		"asset":        buy.Asset,
+		"amountFiat":   buy.AmountFiat,
+		"feeFiat":      buy.FeeBRL,
+		"totalFiat":    buy.AmountFiat,
+		"payoutFiat":   buy.PayoutBRL,
+		"cryptoAmount": buy.CryptoAmount,
+		"rate":         buy.RateLocked,
+		"wallet":       buy.DestAddress,
+		"paymentRail":  buy.PaymentMethod,
+		"payment":      jsonRawToMap(buy.PixPayload),
+		"txHash":       buy.TxHashOut,
+		"error":        buy.Error,
+		"createdAt":    buy.CreatedAt,
+		"updatedAt":    buy.UpdatedAt,
+		"expiresAt":    buy.RateLockExpiresAt,
+	}, true
+}
+
+func (s *Server) readChainFXSell(ctx context.Context, id, accessToken string, apiKeyOK bool) (map[string]any, bool) {
+	if !apiKeyOK {
+		ok, err := s.db.ValidateOrderAccess(ctx, id, accessToken)
+		if err != nil || !ok {
+			return nil, false
+		}
+	}
+	order, err := s.db.GetOrder(ctx, id)
+	if err != nil || order == nil {
+		return nil, false
+	}
+	return map[string]any{
+		"id":             order.ID,
+		"side":           "sell",
+		"status":         order.Status,
+		"fiat":           "BRL",
+		"asset":          order.Asset,
+		"network":        order.Network,
+		"amountFiat":     order.AmountBRL,
+		"feeFiat":        order.FeeBRL,
+		"payoutFiat":     order.PayoutBRL,
+		"cryptoAmount":   order.AmountUSDT,
+		"rate":           order.RateLocked,
+		"depositAddress": order.Address,
+		"pixKey":         order.PixKey,
+		"txHash":         order.TxHash,
+		"depositTx":      order.DepositTx,
+		"depositAmount":  order.DepositAmount,
+		"error":          order.Error,
+		"createdAt":      order.CreatedAt,
+		"updatedAt":      order.UpdatedAt,
+		"expiresAt":      order.RateLockExpiresAt,
+	}, true
+}
+
+func jsonRawToMap(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(dest)
@@ -902,7 +1692,7 @@ func cors(cfg *config.Config, next http.Handler) http.Handler {
 			item = strings.TrimSpace(item)
 			if item == "*" || item == origin || (origin == "" && item != "") {
 				w.Header().Set("Access-Control-Allow-Origin", defaultString(origin, item))
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, x-internal-hmac, x-idempotency-key, x-pagbank-signature, Stripe-Signature")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, x-internal-hmac, x-idempotency-key, x-pagbank-signature, Stripe-Signature")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				break
 			}
