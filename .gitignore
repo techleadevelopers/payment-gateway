@@ -11,7 +11,9 @@ payment-gateway
 *.dll
 *.so
 *.dylib
-
+__pycache__/
+*.pyc
+.pytest_cache/
 # Logs do sistema
 *.log
 
