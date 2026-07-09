@@ -104,6 +104,30 @@ type DeveloperEvent struct {
 	CreatedAt time.Time       `json:"createdAt"`
 }
 
+type AdminTransaction struct {
+	Source            string    `json:"source"`
+	ID                string    `json:"id"`
+	Status            string    `json:"status"`
+	AmountBRL         float64   `json:"amountBRL"`
+	AmountFiat        float64   `json:"amountFiat"`
+	FiatCurrency      string    `json:"fiatCurrency"`
+	PaymentMethod     string    `json:"paymentMethod"`
+	FeeBRL            float64   `json:"feeBRL"`
+	PayoutBRL         float64   `json:"payoutBRL"`
+	CryptoAmount      float64   `json:"cryptoAmount"`
+	Asset             string    `json:"asset"`
+	Address           string    `json:"address"`
+	Network           string    `json:"network"`
+	RateLocked        float64   `json:"rateLocked"`
+	ProviderPaymentID *string   `json:"providerPaymentId,omitempty"`
+	TxHash            *string   `json:"txHash,omitempty"`
+	DepositTx         *string   `json:"depositTx,omitempty"`
+	Error             *string   `json:"error,omitempty"`
+	RequestID         *string   `json:"requestId,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
 type Sweep struct {
 	ID         string
 	ChildIndex int
@@ -590,6 +614,96 @@ func (db *DB) ListDeveloperEvents(ctx context.Context, limit int) ([]DeveloperEv
 			event.RequestID = &requestID.String
 		}
 		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTransaction, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := db.SQL.QueryContext(ctx, `
+		SELECT source, id::text, status, amount_brl::float8, amount_fiat::float8,
+		       fiat_currency, payment_method, fee_brl::float8, payout_brl::float8,
+		       crypto_amount::float8, asset, address, network, rate_locked::float8,
+		       provider_payment_id, tx_hash, deposit_tx, error, request_id,
+		       created_at, updated_at
+		FROM (
+			SELECT 'buy' AS source, id, status,
+			       amount_brl,
+			       COALESCE(amount_fiat, amount_brl) AS amount_fiat,
+			       COALESCE(fiat_currency, 'BRL') AS fiat_currency,
+			       COALESCE(payment_method, 'pix') AS payment_method,
+			       COALESCE(fee_brl, 0) AS fee_brl,
+			       COALESCE(payout_brl, 0) AS payout_brl,
+			       crypto_amount,
+			       asset,
+			       dest_address AS address,
+			       'BSC' AS network,
+			       rate_locked,
+			       provider_payment_id,
+			       tx_hash_out AS tx_hash,
+			       NULL::text AS deposit_tx,
+			       error,
+			       request_id,
+			       created_at,
+			       COALESCE(updated_at, created_at) AS updated_at
+			FROM buy_orders
+			UNION ALL
+			SELECT 'sell' AS source, id, status,
+			       amount_brl,
+			       amount_brl AS amount_fiat,
+			       'BRL' AS fiat_currency,
+			       'pix' AS payment_method,
+			       COALESCE(fee_brl, 0) AS fee_brl,
+			       COALESCE(payout_brl, 0) AS payout_brl,
+			       btc_amount AS crypto_amount,
+			       asset,
+			       address,
+			       network,
+			       rate_locked,
+			       NULL::text AS provider_payment_id,
+			       tx_hash,
+			       deposit_tx,
+			       error,
+			       request_id,
+			       created_at,
+			       COALESCE(updated_at, created_at) AS updated_at
+			FROM orders
+		) txs
+		ORDER BY created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AdminTransaction
+	for rows.Next() {
+		var tx AdminTransaction
+		var providerPaymentID, txHash, depositTx, errMsg, requestID sql.NullString
+		if err := rows.Scan(&tx.Source, &tx.ID, &tx.Status, &tx.AmountBRL, &tx.AmountFiat,
+			&tx.FiatCurrency, &tx.PaymentMethod, &tx.FeeBRL, &tx.PayoutBRL,
+			&tx.CryptoAmount, &tx.Asset, &tx.Address, &tx.Network, &tx.RateLocked,
+			&providerPaymentID, &txHash, &depositTx, &errMsg, &requestID,
+			&tx.CreatedAt, &tx.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if providerPaymentID.Valid {
+			tx.ProviderPaymentID = &providerPaymentID.String
+		}
+		if txHash.Valid {
+			tx.TxHash = &txHash.String
+		}
+		if depositTx.Valid {
+			tx.DepositTx = &depositTx.String
+		}
+		if errMsg.Valid {
+			tx.Error = &errMsg.String
+		}
+		if requestID.Valid {
+			tx.RequestID = &requestID.String
+		}
+		out = append(out, tx)
 	}
 	return out, rows.Err()
 }
