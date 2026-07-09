@@ -73,7 +73,7 @@ func TestPixBuyWebhookRequiresProviderID(t *testing.T) {
 	secret := "pix-secret"
 	body := []byte(`{"buyId":"00000000-0000-4000-8000-000000000001","status":"concluido"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/pix/webhook/buy", strings.NewReader(string(body)))
-	req.Header.Set("x-pagbank-signature", rawHMAC(secret, body))
+	req.Header.Set("x-efi-signature", rawHMAC(secret, body))
 	rec := httptest.NewRecorder()
 
 	s := &Server{cfg: &config.Config{PixWebhookSecret: secret}, workers: &workers.WorkerManager{}}
