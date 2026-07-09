@@ -95,6 +95,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /developers/dashboard", s.handleDevelopersDashboard)
 	mux.HandleFunc("GET /developers/api-keys", s.handleDeveloperAPIKeys)
 	mux.HandleFunc("GET /developers/logs", s.handleDeveloperLogs)
+	mux.HandleFunc("GET /api/admin/overview", s.handleAdminOverview)
+	mux.HandleFunc("GET /api/admin/transactions", s.handleAdminTransactions)
 	mux.HandleFunc("GET /openapi.json", s.handleOpenAPI)
 	mux.HandleFunc("GET /rates", s.handleChainFXRates)
 	mux.HandleFunc("POST /quote", s.handleChainFXQuote)
@@ -678,6 +680,125 @@ func (s *Server) handleDeveloperLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.authorizeChainFX(w, r)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	transactions, err := s.db.ListAdminTransactions(r.Context(), limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	events, err := s.db.ListDeveloperEvents(r.Context(), minInt(limit, 200))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	certOK, certErr := s.efiCertificateReady()
+	gaps := s.operationalGaps()
+	ready := map[string]any{
+		"ok":              len(gaps) == 0 && certOK,
+		"db":              true,
+		"network":         s.deliveryNetwork(),
+		"bsc":             s.cfg.BscRpcUrls != "" && s.cfg.BscUsdtContract != "",
+		"pix":             s.efiPixConfigured() && certOK && defaultString(s.cfg.PixWebhookSecret, s.cfg.WebhookSecret) != "",
+		"efi_certificate": certOK,
+		"efi_cert_source": s.efiCertificateSource(),
+		"stripe":          defaultString(s.cfg.StripeWebhookSecret, s.cfg.WebhookSecret) != "",
+		"signer":          s.cfg.SignerUrl != "" && s.cfg.SignerHmacSecret != "",
+		"mode":            s.cfg.Environment,
+		"warnings":        gaps,
+	}
+	if certErr != "" {
+		ready["efi_cert_error"] = certErr
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"generatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
+		"authMode":        auth.Mode,
+		"sandbox":         auth.Sandbox,
+		"readiness":       ready,
+		"rates":           s.adminRates(),
+		"metrics":         summarizeAdminTransactions(transactions),
+		"transactions":    transactions,
+		"events":          events,
+		"operationalGaps": gaps,
+	})
+}
+
+func (s *Server) handleAdminTransactions(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeChainFX(w, r); !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	transactions, err := s.db.ListAdminTransactions(r.Context(), limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"transactions": transactions,
+		"count":        len(transactions),
+	})
+}
+
+func (s *Server) adminRates() map[string]any {
+	return map[string]any{
+		"USDT_BRL": s.workers.PriceWorker.GetPrice("BRL"),
+		"USDT_USD": s.workers.PriceWorker.GetPrice("USD"),
+		"USDT_EUR": s.workers.PriceWorker.GetPrice("EUR"),
+		"BTC_USDT": s.workers.PriceWorker.GetPrice("BTCUSDT"),
+		"source":   "price_worker",
+	}
+}
+
+func summarizeAdminTransactions(transactions []database.AdminTransaction) map[string]any {
+	byStatus := map[string]int{}
+	bySource := map[string]int{}
+	var grossBRL, feesBRL, netBRL, cryptoAmount float64
+	var sent, failed, pending int
+	for _, tx := range transactions {
+		byStatus[tx.Status]++
+		bySource[tx.Source]++
+		grossBRL += tx.AmountBRL
+		feesBRL += tx.FeeBRL
+		netBRL += tx.PayoutBRL
+		cryptoAmount += tx.CryptoAmount
+		status := strings.ToLower(tx.Status)
+		switch {
+		case strings.Contains(status, "erro") || strings.Contains(status, "failed") || strings.Contains(status, "rejeit"):
+			failed++
+		case strings.Contains(status, "enviado") || strings.Contains(status, "delivered") || strings.Contains(status, "confirmado") || strings.Contains(status, "conclu"):
+			sent++
+		case strings.Contains(status, "aguardando") || strings.Contains(status, "pending"):
+			pending++
+		}
+	}
+	return map[string]any{
+		"count":        len(transactions),
+		"byStatus":     byStatus,
+		"bySource":     bySource,
+		"grossBRL":     math.Round(grossBRL*100) / 100,
+		"feesBRL":      math.Round(feesBRL*100) / 100,
+		"netBRL":       math.Round(netBRL*100) / 100,
+		"cryptoAmount": cryptoAmount,
+		"sent":         sent,
+		"failed":       failed,
+		"pending":      pending,
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (s *Server) handleDevelopersDashboard(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.authorizeChainFX(w, r); !ok {
 		return
@@ -822,15 +943,17 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
 			},
 		},
 		"paths": map[string]any{
-			"/rates":               map[string]any{"get": map[string]any{"summary": "Current FX and crypto rates"}},
-			"/quote":               map[string]any{"post": map[string]any{"summary": "Create a rate-locked quote"}},
-			"/buy":                 map[string]any{"post": map[string]any{"summary": "Create a PIX/card to USDT order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
-			"/sell":                map[string]any{"post": map[string]any{"summary": "Create a USDT to PIX BRL order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
-			"/order/{id}":          map[string]any{"get": map[string]any{"summary": "Read an order by ID"}},
-			"/webhooks/test":       map[string]any{"post": map[string]any{"summary": "Generate a simulated webhook payload", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
-			"/webhooks/retry":      map[string]any{"post": map[string]any{"summary": "Retry a webhook for an existing order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
-			"/developers/api-keys": map[string]any{"get": map[string]any{"summary": "List configured API keys masked", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
-			"/developers/logs":     map[string]any{"get": map[string]any{"summary": "List recent developer logs", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/rates":                  map[string]any{"get": map[string]any{"summary": "Current FX and crypto rates"}},
+			"/quote":                  map[string]any{"post": map[string]any{"summary": "Create a rate-locked quote"}},
+			"/buy":                    map[string]any{"post": map[string]any{"summary": "Create a PIX/card to USDT order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/sell":                   map[string]any{"post": map[string]any{"summary": "Create a USDT to PIX BRL order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/order/{id}":             map[string]any{"get": map[string]any{"summary": "Read an order by ID"}},
+			"/webhooks/test":          map[string]any{"post": map[string]any{"summary": "Generate a simulated webhook payload", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/webhooks/retry":         map[string]any{"post": map[string]any{"summary": "Retry a webhook for an existing order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/developers/api-keys":    map[string]any{"get": map[string]any{"summary": "List configured API keys masked", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/developers/logs":        map[string]any{"get": map[string]any{"summary": "List recent developer logs", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/api/admin/overview":     map[string]any{"get": map[string]any{"summary": "Owner operational overview with readiness, metrics, recent transactions and audit events", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/api/admin/transactions": map[string]any{"get": map[string]any{"summary": "Owner transaction ledger for buy and sell reconciliation", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
 		},
 		"x-chainfx": map[string]any{
 			"category":        "Digital FX Payments Infrastructure",
