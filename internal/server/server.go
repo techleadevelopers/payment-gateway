@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1368,6 +1369,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		"bsc":             s.cfg.BscRpcUrls != "" && s.cfg.BscUsdtContract != "",
 		"pix":             s.efiPixConfigured() && certOK && defaultString(s.cfg.PixWebhookSecret, s.cfg.WebhookSecret) != "",
 		"efi_certificate": certOK,
+		"efi_cert_source": s.efiCertificateSource(),
 		"efi_cert_path":   s.cfg.EfiCertificatePath,
 		"efi_cert_error":  certErr,
 		"stripe":          defaultString(s.cfg.StripeWebhookSecret, s.cfg.WebhookSecret) != "",
@@ -1940,7 +1942,17 @@ func (s *Server) efiPixConfigured() bool {
 	return strings.TrimSpace(s.cfg.EfiClientID) != "" &&
 		strings.TrimSpace(s.cfg.EfiClientSecret) != "" &&
 		strings.TrimSpace(s.cfg.EfiPixKey) != "" &&
-		strings.TrimSpace(s.cfg.EfiCertificatePath) != ""
+		(strings.TrimSpace(s.cfg.EfiCertificatePath) != "" || strings.Trim(strings.TrimSpace(s.cfg.EfiCertificateP12), `"'`) != "")
+}
+
+func (s *Server) efiCertificateSource() string {
+	if strings.Trim(strings.TrimSpace(s.cfg.EfiCertificateP12), `"'`) != "" {
+		return "base64"
+	}
+	if strings.TrimSpace(s.cfg.EfiCertificatePath) != "" {
+		return "file"
+	}
+	return "missing"
 }
 
 func (s *Server) efiCertificateReady() (bool, string) {
@@ -2072,23 +2084,22 @@ func (s *Server) efiHTTPClient() (*http.Client, error) {
 }
 
 func (s *Server) loadEfiCertificate(certPath, keyPath string) (tls.Certificate, error) {
+	if rawBase64 := strings.Trim(strings.TrimSpace(s.cfg.EfiCertificateP12), `"'`); rawBase64 != "" {
+		raw, err := base64.StdEncoding.DecodeString(rawBase64)
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("EFI_CERTIFICATE_P12_BASE64 invalido: %w", err)
+		}
+		return decodeEfiP12(raw, s.cfg.EfiCertificatePass)
+	}
 	if strings.TrimSpace(certPath) == "" {
-		return tls.Certificate{}, fmt.Errorf("EFI_CERTIFICATE_PATH nao configurado")
+		return tls.Certificate{}, fmt.Errorf("EFI_CERTIFICATE_PATH ou EFI_CERTIFICATE_P12_BASE64 nao configurado")
 	}
 	if strings.HasSuffix(strings.ToLower(certPath), ".p12") || strings.HasSuffix(strings.ToLower(certPath), ".pfx") {
 		raw, err := os.ReadFile(certPath)
 		if err != nil {
 			return tls.Certificate{}, fmt.Errorf("nao foi possivel ler certificado Efí P12: %w", err)
 		}
-		privateKey, cert, err := pkcs12.Decode(raw, s.cfg.EfiCertificatePass)
-		if err != nil {
-			return tls.Certificate{}, fmt.Errorf("certificado Efí P12 invalido; confira EFI_CERTIFICATE_PASSWORD: %w", err)
-		}
-		return tls.Certificate{
-			Certificate: [][]byte{cert.Raw},
-			PrivateKey:  privateKey,
-			Leaf:        cert,
-		}, nil
+		return decodeEfiP12(raw, s.cfg.EfiCertificatePass)
 	}
 	if keyPath == "" {
 		keyPath = certPath
@@ -2101,6 +2112,18 @@ func (s *Server) loadEfiCertificate(certPath, keyPath string) (tls.Certificate, 
 		cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
 	}
 	return cert, nil
+}
+
+func decodeEfiP12(raw []byte, password string) (tls.Certificate, error) {
+	privateKey, cert, err := pkcs12.Decode(raw, password)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("certificado Efí P12 invalido; confira EFI_CERTIFICATE_PASSWORD e GODEBUG=x509negativeserial=1: %w", err)
+	}
+	return tls.Certificate{
+		Certificate: [][]byte{cert.Raw},
+		PrivateKey:  privateKey,
+		Leaf:        cert,
+	}, nil
 }
 
 func (s *Server) efiAccessToken(ctx context.Context, client *http.Client) (string, error) {
