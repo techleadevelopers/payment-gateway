@@ -210,7 +210,11 @@ Endpoints principais implementados:
 - `GET /developers/dashboard`
 - `GET /developers/logs`
 - `GET /developers/api-keys`
+- `GET /api/admin/overview`
+- `GET /api/admin/transactions`
 - `GET /openapi.json`
+
+Os endpoints `/api/admin/*` usam a mesma autenticacao `Authorization: Bearer sk_live_xxx` e retornam dados operacionais para o painel do dono: readiness, gaps, cotacoes, metricas, transacoes buy/sell recentes e eventos auditaveis. Eles nao retornam `accessToken` de cliente nem payload PIX completo.
 
 ### Autenticacao
 
@@ -685,9 +689,13 @@ PIX_WEBHOOK_SECRET=...
 EFI_CLIENT_ID=...
 EFI_CLIENT_SECRET=...
 EFI_PIX_KEY=...
-EFI_CERTIFICATE_PATH=/app/secrets/efi-cert.pem
-EFI_CERTIFICATE_KEY_PATH=/app/secrets/efi-key.pem
+EFI_API_BASE_URL=https://pix.api.efipay.com.br
+EFI_CERTIFICATE_P12_BASE64=...
+EFI_CERTIFICATE_PATH=
+EFI_CERTIFICATE_KEY_PATH=
+EFI_CERTIFICATE_PASSWORD=
 EFI_PIX_FEE_BPS=119
+GODEBUG=x509negativeserial=1
 SIGNER_URL=http://signer.railway.internal:4010
 SIGNER_NETWORK=BSC
 SIGNER_HMAC_SECRET=...
