@@ -35,6 +35,8 @@ func NewEventBus() *EventBus {
 	}
 }
 
+// Subscribe creates a buffered channel for the given event type.
+// The channel has a buffer of 100 events to prevent blocking publishers.
 func (b *EventBus) Subscribe(eventType string) chan Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -48,6 +50,7 @@ func (b *EventBus) Subscribe(eventType string) chan Event {
 	return ch
 }
 
+// Unsubscribe removes a subscriber channel and closes it.
 func (b *EventBus) Unsubscribe(eventType string, ch chan Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -55,16 +58,20 @@ func (b *EventBus) Unsubscribe(eventType string, ch chan Event) {
 	subs := b.subscribers[eventType]
 	for i, sub := range subs {
 		if sub == ch {
+			// Remove channel from slice
 			b.subscribers[eventType] = append(subs[:i], subs[i+1:]...)
 			close(ch)
 			break
 		}
 	}
+	// Clean up empty event type
 	if len(b.subscribers[eventType]) == 0 {
 		delete(b.subscribers, eventType)
 	}
 }
 
+// Publish sends an event to all subscribers of its type.
+// If a subscriber's channel is full, the event is dropped (non-blocking).
 func (b *EventBus) Publish(event Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -75,15 +82,24 @@ func (b *EventBus) Publish(event Event) {
 	}
 	b.published.Add(1)
 
-	for _, ch := range b.subscribers[event.Type] {
+	subs := b.subscribers[event.Type]
+	// Early return if no subscribers
+	if len(subs) == 0 {
+		return
+	}
+
+	for _, ch := range subs {
 		select {
 		case ch <- event:
+			// Event delivered
 		default:
+			// Channel full, drop event
 			b.dropped.Add(1)
 		}
 	}
 }
 
+// Metrics returns current bus statistics.
 func (b *EventBus) Metrics() EventBusMetrics {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -106,6 +122,7 @@ func (b *EventBus) Metrics() EventBusMetrics {
 	}
 }
 
+// Close shuts down the bus and closes all subscriber channels.
 func (b *EventBus) Close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -114,6 +131,8 @@ func (b *EventBus) Close() {
 		return
 	}
 	b.closed = true
+	
+	// Close all subscriber channels
 	for eventType, subs := range b.subscribers {
 		for _, ch := range subs {
 			close(ch)
@@ -122,6 +141,7 @@ func (b *EventBus) Close() {
 	}
 }
 
+// Shutdown is an alias for Close() for clarity.
 func (b *EventBus) Shutdown() {
 	b.Close()
 }
