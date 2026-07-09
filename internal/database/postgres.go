@@ -210,9 +210,9 @@ func (db *DB) CreateOrder(ctx context.Context, order OrderInput) (*models.Order,
 
 func (db *DB) GetOrder(ctx context.Context, id string) (*models.Order, error) {
 	row := db.SQL.QueryRowContext(ctx, `
-		SELECT id, COALESCE(access_token, ''), status, amount_brl, btc_amount, COALESCE(fee_brl,0), COALESCE(payout_brl,0), address, asset, network,
-		       rate_locked, rate_lock_expires_at, created_at, COALESCE(updated_at, created_at), tx_hash, error,
-		       deposit_tx, deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, derivation_index
+		SELECT o.id, COALESCE(o.access_token, ''), o.status, o.amount_brl, o.btc_amount, COALESCE(o.fee_brl,0), COALESCE(o.payout_brl,0), o.address, o.asset, o.network,
+		       o.rate_locked, o.rate_lock_expires_at, o.created_at, COALESCE(o.updated_at, o.created_at), o.tx_hash, o.error,
+		       o.deposit_tx, o.deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, o.derivation_index
 		FROM orders o
 		LEFT JOIN order_private op ON op.order_id = o.id
 		WHERE o.id = $1`, id)
