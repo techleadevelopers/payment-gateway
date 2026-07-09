@@ -93,7 +93,7 @@ func LoadConfig() *Config {
 		Environment:            getEnv("APP_ENV", getEnv("GO_ENV", "development")),
 		AllowSimulations:       getEnvAsBool("ALLOW_SIMULATIONS", true),
 		DatabaseURL:            getEnv("DATABASE_URL", ""),
-		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://swapped-cryptocurrensy.vercel.app"),
+		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://swapped-cryptocurrensy.vercel.app,https://www.chainfx.store,https://chainfx.store"),
 		WebhookSecret:          getEnv("WEBHOOK_SECRET", ""),
 		StripeWebhookSecret:    getEnv("STRIPE_WEBHOOK_SECRET", ""),
 		Port:                   getEnv("PORT", "8080"),
