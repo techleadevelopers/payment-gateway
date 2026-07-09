@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"payment-gateway/internal/config"
@@ -15,6 +16,7 @@ import (
 	"payment-gateway/internal/privacy"
 
 	_ "github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type DB struct {
@@ -128,6 +130,13 @@ type AdminTransaction struct {
 	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
+type AdminUser struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type Sweep struct {
 	ID         string
 	ChildIndex int
@@ -167,6 +176,10 @@ func ConnectPostgres(cfg *config.Config) (*DB, error) {
 	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer schemaCancel()
 	if err := wrapped.InitSchema(schemaCtx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := wrapped.EnsureBootstrapAdmin(schemaCtx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -706,6 +719,94 @@ func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTran
 		out = append(out, tx)
 	}
 	return out, rows.Err()
+}
+
+func (db *DB) EnsureBootstrapAdmin(ctx context.Context) error {
+	email := strings.TrimSpace(strings.ToLower(db.cfg.AdminBootstrapEmail))
+	password := db.cfg.AdminBootstrapPassword
+	if email == "" || password == "" {
+		return nil
+	}
+	var exists bool
+	if err := db.SQL.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admin_users WHERE lower(email) = lower($1))`, email).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = db.SQL.ExecContext(ctx, `
+		INSERT INTO admin_users (id, email, password_hash, role, created_at, updated_at)
+		VALUES ($1, $2, $3, 'owner', now(), now())`,
+		NewID(), email, string(hash))
+	return err
+}
+
+func (db *DB) AuthenticateAdmin(ctx context.Context, email, password string) (*AdminUser, string, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" || password == "" {
+		return nil, "", fmt.Errorf("email e senha obrigatorios")
+	}
+	var user AdminUser
+	var hash string
+	err := db.SQL.QueryRowContext(ctx, `
+		SELECT id::text, email, password_hash, role, created_at
+		FROM admin_users
+		WHERE lower(email) = lower($1) AND disabled_at IS NULL`, email).
+		Scan(&user.ID, &user.Email, &hash, &user.Role, &user.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, "", fmt.Errorf("credenciais invalidas")
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+		return nil, "", fmt.Errorf("credenciais invalidas")
+	}
+	token := NewAccessToken()
+	tokenHash := privacy.Hash(token, db.cfg.LGPDSecret)
+	if tokenHash == "" {
+		tokenHash = token
+	}
+	_, err = db.SQL.ExecContext(ctx, `
+		INSERT INTO admin_sessions (id, admin_user_id, token_hash, expires_at, created_at)
+		VALUES ($1, $2, $3, now() + interval '12 hours', now())`,
+		NewID(), user.ID, tokenHash)
+	if err != nil {
+		return nil, "", err
+	}
+	return &user, token, nil
+}
+
+func (db *DB) ValidateAdminSession(ctx context.Context, token string) (*AdminUser, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, nil
+	}
+	tokenHash := privacy.Hash(token, db.cfg.LGPDSecret)
+	if tokenHash == "" {
+		tokenHash = token
+	}
+	var user AdminUser
+	err := db.SQL.QueryRowContext(ctx, `
+		SELECT u.id::text, u.email, u.role, u.created_at
+		FROM admin_sessions s
+		JOIN admin_users u ON u.id = s.admin_user_id
+		WHERE s.token_hash = $1
+		  AND s.revoked_at IS NULL
+		  AND s.expires_at > now()
+		  AND u.disabled_at IS NULL`, tokenHash).
+		Scan(&user.ID, &user.Email, &user.Role, &user.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
 func (db *DB) ListPendingBuys(ctx context.Context) ([]BuyOrder, error) {
