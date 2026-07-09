@@ -95,6 +95,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /developers/dashboard", s.handleDevelopersDashboard)
 	mux.HandleFunc("GET /developers/api-keys", s.handleDeveloperAPIKeys)
 	mux.HandleFunc("GET /developers/logs", s.handleDeveloperLogs)
+	mux.HandleFunc("POST /api/admin/login", s.handleAdminLogin)
 	mux.HandleFunc("GET /api/admin/overview", s.handleAdminOverview)
 	mux.HandleFunc("GET /api/admin/transactions", s.handleAdminTransactions)
 	mux.HandleFunc("GET /openapi.json", s.handleOpenAPI)
@@ -680,8 +681,29 @@ func (s *Server) handleDeveloperLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	user, token, err := s.db.AuthenticateAdmin(r.Context(), req.Email, req.Password)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "credenciais invalidas"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":            token,
+		"user":             user,
+		"expiresInSeconds": 43200,
+	})
+}
+
 func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.authorizeChainFX(w, r)
+	adminUser, auth, ok := s.authorizeAdmin(w, r)
 	if !ok {
 		return
 	}
@@ -721,6 +743,7 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		"generatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 		"authMode":        auth.Mode,
 		"sandbox":         auth.Sandbox,
+		"adminUser":       adminUser,
 		"readiness":       ready,
 		"rates":           s.adminRates(),
 		"metrics":         summarizeAdminTransactions(transactions),
@@ -731,7 +754,7 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminTransactions(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authorizeChainFX(w, r); !ok {
+	if _, _, ok := s.authorizeAdmin(w, r); !ok {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -1536,6 +1559,34 @@ type chainFXAuth struct {
 	Valid   bool
 	Sandbox bool
 	Mode    string
+}
+
+func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) (*database.AdminUser, chainFXAuth, bool) {
+	token := chainFXAPIKey(r)
+	user, err := s.db.ValidateAdminSession(r.Context(), token)
+	if err != nil {
+		writeError(w, err)
+		return nil, chainFXAuth{}, false
+	}
+	if user != nil {
+		return user, chainFXAuth{Valid: true, Mode: "admin"}, true
+	}
+	auth := s.chainFXAuthContext(r)
+	if auth.Valid {
+		if auth.Sandbox && s.cfg.IsProduction() {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "sandbox API keys cannot create live orders",
+				"hint":  "use an admin account or a live server API key",
+			})
+			return nil, chainFXAuth{}, false
+		}
+		return &database.AdminUser{Email: "api-key", Role: auth.Mode}, auth, true
+	}
+	writeJSON(w, http.StatusUnauthorized, map[string]any{
+		"error": "admin login required",
+		"hint":  "POST /api/admin/login with email and password, then send Authorization: Bearer <token>",
+	})
+	return nil, chainFXAuth{}, false
 }
 
 func (s *Server) authorizeChainFX(w http.ResponseWriter, r *http.Request) (chainFXAuth, bool) {
