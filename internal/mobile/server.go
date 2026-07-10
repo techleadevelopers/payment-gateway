@@ -144,6 +144,36 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// ── Health ────────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/mobile/health", s.handleHealth)
+
+	// ── Phase 5: Multi-Asset ──────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/mobile/assets", s.handleListAssets)
+	mux.HandleFunc("GET /api/mobile/assets/{symbol}", s.handleGetAsset)
+	mux.HandleFunc("GET /api/mobile/assets/{symbol}/rate", s.handleGetAssetRate)
+
+	// ── Phase 5: Multi-Country + Multi-Rail ───────────────────────────────────
+	mux.HandleFunc("GET /api/mobile/countries", s.handleListCountries)
+	mux.HandleFunc("GET /api/mobile/countries/detect", s.handleDetectCountry)
+	mux.HandleFunc("GET /api/mobile/countries/{code}", s.handleGetCountry)
+	mux.HandleFunc("GET /api/mobile/countries/{code}/rails", s.handleListCountryRails)
+
+	// ── Phase 5: KYC async (non-blocking) ────────────────────────────────────
+	mux.HandleFunc("POST /api/mobile/kyc/submit", s.requireAuth(s.handleKYCSubmit))
+	mux.HandleFunc("GET /api/mobile/kyc/status", s.requireAuth(s.handleKYCStatusV2))
+	mux.HandleFunc("GET /api/mobile/kyc/history", s.requireAuth(s.handleKYCHistory))
+	mux.HandleFunc("GET /api/mobile/kyc/limits", s.handleKYCLimits)
+
+	// ── Phase 5: Swap (crypto→crypto) ────────────────────────────────────────
+	mux.HandleFunc("POST /api/mobile/swap/quote", s.requireAuth(s.handleSwapQuote))
+	mux.HandleFunc("POST /api/mobile/swap/execute", s.requireAuth(s.handleSwapExecute))
+	mux.HandleFunc("GET /api/mobile/swap/{id}", s.requireAuth(s.handleGetSwap))
+	mux.HandleFunc("GET /api/mobile/swaps", s.requireAuth(s.handleListSwaps))
+
+	// ── Phase 5: Webhooks (n8n / Zapier / Make) ───────────────────────────────
+	mux.HandleFunc("GET /api/mobile/webhooks/events", s.handleListWebhookEvents)
+	mux.HandleFunc("POST /api/mobile/webhooks/subscribe", s.requireAuth(s.handleWebhookSubscribe))
+	mux.HandleFunc("GET /api/mobile/webhooks", s.requireAuth(s.handleListWebhooks))
+	mux.HandleFunc("DELETE /api/mobile/webhooks/{id}", s.requireAuth(s.handleDeleteWebhook))
+	mux.HandleFunc("PUT /api/mobile/webhooks/{id}/toggle", s.requireAuth(s.handleToggleWebhook))
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

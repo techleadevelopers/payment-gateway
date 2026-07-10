@@ -63,6 +63,7 @@ type Config struct {
 	// Tesouraria / signer / sweep
 	TreasuryHot       string
 	TreasuryCold      string
+	TronXPub          string
 	SignerUrl         string
 	SignerNetwork     string
 	SignerHmacSecret  string
@@ -152,6 +153,7 @@ func LoadConfig() *Config {
 
 		TreasuryHot:       getEnv("TREASURY_HOT", ""),
 		TreasuryCold:      getEnv("TREASURY_COLD", ""),
+		TronXPub:          getEnv("TRON_XPUB", ""),
 		SignerUrl:         getEnv("SIGNER_URL", ""),
 		SignerNetwork:     strings.ToLower(getEnv("SIGNER_NETWORK", "bsc")),
 		SignerHmacSecret:  getEnv("SIGNER_HMAC_SECRET", ""),

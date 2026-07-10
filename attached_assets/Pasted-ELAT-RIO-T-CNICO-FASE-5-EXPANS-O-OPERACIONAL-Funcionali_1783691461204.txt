@@ -1,0 +1,158 @@
+ELATÓRIO TÉCNICO - FASE 5: EXPANSÃO OPERACIONAL
+Funcionalidades a Implementar para o Mobile
+1. MULTI-ASSET SUPPORT
+O que é:
+Suporte a múltiplos ativos/criptomoedas além do USDT, com políticas e limites por ativo.
+
+Funcionalidades:
+Funcionalidade	Descrição	Impacto Mobile
+Registro de Ativos	Cadastro de múltiplos ativos (USDT, USDC, BTCB, ETH, BUSD, EURC)	Usuário pode escolher qual cripto comprar/vender
+Políticas por Ativo	Min/Max por transação, limites diários/mensais por ativo	Validação em tempo real no app
+Taxas por Ativo	Fee BPS diferente para cada ativo	Exibição transparente de taxas
+Ativação/Desativação	Ativar/desativar ativos dinamicamente	Ativos indisponíveis não aparecem no app
+Cotação por Ativo	Preço em BRL/USD para cada ativo	Exibição de cotação em tempo real
+Impacto no Mobile:
+✅ Tela de seleção de ativo com lista dinâmica
+
+✅ Validação de limites por ativo
+
+✅ Exibição de taxas específicas por ativo
+
+✅ Cotação em tempo real por ativo
+
+2. MULTI-COUNTRY SUPPORT
+O que é:
+Suporte a múltiplos países com regulamentações, compliance e localização específicas.
+
+Funcionalidades:
+Funcionalidade	Descrição	Impacto Mobile
+Registro de Países	Cadastro de países (BR, AR, CL, CO, MX, PE)	App detecta país do usuário
+Moeda Local	BRL, ARS, CLP, COP, MXN, PEN	Exibição de valores em moeda local
+Regulamentações	Regras específicas por país	Compliance automático
+Métodos de Pagamento	PIX, SPEI, FedNow, SEPA, etc.	Lista de pagamentos por país
+Localização	Idioma, formato de data/moeda	App adaptado ao país
+Impacto no Mobile:
+✅ Detecção automática de país
+
+✅ Interface localizada (idioma, moeda)
+
+✅ Métodos de pagamento específicos por país
+
+✅ Compliance automático por país
+
+3. MULTI-RAIL PAYMENT SUPPORT
+O que é:
+Suporte a múltiplos sistemas de pagamento (rails) além do PIX.
+
+Funcionalidades:
+Funcionalidade	Descrição	Impacto Mobile
+PIX (Brasil)	QR Code, Copia e Cola, Webhook	✅ JÁ EXISTE
+SPEI (México)	Clave Interbancaria, Transferência	Novo método de pagamento
+FedNow (EUA)	Pagamento instantâneo	Novo método de pagamento
+SEPA (Europa)	Transferência bancária	Novo método de pagamento
+Factory de Rails	Seleção automática do rail correto	App escolhe rail por país
+Impacto no Mobile:
+✅ Lista dinâmica de métodos de pagamento por país
+
+✅ QR Code para cada rail (quando aplicável)
+
+✅ Status de pagamento em tempo real
+
+✅ Webhooks para confirmação
+
+4. KYC (ASSÍNCRONO - NÃO BLOQUEIA)
+O que é:
+Verificação de identidade em background, sem bloquear transações iniciais.
+
+Funcionalidades:
+Nível	Limite Diário	Requisitos	Bloqueia?
+Nível 0 - Sem KYC	R$ 500	Email + Telefone	❌ NÃO
+Nível 1 - KYC Básico	R$ 5.000	Documento + Selfie	❌ NÃO
+Nível 2 - KYC Completo	R$ 50.000	Comprovante Residência + Prova Renda	❌ NÃO
+Nível 3 - KYC Premium	R$ 500.000	Análise Manual + Entrevista	❌ NÃO
+Impacto no Mobile:
+✅ Usuário compra/vende IMEDIATAMENTE sem KYC
+
+✅ KYC é opcional e aumenta limites
+
+✅ Upload de documentos via app
+
+✅ Status KYC em tempo real
+
+✅ NOTIFICAÇÃO quando KYC é aprovado
+
+5. SWAP (Mobile)
+O que é:
+Troca direta entre criptomoedas sem passar por BRL.
+
+Funcionalidades:
+Funcionalidade	Descrição	Impacto Mobile
+Swap Direto	USDT → BTCB, USDT → ETH, etc.	Tela de swap no app
+Taxa de Swap	Fee específica para swap	Exibição transparente
+Slippage	Tolerância de variação de preço	Configurável pelo usuário
+Cotação em Tempo Real	Preço atualizado a cada 5s	Atualização automática
+Fluxo Mobile:
+Usuário seleciona "De" e "Para" ativos
+
+Informa quantidade
+
+Visualiza taxa + slippage
+
+Confirma swap
+
+Acompanha status em tempo real
+
+6. WALLET (Mobile - Expandido)
+O que é:
+Carteira digital com suporte a múltiplos ativos e históricos.
+
+Funcionalidades:
+Funcionalidade	Descrição	Impacto Mobile
+Saldo Multi-Asset	USDT, USDC, BTCB, ETH, BUSD, EURC	Tela de saldo consolidado
+Histórico Completo	Todas as transações	Lista com filtros
+Depósito/Retirada	Transferência de/para carteira	Fluxo completo
+Compartilhar Endereço	QR Code + Copiar	Compartilhar com terceiros
+7. DCA (Mobile - Expandido)
+O que é:
+Investimento automático em múltiplos ativos.
+
+Funcionalidades:
+Funcionalidade	Descrição	Impacto Mobile
+Multi-Asset DCA	DCA em USDT, BTCB, ETH, etc.	Seleção de ativo na criação
+Frequências	Diária, Semanal, Mensal	Opções no app
+Visualização	Gráfico de crescimento	Dashboard no app
+8. NOTIFICAÇÕES PUSH (Mobile)
+O que é:
+Notificações em tempo real para eventos importantes.
+
+Funcionalidades:
+Evento	Descrição	Canal
+Ordem Concluída	Compra/Venda finalizada	FCM/APNS
+Pagamento Recebido	PIX confirmado	FCM/APNS
+KYC Aprovado	Verificação concluída	FCM/APNS
+Swap Concluído	Troca finalizada	FCM/APNS
+DCA Executado	Compra automática realizada	FCM/APNS
+Preço Alterado	Variação significativa	FCM/APNS
+9. WEBHOOKS (Mobile)
+O que é:
+Integração com ferramentas de automação (n8n, Zapier, Make).
+
+Eventos Disponíveis:
+Evento	Descrição	Uso
+order.created	Nova ordem criada	Automação de notificação
+order.completed	Ordem concluída	Automação de contabilidade
+order.failed	Ordem falhou	Alerta de erro
+payment.received	Pagamento recebido	Automação de entrega
+payout.sent	Payout enviado	Automação de confirmação
+price.change	Preço alterou	Automação de trading
+dca.executed	DCA executado	Automação de investimento
+10. SDKs (Multi-Linguagem)
+O que é:
+Bibliotecas para integração com outras aplicações.
+
+SDKs a Implementar:
+SDK	Linguagem	Uso
+Go SDK	Go	Integração backend
+PHP SDK	PHP	Integração WordPress
+Java SDK	Java	Integração Android/Enterprise
+Swift SDK	Swift	Integração iOS nativa
