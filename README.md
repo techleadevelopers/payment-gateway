@@ -1,20 +1,20 @@
 # Financial Product Interface
 
 <div align="center">
-  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783198512/d61ccb4b-f711-4a99-b859-1b6f9a5c18fb.png" alt="Swappy Logo" width="1024" />
+  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783198512/d61ccb4b-f711-4a99-b859-1b6f9a5c18fb.png" alt="ChainFx Logo" width="1024" />
 </div>
 
 ---
 
-## 📱 Swappy - Buy & Sell Crypto Instantly
+## 📱 ChainFx - Instant PIX to Stablecoin Payments
 
-**Swappy** é uma plataforma Web3 que permite comprar e vender stablecoins como USDT(Tether.io) e EURUSD Nova moeda europeia de forma instantânea e segura. Com integração via PIX, você pode realizar transações em segundos com total confiabilidade.
+**ChainFx** é uma plataforma Web3 que permite comprar e vender stablecoins como USDT (Tether.io) e EURUSD (Digital Euro Dollar) de forma instantânea e segura. Com integração via PIX, você pode realizar transações em segundos com total confiabilidade.
 
 ### ✨ Diferenciais da Plataforma
 
 - ⚡ **Compre e venda cripto instantaneamente** via PIX
 - 🔒 **Transações seguras** e sem complicações
-- 👥 **950.000+ usuários** confiam na Swappy
+- 👥 **950.000+ usuários** confiam na ChainFx
 - 💳 **30+ opções** de pagamento locais
 - 🪙 **100+ criptomoedas** disponíveis
 
@@ -25,7 +25,7 @@
 ### Informe o valor e visualize a cotação
 
 <div align="center">
-  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783058374/compra-removebg-preview_ikab4t.png" alt="Swappy - Tela de Compra" width="600" />
+  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783058374/compra-removebg-preview_ikab4t.png" alt="ChainFx - Tela de Compra" width="600" />
 </div>
 
 **Como funciona:**
@@ -42,7 +42,7 @@
 ### Insira sua wallet e escolha o método de pagamento
 
 <div align="center">
-  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064002/image-removebg-preview_6_ete3hd.png" alt="Swappy - Tela de Pagamento" width="680" />
+  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064002/image-removebg-preview_6_ete3hd.png" alt="ChainFx - Tela de Pagamento" width="680" />
 </div>
 
 **Como funciona:**
@@ -61,7 +61,7 @@
 ### Escaneie o QR Code e confirme o pagamento
 
 <div align="center">
-  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064178/image-removebg-preview_7_ighwcw.png" alt="Swappy - Tela de Pagamento PIX" width="680" />
+  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064178/image-removebg-preview_7_ighwcw.png" alt="ChainFx - Tela de Pagamento PIX" width="680" />
 </div>
 
 **Como funciona:**
@@ -78,7 +78,7 @@
 ### Integração em andamento!
 
 <div align="center">
-  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064734/998ededc-2291-40d7-86c9-6906faea7998_lsbpws.png" alt="Swappy - Tela de Pagamento" width="480" />
+  <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064734/998ededc-2291-40d7-86c9-6906faea7998_lsbpws.png" alt="ChainFx - Tela de Pagamento" width="480" />
 </div>
 
 **Pagamento com cartão via Stripe estará disponível em breve.**
@@ -101,15 +101,15 @@
 ---
 
 
-# Swappy Payment Gateway
+# ChainFx Payment Gateway
 
 Backend Go para orquestracao instantanea de settlement fiat -> USDT.
 
-Swappy opera como um **instant settlement orchestration system**: recebe fiat por rails tradicionais, confirma o pagamento, registra tudo de forma auditavel e dispara entrega cripto para a wallet do usuario.
+ChainFx opera como um **instant settlement orchestration system**: recebe fiat por rails tradicionais, confirma o pagamento, registra tudo de forma auditavel e dispara entrega cripto para a wallet do usuario.
 
 ## Indice
 
-1. [Sobre o Swappy](#sobre-o-swappy)
+1. [Sobre o ChainFx](#sobre-o-ChainFx)
 2. [Fluxo do Cliente](#fluxo-do-cliente)
 3. [Principais Capacidades](#principais-capacidades)
 4. [Arquitetura Tecnica](#arquitetura-tecnica)
@@ -117,9 +117,9 @@ Swappy opera como um **instant settlement orchestration system**: recebe fiat po
 6. [Documentacao Tecnica](#documentacao-tecnica)
 7. [Licenca](#licenca)
 
-## Sobre o Swappy
+## Sobre o ChainFx
 
-Swappy permite comprar e vender stablecoins como USDT de forma rapida, com integracao via PIX e entrega cripto para wallet BSC.
+ChainFx permite comprar e vender stablecoins como USDT de forma rapida, com integracao via PIX e entrega cripto para wallet BSC.
 
 Principais diferenciais:
 
@@ -147,7 +147,7 @@ Principais diferenciais:
 Fluxo esperado:
 
 ```text
-Cliente paga Pix -> Webhook confirma -> BuySendWorker dispara da wallet Swappy -> USDT chega na wallet do cliente
+Cliente paga Pix -> Webhook confirma -> BuySendWorker dispara da wallet ChainFx -> USDT chega na wallet do cliente
 ```
 
 ### SELL USDT -> Pix
@@ -210,40 +210,7 @@ Endpoints principais implementados:
 - `GET /developers/dashboard`
 - `GET /developers/logs`
 - `GET /developers/api-keys`
-- `POST /api/admin/login`
-- `GET /api/admin/overview`
-- `GET /api/admin/transactions`
 - `GET /openapi.json`
-
-Os endpoints `/api/admin/*` usam login administrativo por email e senha. O frontend chama `POST /api/admin/login`, recebe um token de sessao de 12 horas e envia esse token em `Authorization: Bearer <token>` nas chamadas seguintes. Por compatibilidade operacional, uma secret key live server-to-server ainda pode acessar os endpoints admin.
-
-O painel retorna readiness, gaps, cotacoes, metricas, transacoes buy/sell recentes e eventos auditaveis. Ele nao retorna `accessToken` de cliente nem payload PIX completo.
-
-### Admin operacional
-
-O bootstrap do primeiro usuario admin e feito por variaveis de ambiente no start do backend:
-
-```env
-ADMIN_BOOTSTRAP_EMAIL=admin@example.com
-ADMIN_BOOTSTRAP_PASSWORD=troque-esta-senha
-```
-
-Se o email ainda nao existir em `admin_users`, o backend cria o usuario com `role=owner` e senha com hash bcrypt. A senha nao deve ser commitada no repositorio; configure esses valores no Railway ou no `.env` local.
-
-Login:
-
-```powershell
-$body = @{
-  email = "admin@example.com"
-  password = "troque-esta-senha"
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-  -Uri "https://api.example.com/api/admin/login" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body $body
-```
 
 ### Autenticacao
 
@@ -370,140 +337,13 @@ Como o fluxo de compra por API funciona:
 
 1. O dev envia `POST /buy` com valor, asset, wallet e dados do comprador.
 2. O backend cria uma `buy_order` com `id/buyId` e `accessToken`.
-3. O backend envia os dados do comprador e o valor para a API Pix Efí para gerar a cobranca PIX.
-4. A resposta retorna `qrCodeUrl`, `pixCopiaECola`, `pixKey`, `payment`, `orderUrl` e `statusUrl`.
+3. O backend envia os dados do comprador e o valor para o PagBank para gerar a cobranca PIX.
+4. A resposta retorna `qrCodeUrl`, `pixKey`, `payment`, `orderUrl` e `statusUrl`.
 5. O sistema do dev renderiza o QR Code ou apresenta o payload PIX ao pagador.
-6. Quando o usuario paga, o webhook Efí chama o backend.
+6. Quando o usuario paga, o webhook PagBank chama o backend.
 7. O backend marca a compra como paga.
 8. O worker de entrega envia USDT para a wallet informada.
 9. O dev acompanha por `GET /order/{id}?accessToken=...` ou webhooks.
-
-### Provider PIX Efí
-
-O rail PIX de compra usa a API Pix Efí em produção.
-
-Implementado:
-
-- OAuth2 client credentials com certificado mTLS.
-- Criacao de cobranca imediata Efí em `PUT /v2/cob/{txid}`.
-- `txid` deterministico derivado do `buyId`, para reconciliar webhook e pedido.
-- Busca de QR oficial Efí em `GET /v2/loc/{id}/qrcode`.
-- Resposta consolidada com `qrCodeUrl`, `pixCopiaECola`, `pixKey`, `providerPaymentId`, `providerStatus` e `payment`.
-- Estimativa de tarifa Efí por `EFI_PIX_FEE_BPS`, padrao `119` (1,19%).
-- Suporte a certificado `.p12` por arquivo ou por variavel base64.
-- Readiness `/readyz` valida se o certificado Efí carregou.
-
-Variaveis Efí:
-
-```env
-EFI_CLIENT_ID=...
-EFI_CLIENT_SECRET=...
-EFI_PIX_KEY=...
-EFI_API_BASE_URL=https://pix.api.efipay.com.br
-EFI_PIX_FEE_BPS=119
-GODEBUG=x509negativeserial=1
-```
-
-Opcao recomendada para cloud, sem depender de volume:
-
-```env
-EFI_CERTIFICATE_P12_BASE64=...
-EFI_CERTIFICATE_PATH=
-EFI_CERTIFICATE_KEY_PATH=
-EFI_CERTIFICATE_PASSWORD=
-```
-
-Opcao por arquivo/volume:
-
-```env
-EFI_CERTIFICATE_PATH=/app/secrets/efi-production.p12
-EFI_CERTIFICATE_KEY_PATH=
-EFI_CERTIFICATE_PASSWORD=
-EFI_CERTIFICATE_P12_BASE64=
-```
-
-Para gerar o base64 localmente no PowerShell:
-
-```powershell
-[Convert]::ToBase64String(
-  [IO.File]::ReadAllBytes("C:\Users\Paulo\Desktop\payment-gateway\secrets\efi-production.p12")
-) | Set-Content -NoNewline "C:\Users\Paulo\Desktop\payment-gateway\secrets\efi-production.p12.b64"
-```
-
-Cole o conteudo de `secrets\efi-production.p12.b64` em `EFI_CERTIFICATE_P12_BASE64` no provedor cloud. Nao versionar `.p12`, `.pem`, `.key`, `.b64` nem secrets.
-
-Verificacao de readiness:
-
-```http
-GET /readyz
-```
-
-Campos esperados:
-
-```json
-{
-  "ok": true,
-  "pix": true,
-  "efi_cert_source": "base64",
-  "efi_certificate": true
-}
-```
-
-`efi_cert_source` pode ser `base64`, `file` ou `missing`.
-
-### Teste manual de compra PIX Efí
-
-Use uma URL de backend do seu ambiente. Nao coloque a URL real de producao em exemplos publicos.
-
-```powershell
-$baseUrl = "https://api.example.com"
-
-$body = @{
-  amountBRL = 10
-  fiatCurrency = "BRL"
-  paymentMethod = "pix"
-  asset = "USDT"
-  address = "0x1111111111111111111111111111111111111111"
-  pixCpf = "12345678909"
-  pixPhone = "11999999999"
-  customer = @{
-    name = "Teste ChainFX"
-    email = "teste@example.com"
-    cpf = "12345678909"
-    phone = "11999999999"
-  }
-} | ConvertTo-Json -Depth 5
-
-Invoke-RestMethod `
-  -Uri "$baseUrl/api/buy" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body $body
-```
-
-Resposta esperada, resumida:
-
-```text
-accessToken   : ...
-amountFiat    : 10.5
-asset         : USDT
-buyId         : ...
-cryptoAmount  : ...
-destAddress   : 0x1111111111111111111111111111111111111111
-feeFiat       : 0.5
-fiatCurrency  : BRL
-network       : BSC
-paymentMethod : pix
-payment       : provider=efi, providerStatus=201, txid=..., pixCopiaECola=000201..., qrCodeUrl=data:image/png;base64,...
-pixKey        : ...
-qrCodeUrl     : data:image/png;base64,...
-rate          : ...
-status        : aguardando_pix
-subtotalFiat  : 10
-totalFiat     : 10.5
-```
-
-Esse teste cria uma cobranca PIX real no ambiente configurado. A cobranca so movimenta dinheiro se for paga.
 
 Campos de comprador aceitos hoje em `/buy`:
 
@@ -715,16 +555,7 @@ DATABASE_URL=postgres://...
 LGPD_SECRET=...
 WEBHOOK_SECRET=...
 PIX_WEBHOOK_SECRET=...
-EFI_CLIENT_ID=...
-EFI_CLIENT_SECRET=...
-EFI_PIX_KEY=...
-EFI_API_BASE_URL=https://pix.api.efipay.com.br
-EFI_CERTIFICATE_P12_BASE64=...
-EFI_CERTIFICATE_PATH=
-EFI_CERTIFICATE_KEY_PATH=
-EFI_CERTIFICATE_PASSWORD=
-EFI_PIX_FEE_BPS=119
-GODEBUG=x509negativeserial=1
+PAGSEGURO_API_TOKEN=...
 SIGNER_URL=http://signer.railway.internal:4010
 SIGNER_NETWORK=BSC
 SIGNER_HMAC_SECRET=...
@@ -768,6 +599,426 @@ Na camada de custodia, o signer agora possui:
 - politica de treasury para limitar saida diaria antes de assinar.
 
 Em producao, use `CUSTODY_MODE=paper` primeiro. `shadow` serve para observar sem bloquear. `live` fica reservado para uma etapa futura com resposta automatica depois de validacao operacional.
+
+# 🏗️ Complete Technical Architecture
+
+## 📱 Mobile + Backend Ecosystem
+
+```mermaid
+graph TB
+    subgraph "Mobile Layer (React Native)"
+        RN[React Native App]
+        RN --> API_REST[API REST]
+        RN --> WS[WebSocket]
+        RN --> PUSH[Push Notifications]
+    end
+
+    subgraph "API Layer (Go)"
+        API[API Gateway]
+        API --> AUTH[JWT Auth]
+        API --> RATE[Rate Limiter]
+        API --> CORS[CORS Middleware]
+    end
+
+    subgraph "Mobile API Handlers"
+        MH_AUTH[Auth Handlers]
+        MH_USER[User/KYC Handlers]
+        MH_WALLET[Wallet Handlers]
+        MH_ORDERS[Orders Handlers]
+        MH_DCA[DCA Handlers]
+        MH_PIX[PIX Handlers]
+        MH_SEC[Security Handlers]
+        MH_CONTRACT[Contract Handlers]
+        MH_NOTIFY[Notification Handlers]
+        MH_WS[WebSocket Handlers]
+    end
+
+    subgraph "Core Services"
+        SERVICE_ORDER[Order Service]
+        SERVICE_WALLET[Wallet Service]
+        SERVICE_PAYOUT[Payout Service]
+        SERVICE_PRICE[Price Service]
+        SERVICE_DCA[DCA Service]
+    end
+
+    subgraph "Resilience Layer"
+        CB[Circuit Breaker]
+        RETRY[Retry with Exponential Backoff]
+        FALLBACK[RPC Fallback]
+        DLQ[Dead Letter Queue]
+    end
+
+    subgraph "Background Workers"
+        W_ONCHAIN[On-Chain Worker]
+        W_PAYOUT[Payout Worker]
+        W_PRICE[Price Worker]
+        W_DCA[DCA Worker]
+        W_SWEEP[Sweep Worker]
+    end
+
+    subgraph "Infrastructure"
+        DB[(PostgreSQL)]
+        CACHE[(Redis)]
+        QUEUE[(RabbitMQ)]
+        RPC1[BSC RPC #1]
+        RPC2[BSC RPC #2]
+        RPC3[BSC RPC #3]
+        RPC4[BSC RPC #4]
+        RPCN[BSC RPC #N]
+    end
+
+    subgraph "Blockchain (BNB Smart Chain)"
+        VAULT[SwappyTreasuryVault]
+        REGISTRY[SwappyDelegateRegistry]
+        DELEGATE[Swappy7702PayoutDelegate]
+        TOKEN[USDT / BEP-20]
+    end
+
+    subgraph "External Services"
+        PIX[PIX API - Efi]
+        EMAIL[Brevo Email Service]
+        COINGECKO[CoinGecko Price Feed]
+    end
+
+    API --> MH_AUTH
+    API --> MH_USER
+    API --> MH_WALLET
+    API --> MH_ORDERS
+    API --> MH_DCA
+    API --> MH_PIX
+    API --> MH_SEC
+    API --> MH_CONTRACT
+    API --> MH_NOTIFY
+    API --> MH_WS
+
+    MH_ORDERS --> SERVICE_ORDER
+    MH_WALLET --> SERVICE_WALLET
+    MH_DCA --> SERVICE_DCA
+
+    SERVICE_ORDER --> DB
+    SERVICE_ORDER --> QUEUE
+
+    SERVICE_WALLET --> DB
+
+    SERVICE_PAYOUT --> QUEUE
+    SERVICE_PRICE --> CACHE
+
+    CB --> RETRY
+    RETRY --> FALLBACK
+
+    W_ONCHAIN --> RPC1
+    W_ONCHAIN --> RPC2
+    W_ONCHAIN --> RPC3
+    W_ONCHAIN --> RPC4
+    W_ONCHAIN --> RPCN
+
+    W_ONCHAIN --> VAULT
+    W_ONCHAIN --> REGISTRY
+
+    W_PAYOUT --> QUEUE
+    W_PAYOUT --> PIX
+    W_PAYOUT --> VAULT
+    W_PAYOUT --> DB
+
+    W_PRICE --> COINGECKO
+    W_PRICE --> CACHE
+
+    W_DCA --> SERVICE_DCA
+    W_DCA --> QUEUE
+
+    W_SWEEP --> VAULT
+
+    VAULT --> TOKEN
+    DELEGATE --> VAULT
+
+    API --> EMAIL
+    PUSH --> FCM[Firebase / APNS]
+```
+
+---
+
+# 📊 Mobile API (50+ Endpoints)
+
+| Module | Endpoints | Methods | Auth |
+|---------|-----------|----------|------|
+| **Auth** | `/api/mobile/auth/register`<br>`/api/mobile/auth/login`<br>`/api/mobile/auth/refresh`<br>`/api/mobile/auth/logout` | POST<br>POST<br>POST<br>POST | ❌<br>❌<br>❌<br>✅ |
+| **User** | `/api/mobile/user/profile`<br>`/api/mobile/user/profile`<br>`/api/mobile/user/kyc`<br>`/api/mobile/user/kyc/status` | GET<br>PUT<br>POST<br>GET | ✅<br>✅<br>✅<br>✅ |
+| **Wallet** | `/api/mobile/wallet/balance`<br>`/api/mobile/wallet/tokens`<br>`/api/mobile/wallet/address`<br>`/api/mobile/wallet/generate`<br>`/api/mobile/wallet/history` | GET<br>GET<br>GET<br>POST<br>GET | ✅<br>✅<br>✅<br>✅<br>✅ |
+| **Orders** | `/api/mobile/order/buy`<br>`/api/mobile/order/sell`<br>`/api/mobile/order/swap`<br>`/api/mobile/order/{id}`<br>`/api/mobile/orders`<br>`/api/mobile/order/cancel` | POST<br>POST<br>POST<br>GET<br>GET<br>POST | ✅<br>✅<br>✅<br>✅<br>✅<br>✅ |
+| **PIX** | `/api/mobile/pix/generate`<br>`/api/mobile/pix/confirm`<br>`/api/mobile/pix/status/{id}`<br>`/api/mobile/pix/copy` | POST<br>POST<br>GET<br>POST | ✅<br>❌<br>✅<br>✅ |
+| **DCA** | `/api/mobile/dca/create`<br>`/api/mobile/dca/strategies`<br>`/api/mobile/dca/{id}`<br>`/api/mobile/dca/{id}`<br>`/api/mobile/dca/{id}/status` | POST<br>GET<br>PUT<br>DELETE<br>GET | ✅<br>✅<br>✅<br>✅<br>✅ |
+| **Security** | `/api/mobile/security/pin`<br>`/api/mobile/security/biometry`<br>`/api/mobile/security/2fa`<br>`/api/mobile/security/devices`<br>`/api/mobile/security/device` | POST<br>POST<br>POST<br>GET<br>DELETE | ✅<br>✅<br>✅<br>✅<br>✅ |
+| **Smart Contracts** | `/api/mobile/contracts/payout`<br>`/api/mobile/contracts/vault`<br>`/api/mobile/contracts/delegate`<br>`/api/mobile/contracts/pause`<br>`/api/mobile/contracts/unpause` | POST<br>GET<br>GET<br>POST<br>POST | ✅<br>✅<br>✅<br>✅<br>✅ |
+| **Notifications** | `/api/mobile/notifications`<br>`/api/mobile/notifications/read`<br>`/api/mobile/notifications/{id}`<br>`/api/mobile/notifications/token` | GET<br>PUT<br>DELETE<br>POST | ✅<br>✅<br>✅<br>✅ |
+| **WebSocket** | `ws://api/mobile/ws/orders`<br>`ws://api/mobile/ws/price`<br>`ws://api/mobile/ws/notifications` | WS<br>WS<br>WS | ✅<br>✅<br>✅ |
+| **Settings** | `/api/mobile/settings`<br>`/api/mobile/settings`<br>`/api/mobile/settings/limits` | GET<br>PUT<br>GET | ✅<br>✅<br>✅ |
+| **Health** | `/api/mobile/health` | GET | ❌ |
+
+---
+
+# 🔄 Asynchronous Workers
+
+| Worker | Responsibility | Interval | Dependencies |
+|----------|---------------|-----------|--------------|
+| **On-Chain Worker** | Monitor BNB Smart Chain deposits | Every 3 seconds | RPC Pool, Smart Contracts |
+| **Payout Worker** | Process PIX payouts | Every 5 seconds | Efi API, Treasury Vault |
+| **Price Worker** | Update crypto market prices | Every 30 seconds | CoinGecko, Redis |
+| **DCA Worker** | Execute recurring DCA purchases | Every hour | Order Service |
+| **Sweep Worker** | Treasury vault consolidation | Every 6 hours | Vault, Signer |
+
+---
+
+# 🛡️ Resilience Layer
+
+```yaml
+Circuit Breaker:
+  max_failures: 5
+  timeout: 60s
+  state:
+    - Closed
+    - Open
+    - Half-Open
+
+Retry Policy:
+  max_attempts: 5
+  base_delay: 1s
+  max_delay: 30s
+  multiplier: 2.0
+
+RPC Fallback:
+  providers: 6
+  health_check: 30s
+  timeout: 10s
+
+Dead Letter Queue:
+  max_retries: 5
+  storage: dlq_events
+  retention: 7 days
+```
+
+---
+
+# 🚀 Technology Stack
+
+| Layer | Technology |
+|--------|------------|
+| Mobile | React Native |
+| Backend | Go |
+| Authentication | JWT |
+| Database | PostgreSQL |
+| Cache | Redis |
+| Queue | RabbitMQ |
+| Blockchain | BNB Smart Chain |
+| Smart Contracts | Solidity |
+| Token | USDT (BEP-20) |
+| Price Feed | CoinGecko |
+| PIX Gateway | Efi |
+| Email | Brevo |
+| Push Notifications | Firebase Cloud Messaging (FCM) / Apple Push Notification Service (APNS) |
+| Communication | REST API + WebSocket |
+| Architecture | Event-Driven Microservices |
+| Resilience | Circuit Breaker, Retry, RPC Fallback, DLQ |
+
+# 🗄️ Database Schema (Mobile)
+
+## Core Tables
+
+| Table | Description |
+|--------|-------------|
+| `users` | Authentication and user profile |
+| `devices` | Connected devices |
+| `orders` | Buy, sell and swap orders |
+| `payouts` | PIX payments |
+| `dca_strategies` | Dollar-Cost Averaging (DCA) strategies |
+| `notifications` | Push notifications |
+| `settings` | User preferences and configuration |
+
+## Audit & Resilience
+
+| Table | Description |
+|--------|-------------|
+| `operation_ids` | Idempotency control (duplicate request prevention) |
+| `dlq_events` | Dead Letter Queue events |
+| `health_checks` | Service monitoring |
+| `audit_logs` | Complete audit trail |
+
+---
+
+# 🔐 Security Controls
+
+| Layer | Control | Details |
+|--------|----------|---------|
+| API | JWT Access Token | Expires in **15 minutes** |
+| API | JWT Refresh Token | Expires in **7 days** |
+| API | Rate Limiting | **100 requests/minute** per IP |
+| API | CORS | Authorized domains only |
+| API | PIN / Biometrics | Local device authentication |
+| API | Two-Factor Authentication (2FA) | OTP via Authenticator App |
+| Database | Password Hashing | bcrypt |
+| Database | PII Encryption | AES-256 |
+| Network | TLS/SSL | HTTPS mandatory |
+| Infrastructure | Web Application Firewall (WAF) | Cloudflare |
+| Infrastructure | Secrets Management | Vault / AWS Secrets Manager |
+
+---
+
+# 📈 Performance Metrics
+
+```yaml
+SLO Targets:
+  API Latency: < 200ms (P95)
+  PIX Processing: < 60s
+  On-Chain Detection: < 5min
+  Availability: 99.95%
+  Error Rate: < 0.1%
+
+Monitoring:
+  - Prometheus Metrics
+  - Grafana Dashboards
+  - PagerDuty Alerts
+  - Datadog APM
+  - Structured JSON Logging
+```
+
+---
+
+# 🚀 Deployment Strategy
+
+## Infrastructure
+
+```yaml
+Infrastructure:
+  Container:
+    - Docker
+
+  Orchestration:
+    - Kubernetes
+
+  Database:
+    - PostgreSQL (Managed Cloud)
+
+  Cache:
+    - Redis (Upstash)
+
+  Queue:
+    - RabbitMQ (CloudAMQP)
+```
+
+## Continuous Deployment
+
+```yaml
+Deploy:
+  CI/CD:
+    - GitHub Actions
+
+  Canary Deployment:
+    - 10%
+    - 50%
+    - 100%
+
+  Rollback:
+    - Automatic if error rate > 1%
+
+  Blue-Green Deployment:
+    - Zero Downtime
+```
+
+## Scalability
+
+```yaml
+Scaling:
+  Auto Scaling:
+    - Kubernetes HPA (CPU 70%)
+
+  Workers:
+    - 2 → 10 Replicas
+
+  Database:
+    - Read Replicas
+
+  Blockchain RPC:
+    - Multi-Provider Fallback
+```
+
+# 📝 Environment Variables
+
+```env
+# ============================================================
+# Database
+# ============================================================
+DATABASE_URL=postgresql://...
+
+# ============================================================
+# JWT Authentication
+# ============================================================
+MOBILE_JWT_SECRET=xxx
+MOBILE_REFRESH_SECRET=xxx
+
+# ============================================================
+# Blockchain - Binance Smart Chain (6 RPC Nodes)
+# ============================================================
+BSC_RPC_URL_1=...
+BSC_RPC_URL_2=...
+BSC_RPC_URL_3=...
+BSC_RPC_URL_4=...
+BSC_RPC_URL_5=...
+BSC_RPC_URL_FALLBACK=...
+
+# ============================================================
+# Smart Contracts
+# ============================================================
+BSC_USDT_CONTRACT=0x55d398...
+PRIVATE_KEY=0x...
+
+# ============================================================
+# PIX Gateway (Efi)
+# ============================================================
+EFI_CLIENT_ID=xxx
+EFI_CLIENT_SECRET=xxx
+EFI_PIX_KEY=xxx
+
+# ============================================================
+# Email (Brevo)
+# ============================================================
+SMTP_HOST=smtp-relay.brevo.com
+SMTP_USER=xxx
+SMTP_PASS=xxx
+
+# ============================================================
+# Push Notifications
+# ============================================================
+FCM_SERVER_KEY=xxx
+
+# ============================================================
+# Security
+# ============================================================
+LGPD_SECRET=xxx
+PIX_WEBHOOK_SECRET=xxx
+```
+
+---
+
+# 🎯 Evolution Roadmap
+
+```mermaid
+timeline
+    title Mobile Ecosystem Evolution
+
+    Phase 1 : Foundation
+             : Auth + Wallet + Orders
+
+    Phase 2 : Payments
+             : PIX + On-Chain
+
+    Phase 3 : Automation
+             : DCA + Workers
+
+    Phase 4 : Real-time
+             : WebSocket + Push
+
+    Phase 5 : Scale
+             : Resilience + RPC Fallback
+```
 
 ## Documentacao Tecnica
 
