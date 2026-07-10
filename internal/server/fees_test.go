@@ -32,3 +32,27 @@ func TestTransactionFeeAddsPerUsdtFeeForBRL(t *testing.T) {
 		t.Fatalf("expected 5 BRL fee, got %.2f", fee)
 	}
 }
+
+func TestSellRateUsesConfiguredBps(t *testing.T) {
+	s := &Server{cfg: &config.Config{SellRateBps: 8772}}
+
+	rate := s.sellRate(5.13)
+	if rate != 4.5 {
+		t.Fatalf("expected sell rate 4.50, got %.4f", rate)
+	}
+}
+
+func TestSellQuotePaysPixBRLWithSellRate(t *testing.T) {
+	s := &Server{cfg: &config.Config{SellRateBps: 8772}}
+
+	rate, payout, spread := s.sellQuote(20, 5.13)
+	if rate != 4.5 {
+		t.Fatalf("expected sell rate 4.50, got %.4f", rate)
+	}
+	if payout != 90 {
+		t.Fatalf("expected payout 90.00 BRL, got %.2f", payout)
+	}
+	if spread != 12.6 {
+		t.Fatalf("expected spread 12.60 BRL, got %.2f", spread)
+	}
+}
