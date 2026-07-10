@@ -1,4 +1,4 @@
-package server
+﻿package server
 
 import (
 	"bytes"
@@ -172,7 +172,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow("buy:" + clientIP(r)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite de criaÃ§Ã£o de compras excedido"})
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite de criaÃƒÂ§ÃƒÂ£o de compras excedido"})
 		return
 	}
 	var req struct {
@@ -204,12 +204,12 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 		AddressPayload map[string]any `json:"addressPayload"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invÃ¡lido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invÃƒÂ¡lido"})
 		return
 	}
 	asset := strings.ToUpper(defaultString(req.Asset, "USDT"))
 	if asset != "USDT" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset nÃ£o suportado nesta fase (apenas USDT)"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset nÃƒÂ£o suportado nesta fase (apenas USDT)"})
 		return
 	}
 	deliveryNetwork := s.deliveryNetwork()
@@ -238,7 +238,7 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 	fee := s.transactionFee(amountFiat, fiatCurrency, rate)
 	payout := amountFiat
 	if payout <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valor insuficiente apÃ³s taxa"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valor insuficiente apÃƒÂ³s taxa"})
 		return
 	}
 	totalFiat := amountFiat + fee
@@ -316,7 +316,7 @@ func (s *Server) handleGetBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if buy == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "compra nÃ£o encontrada"})
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "compra nÃƒÂ£o encontrada"})
 		return
 	}
 	writeJSON(w, http.StatusOK, buy)
@@ -370,7 +370,7 @@ func (s *Server) authorizeBuyRead(w http.ResponseWriter, r *http.Request, id str
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	price := s.workers.PriceWorker.GetCurrentPrice()
 	if price <= 0 {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "preço ainda não carregado"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "preÃ§o ainda nÃ£o carregado"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1185,27 +1185,25 @@ func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow(clientIP(r)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite de criação de ordens excedido"})
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite de criaÃ§Ã£o de ordens excedido"})
 		return
 	}
 	var req struct {
-		AmountBRL float64 `json:"amountBRL"`
-		Address   string  `json:"address"`
-		Network   string  `json:"network"`
-		Asset     string  `json:"asset"`
-		PixCpf    string  `json:"pixCpf"`
-		PixPhone  string  `json:"pixPhone"`
+		AmountBRL    float64 `json:"amountBRL"`
+		AmountUSDT   float64 `json:"amountUSDT"`
+		CryptoAmount float64 `json:"cryptoAmount"`
+		Address      string  `json:"address"`
+		Network      string  `json:"network"`
+		Asset        string  `json:"asset"`
+		PixCpf       string  `json:"pixCpf"`
+		PixPhone     string  `json:"pixPhone"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON inválido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invÃ¡lido"})
 		return
 	}
 	if req.PixCpf == "" && req.PixPhone == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "pixCpf ou pixPhone e obrigatorio"})
-		return
-	}
-	if req.AmountBRL < s.cfg.OrderMinBrl || req.AmountBRL > s.cfg.OrderMaxBrl {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("valor fora dos limites (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
 		return
 	}
 	network := strings.ToUpper(defaultString(req.Network, "BSC"))
@@ -1220,11 +1218,6 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if stats.Count >= s.cfg.PixMaxOrdersPer24h || stats.Total+req.AmountBRL > s.cfg.PixMaxBrlPer24h {
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite diario por chave PIX excedido"})
-		return
-	}
-
 	var idx *int
 	depositAddress := strings.TrimSpace(req.Address)
 	if depositAddress == "" {
@@ -1241,14 +1234,29 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao ainda nao carregada"})
 		return
 	}
-	fee := s.transactionFee(req.AmountBRL, "BRL", rate)
-	payout := req.AmountBRL
-	if payout <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valor insuficiente após taxa"})
+	marketRate := rate
+	amountUSDT := req.AmountUSDT
+	if amountUSDT <= 0 {
+		amountUSDT = req.CryptoAmount
+	}
+	if amountUSDT <= 0 && req.AmountBRL > 0 {
+		amountUSDT = req.AmountBRL / s.sellRate(marketRate)
+	}
+	if amountUSDT <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amountUSDT deve ser maior que zero"})
 		return
 	}
-	totalBRL := req.AmountBRL + fee
-	amountUSDT := payout / rate
+	rate, payout, spread := s.sellQuote(amountUSDT, marketRate)
+	if payout < s.cfg.OrderMinBrl || payout > s.cfg.OrderMaxBrl {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("payout fora dos limites (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
+		return
+	}
+	if stats.Count >= s.cfg.PixMaxOrdersPer24h || stats.Total+payout > s.cfg.PixMaxBrlPer24h {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite diario por chave PIX excedido"})
+		return
+	}
+	fee := spread
+	totalBRL := payout
 	order, err := s.db.CreateOrder(ctx, database.OrderInput{
 		Status:            string(models.StatusAguardandoDeposito),
 		AmountBRL:         totalBRL,
@@ -1271,11 +1279,11 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.db.AddEvent(ctx, order.ID, "order.meta", map[string]any{"requestId": requestID(r), "ip": clientIP(r), "userAgent": r.UserAgent()})
 	s.workers.Bus.Publish(workers.Event{Type: "order.created", OrderID: order.ID, Payload: map[string]any{"requestId": requestID(r), "amountBRL": totalBRL}})
-	s.email.NotifyOps("Swappy: nova ordem criada", fmt.Sprintf("Ordem %s criada para %.2f BRL. Endereço: %s", order.ID, totalBRL, depositAddress))
+	s.email.NotifyOps("Swappy: nova ordem criada", fmt.Sprintf("Ordem %s criada para %.2f BRL. EndereÃ§o: %s", order.ID, totalBRL, depositAddress))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": order.ID, "orderId": order.ID, "accessToken": order.AccessToken, "status": order.Status, "address": depositAddress, "depositAddress": depositAddress,
-		"amountBRL": totalBRL, "subtotalBRL": req.AmountBRL, "amountUSDT": amountUSDT, "btcAmount": amountUSDT, "feeBRL": fee, "totalBRL": totalBRL, "payoutBRL": payout,
-		"rate": rate, "network": network, "feePolicy": s.feePolicy("BRL", rate),
+		"amountBRL": totalBRL, "subtotalBRL": payout, "amountUSDT": amountUSDT, "btcAmount": amountUSDT, "feeBRL": fee, "spreadBRL": spread, "totalBRL": totalBRL, "payoutBRL": payout,
+		"rate": rate, "marketRate": roundRate(marketRate), "network": network, "sellPolicy": s.sellPolicy(marketRate, rate),
 		"statusUrl": fmt.Sprintf("/api/order/%s?accessToken=%s", order.ID, order.AccessToken),
 		"streamUrl": fmt.Sprintf("/api/order/%s/stream?accessToken=%s", order.ID, order.AccessToken),
 	})
@@ -1291,7 +1299,7 @@ func (s *Server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if order == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem não encontrada"})
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem nÃ£o encontrada"})
 		return
 	}
 	writeJSON(w, http.StatusOK, order)
@@ -1346,7 +1354,7 @@ func (s *Server) authorizeOrderRead(w http.ResponseWriter, r *http.Request, id s
 func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	if !validHMAC(s.cfg.SignerHmacSecret, raw, r.Header.Get("x-internal-hmac")) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura inválida"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura invÃ¡lida"})
 		return
 	}
 	var req struct {
@@ -1354,7 +1362,7 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 		Amount float64 `json:"amount"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil || req.TxHash == "" || req.Amount <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload inválido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload invÃ¡lido"})
 		return
 	}
 	id := r.PathValue("id")
@@ -1368,11 +1376,11 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 	order, err := s.db.GetOrder(r.Context(), id)
 	if err != nil || order == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem não encontrada"})
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem nÃ£o encontrada"})
 		return
 	}
 	if order.Status != models.StatusAguardandoDeposito {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status atual não permite depósito"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status atual nÃ£o permite depÃ³sito"})
 		return
 	}
 	if err := s.db.UpdateOrderStatus(r.Context(), id, "pago", map[string]any{"requestId": requestID(r), "depositTx": req.TxHash, "depositAmount": req.Amount}); err != nil {
@@ -1381,14 +1389,14 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 	s.workers.Bus.Publish(workers.Event{Type: "onchain.detected", OrderID: id, Payload: map[string]any{"tx_hash": req.TxHash, "amount_usdt": req.Amount}})
 	s.workers.Bus.Publish(workers.Event{Type: "payout.requested", OrderID: id})
-	s.email.NotifyOps("Swappy: depósito detectado", fmt.Sprintf("Ordem %s recebeu depósito %s no valor %.8f USDT.", id, req.TxHash, req.Amount))
+	s.email.NotifyOps("Swappy: depÃ³sito detectado", fmt.Sprintf("Ordem %s recebeu depÃ³sito %s no valor %.8f USDT.", id, req.TxHash, req.Amount))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handlePayout(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	if !validHMAC(s.cfg.SignerHmacSecret, raw, r.Header.Get("x-internal-hmac")) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura inválida"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura invÃ¡lida"})
 		return
 	}
 	var req struct {
@@ -1397,7 +1405,7 @@ func (s *Server) handlePayout(w http.ResponseWriter, r *http.Request) {
 		Error      string `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil || req.ProviderID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload inválido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload invÃ¡lido"})
 		return
 	}
 	status := "erro"
@@ -1417,7 +1425,7 @@ func (s *Server) handlePixWebhook(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	secret := defaultString(s.cfg.PixWebhookSecret, s.cfg.WebhookSecret)
 	if !validHMAC(secret, raw, r.Header.Get("x-efi-signature")) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura inválida"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura invÃ¡lida"})
 		return
 	}
 	var req struct {
@@ -1427,7 +1435,7 @@ func (s *Server) handlePixWebhook(w http.ResponseWriter, r *http.Request) {
 		Error      string `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil || req.OrderID == "" || req.ProviderID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload inválido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload invÃ¡lido"})
 		return
 	}
 	status := "erro"
@@ -1553,7 +1561,7 @@ func (s *Server) handleStripeWebhookBuy(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleInternalSweep(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	if !validHMAC(s.cfg.SignerHmacSecret, raw, r.Header.Get("x-internal-hmac")) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura inválida"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura invÃ¡lida"})
 		return
 	}
 	var req struct {
@@ -1562,7 +1570,7 @@ func (s *Server) handleInternalSweep(w http.ResponseWriter, r *http.Request) {
 		Amount     float64 `json:"amount"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil || req.Amount <= 0 || req.ToAddr == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload inválido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload invÃ¡lido"})
 		return
 	}
 	sweep, err := s.db.CreateSweep(r.Context(), req.ChildIndex, s.cfg.TreasuryHot, req.ToAddr, req.Amount, nil)
@@ -1585,14 +1593,14 @@ func (s *Server) handleEmailTest(w http.ResponseWriter, r *http.Request) {
 		Body    string `json:"body"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON inválido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invÃ¡lido"})
 		return
 	}
 	if req.Subject == "" {
 		req.Subject = "Swappy Financial - teste SMTP"
 	}
 	if req.Body == "" {
-		req.Body = "Serviço de email operacional ativo."
+		req.Body = "ServiÃ§o de email operacional ativo."
 	}
 	if err := s.email.Send(email.Message{To: req.To, Subject: req.Subject, Body: req.Body}); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
@@ -2213,7 +2221,7 @@ func (s *Server) createPaymentIntent(ctx context.Context, buyID string, amountFi
 		if s.cfg.AllowSimulations && !s.cfg.IsProduction() {
 			return map[string]any{"provider": "efi", "mode": "simulation", "pixKey": "chavepix@nexswap.com", "qrCodeUrl": "/images/qrcode.png", "buyId": buyID}, nil
 		}
-		return nil, fmt.Errorf("credenciais Efí Pix nao configuradas")
+		return nil, fmt.Errorf("credenciais EfÃ­ Pix nao configuradas")
 	}
 	return s.createEfiPixCharge(ctx, buyID, amountFiat, customer)
 }
@@ -2237,7 +2245,7 @@ func (s *Server) efiCertificateSource() string {
 
 func (s *Server) efiCertificateReady() (bool, string) {
 	if !s.efiPixConfigured() {
-		return false, "credenciais Efí incompletas"
+		return false, "credenciais EfÃ­ incompletas"
 	}
 	if _, err := s.loadEfiCertificate(strings.TrimSpace(s.cfg.EfiCertificatePath), strings.TrimSpace(s.cfg.EfiCertificateKey)); err != nil {
 		return false, err.Error()
@@ -2283,11 +2291,11 @@ func (s *Server) createEfiPixCharge(ctx context.Context, buyID string, amountFia
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Efí rejeitou cobranca PIX: status %d body %s", resp.StatusCode, compactProviderBody(body))
+		return nil, fmt.Errorf("EfÃ­ rejeitou cobranca PIX: status %d body %s", resp.StatusCode, compactProviderBody(body))
 	}
 	var provider map[string]any
 	if err := json.Unmarshal(body, &provider); err != nil {
-		return nil, fmt.Errorf("Efí respondeu JSON invalido")
+		return nil, fmt.Errorf("EfÃ­ respondeu JSON invalido")
 	}
 	provider["provider"] = "efi"
 	provider["buyId"] = buyID
@@ -2303,7 +2311,7 @@ func (s *Server) createEfiPixCharge(ctx context.Context, buyID string, amountFia
 		return nil, err
 	}
 	if mapString(provider, "qrCodeUrl") == "" || mapString(provider, "pixCopiaECola") == "" {
-		return nil, fmt.Errorf("Efí nao retornou QR Code Pix completo")
+		return nil, fmt.Errorf("EfÃ­ nao retornou QR Code Pix completo")
 	}
 	if feeBps := s.cfg.EfiPixFeeBps; feeBps > 0 {
 		provider["providerFeeBps"] = feeBps
@@ -2318,7 +2326,7 @@ func (s *Server) createEfiPixCharge(ctx context.Context, buyID string, amountFia
 func (s *Server) efiQRCode(ctx context.Context, client *http.Client, token string, charge map[string]any) (map[string]any, error) {
 	locID := nestedFloat(charge, "loc", "id")
 	if locID <= 0 {
-		return nil, fmt.Errorf("cobranca Efí sem loc.id")
+		return nil, fmt.Errorf("cobranca EfÃ­ sem loc.id")
 	}
 	endpoint := fmt.Sprintf("%s/v2/loc/%d/qrcode", strings.TrimRight(s.cfg.EfiApiBaseURL, "/"), int64(locID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -2333,7 +2341,7 @@ func (s *Server) efiQRCode(ctx context.Context, client *http.Client, token strin
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Efí rejeitou QR Code Pix: status %d body %s", resp.StatusCode, compactProviderBody(body))
+		return nil, fmt.Errorf("EfÃ­ rejeitou QR Code Pix: status %d body %s", resp.StatusCode, compactProviderBody(body))
 	}
 	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -2377,7 +2385,7 @@ func (s *Server) loadEfiCertificate(certPath, keyPath string) (tls.Certificate, 
 	if strings.HasSuffix(strings.ToLower(certPath), ".p12") || strings.HasSuffix(strings.ToLower(certPath), ".pfx") {
 		raw, err := os.ReadFile(certPath)
 		if err != nil {
-			return tls.Certificate{}, fmt.Errorf("nao foi possivel ler certificado Efí P12: %w", err)
+			return tls.Certificate{}, fmt.Errorf("nao foi possivel ler certificado EfÃ­ P12: %w", err)
 		}
 		return decodeEfiP12(raw, s.cfg.EfiCertificatePass)
 	}
@@ -2386,7 +2394,7 @@ func (s *Server) loadEfiCertificate(certPath, keyPath string) (tls.Certificate, 
 	}
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("certificado Efí PEM/KEY invalido: %w", err)
+		return tls.Certificate{}, fmt.Errorf("certificado EfÃ­ PEM/KEY invalido: %w", err)
 	}
 	if cert.Leaf == nil && len(cert.Certificate) > 0 {
 		cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
@@ -2397,7 +2405,7 @@ func (s *Server) loadEfiCertificate(certPath, keyPath string) (tls.Certificate, 
 func decodeEfiP12(raw []byte, password string) (tls.Certificate, error) {
 	privateKey, cert, err := pkcs12.Decode(raw, password)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("certificado Efí P12 invalido; confira EFI_CERTIFICATE_PASSWORD e GODEBUG=x509negativeserial=1: %w", err)
+		return tls.Certificate{}, fmt.Errorf("certificado EfÃ­ P12 invalido; confira EFI_CERTIFICATE_PASSWORD e GODEBUG=x509negativeserial=1: %w", err)
 	}
 	return tls.Certificate{
 		Certificate: [][]byte{cert.Raw},
@@ -2422,13 +2430,13 @@ func (s *Server) efiAccessToken(ctx context.Context, client *http.Client) (strin
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("Efí OAuth rejeitou credenciais: status %d", resp.StatusCode)
+		return "", fmt.Errorf("EfÃ­ OAuth rejeitou credenciais: status %d", resp.StatusCode)
 	}
 	var data struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil || strings.TrimSpace(data.AccessToken) == "" {
-		return "", fmt.Errorf("Efí OAuth respondeu token inválido")
+		return "", fmt.Errorf("EfÃ­ OAuth respondeu token invÃ¡lido")
 	}
 	return data.AccessToken, nil
 }
@@ -2651,3 +2659,4 @@ func (l *rateLimiter) Allow(key string) bool {
 	l.counters[key] = b
 	return b.Count <= l.max
 }
+
