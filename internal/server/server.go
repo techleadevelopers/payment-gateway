@@ -89,6 +89,49 @@ func (s *Server) feePolicy(fiatCurrency string, rate float64) map[string]any {
 	}
 }
 
+func round2(value float64) float64 {
+	return math.Round(value*100) / 100
+}
+
+func roundRate(value float64) float64 {
+	return math.Round(value*10000) / 10000
+}
+
+func (s *Server) sellRate(marketRate float64) float64 {
+	if s.cfg.SellUsdtBrlRate > 0 {
+		return roundRate(s.cfg.SellUsdtBrlRate)
+	}
+	bps := s.cfg.SellRateBps
+	if bps <= 0 || bps > 10000 {
+		bps = 10000
+	}
+	return roundRate(marketRate * float64(bps) / 10000)
+}
+
+func (s *Server) sellQuote(amountUSDT, marketRate float64) (sellRate, payoutBRL, spreadBRL float64) {
+	sellRate = s.sellRate(marketRate)
+	payoutBRL = round2(amountUSDT * sellRate)
+	spreadBRL = round2(amountUSDT * math.Max(marketRate-sellRate, 0))
+	return sellRate, payoutBRL, spreadBRL
+}
+
+func (s *Server) sellPolicy(marketRate, sellRate float64) map[string]any {
+	spreadBps := 0
+	if marketRate > 0 && sellRate > 0 && sellRate < marketRate {
+		spreadBps = int(math.Round((1 - sellRate/marketRate) * 10000))
+	}
+	return map[string]any{
+		"marketRate":       roundRate(marketRate),
+		"rate":             sellRate,
+		"sellRateBps":      s.cfg.SellRateBps,
+		"spreadBps":        spreadBps,
+		"fixedSellRateBRL": s.cfg.SellUsdtBrlRate > 0,
+		"fiatCurrency":     "BRL",
+		"description":      "Cotacao de venda USDT para PIX BRL",
+		"backendEnforced":  true,
+	}
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /developers", s.handleDevelopers)
@@ -409,17 +452,45 @@ func (s *Server) handleChainFXQuote(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amount must be greater than zero"})
 		return
 	}
-	if fiatCurrency == "BRL" && (amountFiat < s.cfg.OrderMinBrl || amountFiat > s.cfg.OrderMaxBrl) {
+	if side != "sell" && fiatCurrency == "BRL" && (amountFiat < s.cfg.OrderMinBrl || amountFiat > s.cfg.OrderMaxBrl) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("amount outside limits (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
 		return
 	}
-	rate := s.workers.PriceWorker.GetPrice(fiatCurrency)
-	if rate <= 0 {
+	marketRate := s.workers.PriceWorker.GetPrice(fiatCurrency)
+	if marketRate <= 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "rates are not loaded yet"})
 		return
 	}
-	fee := s.transactionFee(amountFiat, fiatCurrency, rate)
 	expiresAt := time.Now().Add(time.Duration(s.cfg.RateLockSec) * time.Second).UTC()
+	if side == "sell" {
+		amountUSDT := amountFiat
+		rate, payoutBRL, spreadBRL := s.sellQuote(amountUSDT, marketRate)
+		if payoutBRL < s.cfg.OrderMinBrl || payoutBRL > s.cfg.OrderMaxBrl {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("payout outside limits (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"quoteId":      "qt_" + strings.ReplaceAll(database.NewID(), "-", ""),
+			"side":         side,
+			"fiat":         "BRL",
+			"asset":        asset,
+			"rate":         rate,
+			"marketRate":   roundRate(marketRate),
+			"cryptoAmount": amountUSDT,
+			"fiatAmount":   payoutBRL,
+			"feeFiat":      spreadBRL,
+			"spreadFiat":   spreadBRL,
+			"payoutFiat":   payoutBRL,
+			"totalFiat":    payoutBRL,
+			"paymentRail":  paymentMethod,
+			"sellPolicy":   s.sellPolicy(marketRate, rate),
+			"expiresAt":    expiresAt,
+			"sandbox":      s.chainFXAuthContext(r).Sandbox,
+		})
+		return
+	}
+	rate := marketRate
+	fee := s.transactionFee(amountFiat, fiatCurrency, rate)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"quoteId":      "qt_" + strings.ReplaceAll(database.NewID(), "-", ""),
 		"side":         side,
@@ -513,21 +584,26 @@ func (s *Server) handleChainFXSell(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
 		return
 	}
-	amountBRL := req.AmountBRL
-	if amountBRL <= 0 {
-		amountBRL = req.Amount
+	marketRate := s.workers.PriceWorker.GetCurrentPrice()
+	if marketRate <= 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "rates are not loaded yet"})
+		return
+	}
+	amountUSDT := req.Amount
+	if amountUSDT <= 0 && req.AmountBRL > 0 {
+		amountUSDT = req.AmountBRL / s.sellRate(marketRate)
 	}
 	depositAddress := firstNonEmpty(req.DepositAddress, req.Wallet)
 	if depositAddress == "" && auth.Sandbox {
 		depositAddress = chainFXFakeWallet()
 	}
 	payload := map[string]any{
-		"amountBRL": amountBRL,
-		"address":   depositAddress,
-		"network":   defaultString(req.Network, "BSC"),
-		"asset":     defaultString(req.Asset, "USDT"),
-		"pixCpf":    firstNonEmpty(req.PixCPF, req.Pix.CPF),
-		"pixPhone":  firstNonEmpty(req.PixPhone, req.Pix.Phone),
+		"amountUSDT": amountUSDT,
+		"address":    depositAddress,
+		"network":    defaultString(req.Network, "BSC"),
+		"asset":      defaultString(req.Asset, "USDT"),
+		"pixCpf":     firstNonEmpty(req.PixCPF, req.Pix.CPF),
+		"pixPhone":   firstNonEmpty(req.PixPhone, req.Pix.Phone),
 	}
 	s.handleCreateOrder(w, cloneJSONRequest(r, payload))
 }
@@ -1036,6 +1112,9 @@ func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fiatCurrency, paymentMethod, amountFiat = normalizePaymentRail(fiatCurrency, paymentMethod, amountFiat, amountBRL, amountUSD)
+	if mode == "sell" {
+		fiatCurrency, paymentMethod = "BRL", "pix"
+	}
 	if fiatCurrency == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "rail de pagamento nao suportado"})
 		return
@@ -1044,15 +1123,42 @@ func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amountFiat deve ser maior que zero"})
 		return
 	}
-	if fiatCurrency == "BRL" && (amountFiat < s.cfg.OrderMinBrl || amountFiat > s.cfg.OrderMaxBrl) {
+	if mode != "sell" && fiatCurrency == "BRL" && (amountFiat < s.cfg.OrderMinBrl || amountFiat > s.cfg.OrderMaxBrl) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("valor fora dos limites (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
 		return
 	}
-	rate := s.workers.PriceWorker.GetPrice(fiatCurrency)
-	if rate <= 0 {
+	marketRate := s.workers.PriceWorker.GetPrice(fiatCurrency)
+	if marketRate <= 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao ainda nao carregada"})
 		return
 	}
+	if mode == "sell" {
+		amountUSDT := amountFiat
+		rate, payoutBRL, spreadBRL := s.sellQuote(amountUSDT, marketRate)
+		if payoutBRL < s.cfg.OrderMinBrl || payoutBRL > s.cfg.OrderMaxBrl {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("payout fora dos limites (%.2f - %.2f BRL)", s.cfg.OrderMinBrl, s.cfg.OrderMaxBrl)})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"mode":              mode,
+			"asset":             asset,
+			"amountFiat":        payoutBRL,
+			"subtotalFiat":      payoutBRL,
+			"fiatCurrency":      "BRL",
+			"paymentMethod":     paymentMethod,
+			"feeFiat":           spreadBRL,
+			"spreadFiat":        spreadBRL,
+			"totalFiat":         payoutBRL,
+			"payoutFiat":        payoutBRL,
+			"sellPolicy":        s.sellPolicy(marketRate, rate),
+			"rate":              rate,
+			"marketRate":        roundRate(marketRate),
+			"cryptoAmount":      amountUSDT,
+			"rateLockExpiresAt": time.Now().Add(time.Duration(s.cfg.RateLockSec) * time.Second),
+		})
+		return
+	}
+	rate := marketRate
 	fee := s.transactionFee(amountFiat, fiatCurrency, rate)
 	payout := amountFiat
 	if payout <= 0 {
