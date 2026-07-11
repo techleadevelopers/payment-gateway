@@ -60,14 +60,14 @@ func NewClient(cfg *config.Config) *Client {
 
 func (c *Client) DeriveAddress(index int) (string, error) {
 	if c.cfg.TronXPub == "" {
-		return "", errors.New("TRON_XPUB nÃ£o configurado")
+		return "", errors.New("TRON_XPUB não configurado")
 	}
 	return DeriveAddress(c.cfg.TronXPub, index)
 }
 
 func DeriveAddress(xpub string, index int) (string, error) {
 	if index < 0 {
-		return "", fmt.Errorf("Ã­ndice de derivaÃ§Ã£o invÃ¡lido")
+		return "", fmt.Errorf("Ã­ndice de derivaÃ§ão invÃ¡lido")
 	}
 	key, err := parseXPub(xpub)
 	if err != nil {
@@ -150,7 +150,7 @@ func parseXPub(value string) (*extendedPublicKey, error) {
 
 func derivePublicChild(parent *extendedPublicKey, index uint32) (*extendedPublicKey, error) {
 	if index >= 0x80000000 {
-		return nil, errors.New("nÃ£o Ã© possÃ­vel derivar filho hardened a partir de xpub")
+		return nil, errors.New("não Ã© possÃ­vel derivar filho hardened a partir de xpub")
 	}
 	mac := hmac.New(sha512.New, parent.ChainCode)
 	mac.Write(parent.PublicKey)
@@ -162,7 +162,7 @@ func derivePublicChild(parent *extendedPublicKey, index uint32) (*extendedPublic
 	curve := crypto.S256()
 	ilInt := new(big.Int).SetBytes(il)
 	if ilInt.Sign() == 0 || ilInt.Cmp(curve.Params().N) >= 0 {
-		return nil, errors.New("derivaÃ§Ã£o BIP32 invÃ¡lida")
+		return nil, errors.New("derivaÃ§ão BIP32 invÃ¡lida")
 	}
 	parentPub, err := crypto.DecompressPubkey(parent.PublicKey)
 	if err != nil {
@@ -213,7 +213,7 @@ func derivePrivateChild(parent *extendedPrivateKey, index uint32) (*extendedPriv
 	il := new(big.Int).SetBytes(sum[:32])
 	n := crypto.S256().Params().N
 	if il.Sign() == 0 || il.Cmp(n) >= 0 {
-		return nil, errors.New("derivaÃ§Ã£o BIP32 invÃ¡lida")
+		return nil, errors.New("derivaÃ§ão BIP32 invÃ¡lida")
 	}
 	key := new(big.Int).SetBytes(parent.PrivateKey)
 	key.Add(key, il)
