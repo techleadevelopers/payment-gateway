@@ -13,9 +13,9 @@ import (
 // SecurityConfig agrupa configurações de segurança
 type SecurityConfig struct {
 	// HMAC
-	HMACSecret      string
-	HMACMaxSkewSec  int64
-	HMACOldSecret   string // Para rotação de segredos
+	HMACSecret     string
+	HMACMaxSkewSec int64
+	HMACOldSecret  string // Para rotação de segredos
 
 	// Nonce
 	NonceTTLSeconds int64
@@ -27,10 +27,10 @@ type SecurityConfig struct {
 	RateLimiterType string // "token_bucket" ou "sliding_window"
 
 	// Request
-	MaxBodySizeMB  int64
-	RequireHMAC    bool
-	RequireNonce   bool
-	RequireAPIKey  bool
+	MaxBodySizeMB int64
+	RequireHMAC   bool
+	RequireNonce  bool
+	RequireAPIKey bool
 }
 
 // SignerConfig contém toda a configuração do signer
@@ -82,31 +82,31 @@ func (c *SignerConfig) ValidateProduction() error {
 	if !c.IsProduction() {
 		return nil
 	}
-	
+
 	if c.AllowSimulation {
 		return fmt.Errorf("SIGNER_ALLOW_SIMULATION deve ser false em producao")
 	}
-	
+
 	if strings.TrimSpace(c.DatabaseURL) == "" {
 		return fmt.Errorf("SIGNER_DATABASE_URL ou DATABASE_URL obrigatorio em producao")
 	}
-	
+
 	if len(c.AllowedTokenContracts) == 0 {
 		return fmt.Errorf("SIGNER_ALLOWED_TOKEN_CONTRACTS deve fixar contratos permitidos em producao")
 	}
-	
+
 	if len(strings.TrimSpace(c.Security.HMACSecret)) < 32 {
 		return fmt.Errorf("HMAC_SECRET deve ter pelo menos 32 caracteres em producao")
 	}
-	
+
 	if c.Security.RequireHMAC && c.Security.HMACSecret == "" {
 		return fmt.Errorf("HMAC_SECRET obrigatorio quando RequireHMAC=true")
 	}
-	
+
 	if c.Security.RequireNonce && c.Security.NonceTTLSeconds <= 0 {
 		return fmt.Errorf("NONCE_TTL_SECONDS deve ser > 0 quando RequireNonce=true")
 	}
-	
+
 	return nil
 }
 
@@ -115,7 +115,7 @@ func LoadSignerConfig() *SignerConfig {
 	_ = godotenv.Load()
 
 	rpcURLs := parseRPCURLs()
-	
+
 	return &SignerConfig{
 		// ===== Gerais =====
 		AppEnv:                strings.ToLower(getEnv("APP_ENV", getEnv("ENV", "development"))),
@@ -138,7 +138,7 @@ func LoadSignerConfig() *SignerConfig {
 		// ===== Segurança =====
 		Security: SecurityConfig{
 			// HMAC
-			HMACSecret:     getEnv("HMAC_SECRET", ""),
+			HMACSecret:     firstNonEmptyEnv("HMAC_SECRET", "SIGNER_HMAC_SECRET"),
 			HMACMaxSkewSec: getEnvAsInt64("HMAC_MAX_SKEW_SEC", 300),
 			HMACOldSecret:  getEnv("HMAC_OLD_SECRET", ""), // Para rotação
 
@@ -152,10 +152,10 @@ func LoadSignerConfig() *SignerConfig {
 			RateLimiterType: getEnv("RATE_LIMITER_TYPE", "token_bucket"),
 
 			// Request
-			MaxBodySizeMB:  getEnvAsInt64("MAX_BODY_SIZE_MB", 1), // 1MB
-			RequireHMAC:    getEnvAsBool("REQUIRE_HMAC", true),
-			RequireNonce:   getEnvAsBool("REQUIRE_NONCE", true),
-			RequireAPIKey:  getEnvAsBool("REQUIRE_API_KEY", false),
+			MaxBodySizeMB: getEnvAsInt64("MAX_BODY_SIZE_MB", 1), // 1MB
+			RequireHMAC:   getEnvAsBool("REQUIRE_HMAC", true),
+			RequireNonce:  getEnvAsBool("REQUIRE_NONCE", true),
+			RequireAPIKey: getEnvAsBool("REQUIRE_API_KEY", false),
 		},
 
 		// ===== Custódia =====
