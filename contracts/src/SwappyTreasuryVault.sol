@@ -48,7 +48,7 @@ contract SwappyTreasuryVault {
     error InvalidAmount();
     error TokenNotAllowed();
     error RecipientNotAllowed();
-    error RecipientBlocked();
+    error RecipientIsBlocked();
     error TransferTooLarge();
     error DailyLimitExceeded();
     error OperationAlreadyExecuted();
@@ -180,7 +180,7 @@ contract SwappyTreasuryVault {
         if (executedOperation[operationId]) revert OperationAlreadyExecuted();
         if (token == address(0) || to == address(0)) revert ZeroAddress();
         if (amount == 0) revert InvalidAmount();
-        if (blockedRecipients[to]) revert RecipientBlocked();
+        if (blockedRecipients[to]) revert RecipientIsBlocked();
         if (requireAllowedRecipient && !allowedRecipients[to]) revert RecipientNotAllowed();
 
         TokenPolicy storage policy = tokenPolicies[token];
