@@ -68,26 +68,57 @@ func (p *Pool) Do(ctx context.Context, fn func(*ethclient.Client) error) error {
 	if cfg.MaxAttempts < 3 {
 		cfg.MaxAttempts = 3
 	}
+
 	var lastNode *Node
+
 	return resilience.DoWithContext(ctx, cfg, "rpc.pool", resilience.AlwaysRetry, func(ctx context.Context) error {
 		node := p.pickExcluding(lastNode)
 		lastNode = node
+
 		var callErr error
+
 		cbErr := node.cb.Execute(func() error {
 			c, err := ethclient.DialContext(ctx, node.URL)
 			if err != nil {
 				node.healthy.Store(false)
 				callErr = err
+
+				slog.Warn("RPC dial failed",
+					"url", truncate(node.URL, 60),
+					"err", err,
+				)
+
 				return err
 			}
+
 			defer c.Close()
+
 			callErr = fn(c)
-			node.healthy.Store(callErr == nil)
+
+			if callErr != nil {
+				slog.Warn("RPC request failed",
+					"url", truncate(node.URL, 60),
+					"err", callErr,
+				)
+
+				// não mata o node no primeiro erro
+				// o circuit breaker já controla falhas
+			} else {
+				node.healthy.Store(true)
+			}
+
 			return callErr
 		})
+
 		if cbErr != nil && callErr == nil {
+			slog.Warn("RPC circuit breaker error",
+				"url", truncate(node.URL, 60),
+				"err", cbErr,
+			)
+
 			return cbErr
 		}
+
 		return callErr
 	})
 }
