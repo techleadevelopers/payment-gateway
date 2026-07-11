@@ -103,19 +103,459 @@
 
 # ChainFx Payment Gateway
 
-Backend Go para orquestracao instantanea de settlement fiat -> USDT.
+Backend Go para settlement cripto programatico.
 
-ChainFx opera como um **instant settlement orchestration system**: recebe fiat por rails tradicionais, confirma o pagamento, registra tudo de forma auditavel e dispara entrega cripto para a wallet do usuario.
+ChainFx opera como um **payment and liquidity rail** com duas entradas:
+
+- **Human rail**: usuario compra/vende USDT usando PIX e recebe settlement na wallet ou em BRL.
+- **Machine rail**: agentes, bots e sistemas descobrem capacidades via manifesto, criam intents, pagam on-chain e recebem settlement stablecoin ou acesso de API.
+
+Em uma frase:
+
+```text
+ChainFx lets humans and autonomous agents move between local payments, stablecoins and programmable settlement.
+```
+
+Este README foca o produto e o fluxo principal. Detalhes profundos de mobile, custodia, dashboards e modulos internos devem ficar em documentos separados quando forem extraidos:
+
+- `ARCHITECTURE.md`: desenho tecnico completo.
+- `SECURITY.md`: signer, treasury, EIP-7702, auditoria e limites.
+- `DEVELOPERS.md`: API, SDKs, webhooks e exemplos.
+- `MOBILE.md`: app, WebSocket, DCA e experiencia mobile.
 
 ## Indice
 
-1. [Sobre o ChainFx](#sobre-o-ChainFx)
-2. [Fluxo do Cliente](#fluxo-do-cliente)
-3. [Principais Capacidades](#principais-capacidades)
-4. [Arquitetura Tecnica](#arquitetura-tecnica)
-5. [Deploy](#deploy)
-6. [Documentacao Tecnica](#documentacao-tecnica)
-7. [Licenca](#licenca)
+1. [Arquitetura de Camadas](#arquitetura-de-camadas)
+2. [Machine-to-Machine](#machine-to-machine)
+3. [Sobre o ChainFx](#sobre-o-chainfx)
+4. [Fluxo do Cliente](#fluxo-do-cliente)
+5. [Principais Capacidades](#principais-capacidades)
+6. [Arquitetura Tecnica](#arquitetura-tecnica)
+7. [Deploy](#deploy)
+8. [Documentacao Tecnica](#documentacao-tecnica)
+9. [Licenca](#licenca)
+
+## Arquitetura de Camadas
+
+```text
+                    PAYMENT GATEWAY CORE
+
+                           |
+        +------------------+------------------+
+        |                                     |
+        v                                     v
+
+ HUMAN LAYER                         MACHINE LAYER
+
+ Web App                             Agent API
+ Mobile App                          MCP / OpenAPI
+ Dashboard                           Machine-to-Machine
+ Checkout                            Autonomous Payments
+
+        |                                     |
+        |                                     |
+        v                                     v
+
+ Users                              AI Agents / Bots / Systems
+
+
+                Shared Infrastructure
+
+        - Ledger
+        - Wallets
+        - Balances
+        - Transactions
+        - Risk Engine
+        - Settlement
+        - Blockchain Workers
+        - Notifications
+```
+
+## Machine-to-Machine
+
+O objetivo da camada M2M e permitir que software compre liquidez, settlement ou acesso de API sem interface humana.
+
+O agente nao precisa ler uma landing page. Ele precisa de discovery previsivel, resposta tipada e estados claros.
+
+### Discovery para agentes
+
+Fluxo de descoberta:
+
+```text
+AI Agent
+  |
+  | GET /.well-known/ai-services.json
+  v
+descobre /agent/v1/capabilities
+  |
+  | GET /agent/v1/capabilities
+  v
+entende capacidades, assets, lifecycle, taxas e seguranca
+  |
+  | GET /agent/v1/assets
+  v
+escolhe par stablecoin habilitado
+  |
+  | POST /agent/v1/trade/quote
+  v
+paga on-chain
+  |
+  | POST /agent/v1/trade/execute
+  v
+recebe settlement
+```
+
+Endpoints de discovery:
+
+- `/.well-known/ai-services.json`: porta de entrada pequena e previsivel.
+- `/agent/v1/capabilities`: manifesto detalhado para agentes.
+- `/agent/v1/assets`: ativos habilitados, taxas, minimos e status.
+- `/openapi.json`: contrato HTTP.
+- `/mcp/initialize`: entrada MCP.
+- `/.well-known/x402.json`: discovery de pagamento.
+- `/llms.txt`, `/sitemap.xml`, `/robots.txt`: descoberta por crawlers e LLMs.
+
+### ChainFX Marketplace MCP
+
+O MCP passa a ser o canal natural de aquisicao para agentes. A ideia de produto e:
+
+```text
+Official MCP Registry
+  -> ChainFX MCP
+  -> Agent installs / connects
+  -> searchCapabilities()
+  -> purchaseCapability()
+  -> pay stablecoin on-chain
+  -> receive access token
+  -> executeCapability()
+  -> metering + billing + settlement
+```
+
+O MCP Registry resolve a descoberta de servidores. A ChainFX resolve a parte que ainda nao tem padrao dominante: compra, monetizacao, liquidacao e acesso por capability.
+
+Posicionamento de Fase 5:
+
+```text
+ChainFX Capability Network
+```
+
+O Marketplace continua existindo como compatibilidade de endpoints, mas o produto estrategico passa a ser uma rede economica de capacidades:
+
+```text
+Agent
+  -> Capability Discovery
+  -> Capability Contract
+  -> Capability Execution
+  -> Usage Metering
+  -> Billing
+  -> Settlement
+  -> Receipt
+```
+
+O agente nao precisa escolher diretamente OpenAI, Azure, AWS ou outro provider. Ele escolhe uma capacidade:
+
+- `document_ocr`
+- `aml_screening`
+- `payments_fx`
+- `llm_chat`
+- `semantic_memory`
+- `capability_discovery`
+
+A ChainFX seleciona a rota/provider internamente conforme politica, prioridade, disponibilidade, custo, latencia, qualidade e fallback. No corte atual, o Capability Router e hibrido: metering, quota, billing ledger e settlement da purchase sao reais; `semantic_memory` executa nativamente em Postgres; `llm_chat` usa provider OpenAI-compatible quando `OPENAI_API_KEY` estiver configurada; `document_ocr` usa um adapter HTTP quando `CAPABILITY_OCR_URL` estiver configurada. Sem essas configuracoes, a rota tenta fallback de provider e depois cai para `mock_dev` com evento auditavel.
+
+Roteamento de Fase 4:
+
+- `best_available`: usa prioridade operacional, taxa de sucesso, custo e latencia.
+- `cheapest`: prioriza menor `cost_score`.
+- `lowest_latency`: prioriza menor `latency_ms`.
+- `highest_quality`: prioriza maior `quality_score` e `success_rate_bps`.
+- `region`: permite restringir rota por regiao, preservando providers `global`.
+- `maxLatencyMs` e `maxCostScore`: permitem politica empresarial por chamada.
+- `requireReal`: filtra apenas providers ativos/reais.
+- fallback: tenta o provider selecionado, depois candidatos reais ordenados, depois mock/dev auditavel.
+
+Productionization de Fase 5:
+
+- contratos versionados de capability em `/marketplace/capabilities/{id}/contract`;
+- ferramenta MCP `getCapabilityContract`;
+- recurso MCP `chainfx://capability-contracts/{id}`;
+- telemetria real de execucao gravada em `marketplace_execution_events.latency_ms`;
+- atualizacao automatica de `latency_ms` e `success_rate_bps` em `marketplace_provider_policies`;
+- narrativa pronta para MCP Registry como `ChainFX Capability Network MCP`;
+- endpoints antigos `/marketplace/products`, `/marketplace/purchase` e `/v1/access/*` preservados como compatibilidade.
+
+Adapters iniciais da Fase 3:
+
+- `semantic_memory`: provider `chainfx-memory`, operacoes `save_memory`, `get_memory`, `semantic_search` e `knowledge_lookup`.
+- `llm_chat`: provider `openai`, operacoes `generate_text`, `chat`, `summarize` e `classify`, via `OPENAI_BASE_URL` + `OPENAI_API_KEY`.
+- `document_ocr`: provider `chainfx-ocr-http`, operacoes `extract_text`, `parse_invoice` e `parse_document`, via `CAPABILITY_OCR_URL`.
+
+Variaveis opcionais para providers reais:
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `OPENAI_BASE_URL`
+- `CAPABILITY_OCR_URL`
+- `CAPABILITY_OCR_API_KEY`
+
+Ferramentas MCP expostas:
+
+- `searchCapabilities`
+- `listCapabilities`
+- `getCapability`
+- `getCapabilityContract`
+- `purchaseCapability`
+- `getPurchase`
+- `executeCapability`
+- `chooseRoute`
+- `getUsage`
+- `listAssets`
+- `quote`
+- `trade`
+- `settlementStatus`
+
+Recursos MCP expostos:
+
+- `chainfx://marketplace/capabilities`
+- `chainfx://capability-contracts/{id}`
+- `chainfx://marketplace/products`
+- `chainfx://agent/assets`
+- `chainfx://rates/latest`
+
+Fluxo recomendado para agentes:
+
+```text
+1. initialize ChainFX MCP
+2. listCapabilities()
+3. getCapability("document_ocr")
+4. getCapabilityContract("document_ocr")
+5. purchaseCapability({ capability: "document_ocr", ... })
+6. pay on-chain using the returned payment intent
+7. submit receipt through /marketplace/purchase/{id}/execute
+8. chooseRoute({ capability: "document_ocr", routingMode: "lowest_latency" })
+9. executeCapability({ capability: "document_ocr", accessToken, routingMode: "lowest_latency", ... })
+10. inspect getUsage() / settlementStatus()
+```
+
+Publicacao no MCP Registry:
+
+- Nome tecnico preservado: `chainfx-mcp`
+- Titulo publico sugerido: `ChainFX Capability Network MCP`
+- Categoria: payments, capability network, agent tools, stablecoin settlement, metered execution
+- Descricao curta: `Discover, execute, meter, bill and settle digital capabilities for AI agents with stablecoin payments.`
+- Requisitos: URL publica HTTPS para `/mcp/initialize`, API key ChainFX e documentacao de auth.
+
+O `.well-known` deve continuar pequeno e apontar para URLs canonicas:
+
+```json
+{
+  "capabilitiesUrl": "/agent/v1/capabilities",
+  "assetsUrl": "/agent/v1/assets",
+  "openapiUrl": "/openapi.json",
+  "mcpUrl": "/mcp/initialize",
+  "x402Url": "/.well-known/x402.json"
+}
+```
+
+### Capacidades M2M
+
+Capacidades publicadas:
+
+```json
+{
+  "service": "chainfx",
+  "version": "1.0",
+  "capabilities": [
+    "stablecoin_exchange",
+    "api_access_purchase",
+    "mcp_tools"
+  ],
+  "networks": [
+    {
+      "name": "BNB Smart Chain",
+      "chainId": 56
+    }
+  ]
+}
+```
+
+Trade lifecycle publicado para agentes:
+
+```json
+{
+  "tradeLifecycle": [
+    "discover_capabilities",
+    "list_assets",
+    "create_trade_intent",
+    "pay_onchain",
+    "submit_tx",
+    "verify_receipt",
+    "settle",
+    "check_status"
+  ]
+}
+```
+
+Estados reais do intent:
+
+```json
+{
+  "tradeStates": {
+    "transient": ["pending", "paid"],
+    "terminal": ["settled", "expired", "failed"],
+    "retryable": ["failed"]
+  }
+}
+```
+
+### Stablecoin rail
+
+Primeiro corte comercial:
+
+- `USDC -> USDT`
+- `USDT -> USDC`
+
+`BUSD` continua suportado tecnicamente no registry, mas fica marcado como:
+
+```yaml
+BUSD:
+  enabled: false
+  status: legacy
+```
+
+Isso evita construir o produto novo em cima de um ativo legado, mantendo compatibilidade operacional se algum caso especifico exigir.
+
+### Taxa M2M
+
+Taxa padrao:
+
+```text
+gatewayFeeBps = 600
+feeCalculation = deducted_from_gross_payment
+```
+
+Formula:
+
+```text
+receiveAmount = payAmount * (1 - feeBps / 10000)
+payAmount = receiveAmount / (1 - feeBps / 10000)
+```
+
+Exemplo para o agente receber `500 USDT`:
+
+```json
+{
+  "receiveAmount": "500.000000",
+  "payAmount": "531.914894",
+  "feeBps": 600,
+  "feeAmount": "31.914894",
+  "feeCalculation": "deducted_from_gross_payment"
+}
+```
+
+Pagamento maior que o esperado e aceito apenas pelo valor do intent. O excedente e registrado como `overpaymentAmount` e nao recebe refund automatico no primeiro corte.
+
+### Seguranca M2M
+
+Protecoes implementadas no core:
+
+- `nonce` por intent.
+- `request_hash` amarrado a wallet, ativos, contratos, valores, destino e expiracao.
+- `idempotency_key`.
+- identificador de pagamento por `chain_id + tx_hash + log_index`.
+- validacao de `chainId == 56`.
+- `receipt.status == success`.
+- contrato ERC20 exatamente cadastrado no registry.
+- evento `Transfer`.
+- `from == agentWallet`.
+- `to == paymentAddress`.
+- `amount >= requiredPayAmount`.
+- pelo menos uma confirmacao.
+- validacao basica de `blockHash` canonico.
+- lock no banco antes do settlement.
+- signer isolado para transferencia da treasury.
+
+Metadados persistidos por pagamento:
+
+```text
+chain_id
+tx_hash
+log_index
+block_number
+block_hash
+token_contract
+transfer_from
+transfer_to
+transfer_amount_raw
+overpayment_amount
+```
+
+### Autenticacao
+
+Disponivel agora:
+
+```json
+{
+  "authentication": {
+    "current": [
+      {
+        "type": "api_key",
+        "status": "available"
+      },
+      {
+        "type": "onchain_payment_receipt",
+        "status": "available"
+      }
+    ],
+    "planned": [
+      {
+        "type": "wallet_signature",
+        "status": "planned",
+        "enabled": false
+      }
+    ]
+  }
+}
+```
+
+Wallet signature ainda nao deve ser interpretada como disponivel. O modelo planejado:
+
+```text
+X-ChainFX-Wallet
+X-ChainFX-Timestamp
+X-ChainFX-Nonce
+X-ChainFX-Request-Hash
+X-ChainFX-Signature
+```
+
+No primeiro corte, `agentWallet` e `payerWallet` devem ser iguais. A API pode evoluir para separar:
+
+```json
+{
+  "agentWallet": "0x...",
+  "payerWallet": "0x...",
+  "destinationWallet": "0x..."
+}
+```
+
+### API access para agentes
+
+Alem do rail de liquidez, agentes podem comprar acesso temporario de API/MCP:
+
+- `/marketplace/apis`
+- `/marketplace/apis/{id}`
+- `/v1/access/quote`
+- `/v1/access/purchase`
+- `/v1/access/{id}`
+- `/v1/meter/usage`
+
+Modelo de dados:
+
+- `api_products`: capacidades/produtos.
+- `api_payments`: quote/payment intent.
+- `api_access_grants`: token temporario, quota e validade.
+- `api_usage_events`: consumo auditavel.
+- `agent_wallets`: historico operacional por wallet.
 
 ## Sobre o ChainFx
 
