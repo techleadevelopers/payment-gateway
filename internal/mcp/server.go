@@ -33,19 +33,14 @@ type PriceSource interface {
 	GetCurrentPrice() float64
 }
 
-// Server exposes ChainFX capabilities (quotes, orders, AI analysis,
-// automation webhooks) as MCP tools, resources and prompts.
+// Server exposes ChainFX capabilities (quotes, orders, capability marketplace,
+// AI analysis and automation webhooks) as MCP tools, resources and prompts.
 type Server struct {
 	db       *database.DB
 	cfg      *config.Config
 	prices   PriceSource
 	agents   *agents.Client
 	dispatch *webhooks.Dispatcher
-	webhookRegistry  *webhooks.Registry
-	webhooks         *webhooks.Dispatcher
-	webhookLogs      *webhooks.Logs
-	webhookDashboard *webhooks.Dashboard
-
 }
 
 // New builds an MCP server bound to the platform's shared services.
@@ -84,8 +79,10 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"protocolVersion": protocolVersion,
 		"serverInfo": map[string]any{
-			"name":    "chainfx-mcp",
-			"version": "1.0.0",
+			"name":        "chainfx-mcp",
+			"title":       "ChainFX Capability Network MCP",
+			"version":     "1.2.0",
+			"description": "Economic infrastructure for AI agents: discover, execute, meter, bill and settle capabilities with stablecoin payments.",
 		},
 		"capabilities": map[string]any{
 			"tools":     map[string]any{},
