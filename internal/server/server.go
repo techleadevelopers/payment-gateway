@@ -41,6 +41,13 @@ type Server struct {
 	workers *workers.WorkerManager
 	email   *email.Service
 	limiter *rateLimiter
+	webhookRegistry  *webhooks.Registry
+	webhooks         *webhooks.Dispatcher
+	webhookLogs      *webhooks.LogService
+	webhookDashboard *webhooks.Dashboard
+	agents           *agents.Service
+	
+
 }
 
 type requestIDContextKey struct{}
