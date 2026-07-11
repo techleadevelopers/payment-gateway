@@ -15,6 +15,24 @@ type MarketAnalysis struct {
 	Risks      []string `json:"risks"`
 }
 
+// GenerateText backs the llm_chat capability router with an OpenAI-compatible
+// provider when OPENAI_API_KEY is configured.
+func (c *Client) GenerateText(ctx context.Context, operation string, input map[string]any) (map[string]any, error) {
+	raw, _ := json.Marshal(input)
+	system := "You are ChainFX llm_chat, a provider-routed capability for AI agents. Return a concise, useful response for the requested operation."
+	prompt := fmt.Sprintf("Operation: %s\nInput JSON: %s", operation, string(raw))
+	text, err := c.complete(ctx, system, prompt, false)
+	if err != nil {
+		return nil, fmt.Errorf("llm_chat provider falhou: %w", err)
+	}
+	return map[string]any{
+		"mode":      "real",
+		"provider":  "openai_compatible",
+		"operation": operation,
+		"text":      text,
+	}, nil
+}
+
 // AnalyzeMarket produces an AI market analysis from current rate data.
 func (c *Client) AnalyzeMarket(ctx context.Context, marketData map[string]any) (*MarketAnalysis, error) {
 	raw, _ := json.Marshal(marketData)
