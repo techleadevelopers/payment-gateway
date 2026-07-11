@@ -154,26 +154,25 @@ func (p *Pool) StartHealthChecks(ctx context.Context, interval time.Duration) {
 }
 
 func (p *Pool) probeAll(ctx context.Context) {
-	p.mu.RLock()
-	nodes := make([]*Node, len(p.nodes))
-	copy(nodes, p.nodes)
-	p.mu.RUnlock()
-
-	for _, n := range nodes {
+	for _, n := range p.nodes {
 		go func(n *Node) {
-			pCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			pCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
-			// Use ethclient as a lightweight probe — just dial and discard
+
 			c, err := ethclient.DialContext(pCtx, n.URL)
 			if err != nil {
 				n.healthy.Store(false)
-				slog.Warn("RPC node unhealthy", "url", truncate(n.URL, 40), "err", err)
 				return
 			}
+
+			_, err = c.BlockNumber(pCtx)
 			c.Close()
-			if !n.healthy.Load() {
-				slog.Info("RPC node recovered", "url", truncate(n.URL, 40))
+
+			if err != nil {
+				n.healthy.Store(false)
+				return
 			}
+
 			n.healthy.Store(true)
 		}(n)
 	}
