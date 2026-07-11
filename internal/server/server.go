@@ -23,26 +23,26 @@ import (
 	"sync"
 	"time"
 
+	"payment-gateway/internal/agents"
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
 	"payment-gateway/internal/email"
 	"payment-gateway/internal/models"
 	"payment-gateway/internal/privacy"
 	"payment-gateway/internal/settlement"
-	"payment-gateway/internal/workers"
 	"payment-gateway/internal/webhooks"
-	"payment-gateway/internal/agents"
+	"payment-gateway/internal/workers"
 
 	"github.com/ethereum/go-ethereum/common"
 	"golang.org/x/crypto/pkcs12"
 )
 
 type Server struct {
-	cfg     *config.Config
-	db      *database.DB
-	workers *workers.WorkerManager
-	email   *email.Service
-	limiter *rateLimiter
+	cfg              *config.Config
+	db               *database.DB
+	workers          *workers.WorkerManager
+	email            *email.Service
+	limiter          *rateLimiter
 	webhookRegistry  *webhooks.Registry
 	webhooks         *webhooks.Dispatcher
 	webhookLogs      *webhooks.Logs
@@ -485,7 +485,7 @@ func (s *Server) authorizeBuyRead(w http.ResponseWriter, r *http.Request, id str
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	price := s.workers.PriceWorker.GetCurrentPrice()
 	if price <= 0 {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "preÃ§o ainda nÃ£o carregado"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "preÃ§o ainda não carregado"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1310,7 +1310,7 @@ func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow(clientIP(r)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite de criaÃ§Ã£o de ordens excedido"})
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "limite de criaÃ§ão de ordens excedido"})
 		return
 	}
 	var req struct {
@@ -1435,7 +1435,7 @@ func (s *Server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if order == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem nÃ£o encontrada"})
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem não encontrada"})
 		return
 	}
 	writeJSON(w, http.StatusOK, order)
@@ -1528,11 +1528,11 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 	order, err := s.db.GetOrder(r.Context(), id)
 	if err != nil || order == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem nÃ£o encontrada"})
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ordem não encontrada"})
 		return
 	}
 	if order.Status != models.StatusAguardandoDeposito {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status atual nÃ£o permite depÃ³sito"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status atual não permite depÃ³sito"})
 		return
 	}
 	if err := s.db.UpdateOrderStatus(r.Context(), id, "pago", map[string]any{"requestId": requestID(r), "depositTx": req.TxHash, "depositAmount": req.Amount}); err != nil {
