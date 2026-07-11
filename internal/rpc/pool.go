@@ -37,8 +37,8 @@ func newNode(url string) *Node {
 		ResetTimeout:    60 * time.Second,
 		HalfOpenSuccess: 2,
 		IgnoreError: func(err error) bool {
-		return !rpcRetryable(err)
-	},
+			return !rpcRetryable(err)
+		},
 	})
 	n.healthy.Store(true)
 	return n
@@ -74,7 +74,7 @@ func (p *Pool) Do(ctx context.Context, fn func(*ethclient.Client) error) error {
 
 	var lastNode *Node
 
-	return resilience.DoWithContext(ctx, cfg, "rpc.pool", resilience.AlwaysRetry, func(ctx context.Context) error {
+	return resilience.DoWithContext(ctx, cfg, "rpc.pool", rpcRetryable, func(ctx context.Context) error {
 		node := p.pickExcluding(lastNode)
 		lastNode = node
 
