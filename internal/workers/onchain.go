@@ -234,13 +234,25 @@ func (ow *OnchainWorker) confirmDeposit(ctx context.Context, orderID, txHash str
 
 func (ow *OnchainWorker) getCursor(ctx context.Context, latestBlock uint64) uint64 {
 	block, found, err := ow.db.GetCursor(ctx, "BSC")
+
 	if err != nil || !found || block == 0 {
-		start := int64(latestBlock) - 1000
-		if start < 0 {
-			start = 0
-		}
-		return uint64(start)
+		return latestBlock - 1000
 	}
+
+	// evita pedir histórico gigante no RPC
+	const maxLookback uint64 = 50000
+
+	if latestBlock > uint64(block) &&
+		latestBlock-uint64(block) > maxLookback {
+
+		slog.Warn("BSC cursor muito antigo, resetando",
+			"old_cursor", block,
+			"latest", latestBlock,
+		)
+
+		return latestBlock - 1000
+	}
+
 	return uint64(block)
 }
 
