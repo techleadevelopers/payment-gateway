@@ -99,6 +99,14 @@ func (pw *PayoutWorker) processPayout(ctx context.Context, event Event) {
 	}
 
 	// ── Simulation mode ──────────────────────────────────────────────────────
+	if err := pw.db.UpdateOrderStatus(ctx, orderID, string(models.StatusProcessandoPayout), map[string]any{
+		"status": "processando_payout",
+	}); err != nil {
+		slog.Error("PayoutWorker: erro ao marcar processamento", "order_id", orderID, "err", err)
+		pw.dlq.Push(event, 1, "status update error: "+err.Error())
+		return
+	}
+
 	if pw.cfg.AllowSimulations && !pw.cfg.IsProduction() {
 		txHash := fmt.Sprintf("pix-sim-%s", orderID)
 		if err := pw.db.UpdateOrderStatus(ctx, orderID, "concluida",
@@ -176,7 +184,7 @@ func (pw *PayoutWorker) callEfiPix(ctx context.Context, orderID, pixKey string, 
 	payload := map[string]any{
 		"valor":       fmt.Sprintf("%.2f", amountBRL),
 		"chave":       pixKey,
-		"infoPagador": fmt.Sprintf("Swappy ordem %s", orderID),
+		"infoPagador": fmt.Sprintf("ChainFX ordem %s", orderID),
 	}
 	body, _ := json.Marshal(payload)
 
@@ -207,10 +215,18 @@ func (pw *PayoutWorker) callEfiPix(ctx context.Context, orderID, pixKey string, 
 		return fmt.Errorf("efí response parse: %w", err)
 	}
 
-	return pw.db.UpdateOrderStatus(ctx, orderID, "concluida", map[string]any{
+	if err := pw.db.UpdateOrderStatus(ctx, orderID, "concluida", map[string]any{
 		"txHash":    result.EndToEndID,
 		"pixStatus": result.Status,
+	}); err != nil {
+		return err
+	}
+	pw.bus.Publish(Event{
+		Type:    "payout.settled",
+		OrderID: orderID,
+		Payload: map[string]any{"status": "concluida", "tx_hash_pix": result.EndToEndID, "pix_status": result.Status},
 	})
+	return nil
 }
 
 // getEfiToken fetches a short-lived Efí OAuth2 token.
