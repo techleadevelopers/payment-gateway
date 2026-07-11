@@ -30,6 +30,8 @@ import (
 	"payment-gateway/internal/privacy"
 	"payment-gateway/internal/settlement"
 	"payment-gateway/internal/workers"
+	"payment-gateway/internal/webhooks"
+	"payment-gateway/internal/agents"
 
 	"github.com/ethereum/go-ethereum/common"
 	"golang.org/x/crypto/pkcs12"
@@ -43,11 +45,9 @@ type Server struct {
 	limiter *rateLimiter
 	webhookRegistry  *webhooks.Registry
 	webhooks         *webhooks.Dispatcher
-	webhookLogs      *webhooks.LogService
+	webhookLogs      *webhooks.Logs
 	webhookDashboard *webhooks.Dashboard
-	agents           *agents.Service
-	
-
+	agents           *agents.Client
 }
 
 type requestIDContextKey struct{}
