@@ -96,6 +96,28 @@ func TestEmailTestRequiresInternalHMAC(t *testing.T) {
 	}
 }
 
+func TestMCPInitializeRouteUsesAPIKeyAuth(t *testing.T) {
+	cfg := &config.Config{
+		ChainFXLiveSecretKeys: "sk_live_test_mcp",
+		ChainFXRequireAPIKey:  true,
+	}
+	wm := workers.NewWorkerManager(nil, cfg, nil)
+	s := New(cfg, nil, wm, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp/initialize", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer sk_live_test_mcp")
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected MCP initialize route to return 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"chainfx-mcp"`) {
+		t.Fatalf("expected MCP server info in response, got %s", rec.Body.String())
+	}
+}
+
 func rawHMAC(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
