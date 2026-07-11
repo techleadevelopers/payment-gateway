@@ -33,6 +33,7 @@ type OrderInput struct {
 	AmountUSDT        float64
 	FeeBRL            float64
 	PayoutBRL         float64
+	PixKey            string
 	Address           string
 	Asset             string
 	Network           string
@@ -41,6 +42,7 @@ type OrderInput struct {
 	RequestID         string
 	PixCpf            string
 	PixPhone          string
+	Email             string
 	DerivationIndex   *int
 }
 
@@ -89,6 +91,7 @@ type BuyOrderInput struct {
 	RateLocked        float64
 	RateLockExpiresAt time.Time
 	PixPayload        any
+	CustomerEmail     string
 }
 
 type PixStats struct {
@@ -209,7 +212,7 @@ func (db *DB) CreateOrder(ctx context.Context, order OrderInput) (*models.Order,
 	if order.AccessToken == "" {
 		order.AccessToken = NewAccessToken()
 	}
-	if (order.PixCpf != "" || order.PixPhone != "") && db.privacy == nil {
+	if (order.PixCpf != "" || order.PixPhone != "" || order.Email != "") && db.privacy == nil {
 		return nil, fmt.Errorf("LGPD_SECRET nao configurado para salvar dados pessoais")
 	}
 	pixCpfHash := privacy.Hash(order.PixCpf, db.cfg.LGPDSecret)
@@ -223,7 +226,7 @@ func (db *DB) CreateOrder(ctx context.Context, order OrderInput) (*models.Order,
 	if err != nil {
 		return nil, err
 	}
-	if order.PixCpf != "" || order.PixPhone != "" {
+	if order.PixCpf != "" || order.PixPhone != "" || order.Email != "" {
 		pixCpfEnc, err := db.privacy.Encrypt(order.PixCpf)
 		if err != nil {
 			return nil, err
@@ -232,11 +235,15 @@ func (db *DB) CreateOrder(ctx context.Context, order OrderInput) (*models.Order,
 		if err != nil {
 			return nil, err
 		}
+		emailEnc, err := db.privacy.Encrypt(strings.ToLower(strings.TrimSpace(order.Email)))
+		if err != nil {
+			return nil, err
+		}
 		_, err = db.SQL.ExecContext(ctx, `
-			INSERT INTO order_private (order_id, pix_cpf_enc, pix_phone_enc)
-			VALUES ($1,$2,$3)
-			ON CONFLICT (order_id) DO UPDATE SET pix_cpf_enc = EXCLUDED.pix_cpf_enc, pix_phone_enc = EXCLUDED.pix_phone_enc`,
-			order.ID, nullableString(pixCpfEnc), nullableString(pixPhoneEnc))
+			INSERT INTO order_private (order_id, pix_cpf_enc, pix_phone_enc, email_enc)
+			VALUES ($1,$2,$3,$4)
+			ON CONFLICT (order_id) DO UPDATE SET pix_cpf_enc = EXCLUDED.pix_cpf_enc, pix_phone_enc = EXCLUDED.pix_phone_enc, email_enc = COALESCE(EXCLUDED.email_enc, order_private.email_enc)`,
+			order.ID, nullableString(pixCpfEnc), nullableString(pixPhoneEnc), nullableString(emailEnc))
 		if err != nil {
 			return nil, err
 		}
@@ -263,7 +270,7 @@ func (db *DB) GetPendingOrders(ctx context.Context) ([]models.Order, error) {
 		       o.deposit_tx, o.deposit_amount, op.pix_cpf_enc, op.pix_phone_enc, o.derivation_index
 		FROM orders o
 		LEFT JOIN order_private op ON op.order_id = o.id
-		WHERE o.status = 'aguardando_deposito'`)
+		WHERE o.status IN ('aguardando_deposito','aguardando_validacao')`)
 	if err != nil {
 		return nil, err
 	}
@@ -299,6 +306,31 @@ func (db *DB) UpdateOrderStatus(ctx context.Context, id, status string, extra ma
 		return err
 	}
 	return db.AddEvent(ctx, id, "order."+status, extra)
+}
+
+func (db *DB) HasPendingOrderForAddress(ctx context.Context, address string) (bool, error) {
+	var exists bool
+	err := db.SQL.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM orders
+			WHERE lower(address) = lower($1)
+			  AND status IN ('aguardando_deposito','aguardando_validacao','pago','processando_payout')
+		)`, address).Scan(&exists)
+	return exists, err
+}
+
+func (db *DB) HasDepositTxForOtherOrder(ctx context.Context, orderID, txHash string) (bool, error) {
+	if txHash == "" {
+		return false, nil
+	}
+	var exists bool
+	err := db.SQL.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM orders
+			WHERE deposit_tx = $1
+			  AND id::text <> $2
+		)`, txHash, orderID).Scan(&exists)
+	return exists, err
 }
 
 func (db *DB) AddEvent(ctx context.Context, orderID, eventType string, payload any) error {
@@ -453,7 +485,73 @@ func (db *DB) CreateBuyOrder(ctx context.Context, buy BuyOrderInput) (*BuyOrder,
 		return nil, err
 	}
 	_ = db.AddBuyEvent(ctx, id, "buy.created", map[string]any{"amountFiat": buy.AmountFiat, "fiatCurrency": buy.FiatCurrency, "paymentMethod": buy.PaymentMethod, "cryptoAmount": buy.CryptoAmount})
+	if strings.TrimSpace(buy.CustomerEmail) != "" {
+		_ = db.SaveBuyOrderEmail(ctx, id, buy.CustomerEmail)
+	}
 	return db.GetBuyOrder(ctx, id)
+}
+
+func (db *DB) SaveBuyOrderEmail(ctx context.Context, id, email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return nil
+	}
+	if db.privacy == nil {
+		return fmt.Errorf("LGPD_SECRET nao configurado para salvar email")
+	}
+	emailEnc, err := db.privacy.Encrypt(email)
+	if err != nil {
+		return err
+	}
+	_, err = db.SQL.ExecContext(ctx, `
+		INSERT INTO buy_order_private (buy_order_id, email_enc)
+		VALUES ($1,$2)
+		ON CONFLICT (buy_order_id) DO UPDATE SET email_enc = EXCLUDED.email_enc`,
+		id, nullableString(emailEnc))
+	return err
+}
+
+func (db *DB) GetBuyOrderEmail(ctx context.Context, id string) (string, error) {
+	var emailEnc sql.NullString
+	err := db.SQL.QueryRowContext(ctx, `SELECT email_enc FROM buy_order_private WHERE buy_order_id = $1`, id).Scan(&emailEnc)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil || !emailEnc.Valid || emailEnc.String == "" {
+		return "", err
+	}
+	if db.privacy == nil {
+		return "", fmt.Errorf("LGPD_SECRET nao configurado para ler email")
+	}
+	return db.privacy.Decrypt(emailEnc.String)
+}
+
+func (db *DB) GetOrderEmail(ctx context.Context, id string) (string, error) {
+	var emailEnc sql.NullString
+	err := db.SQL.QueryRowContext(ctx, `SELECT email_enc FROM order_private WHERE order_id = $1`, id).Scan(&emailEnc)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil || !emailEnc.Valid || emailEnc.String == "" {
+		return "", err
+	}
+	if db.privacy == nil {
+		return "", fmt.Errorf("LGPD_SECRET nao configurado para ler email")
+	}
+	return db.privacy.Decrypt(emailEnc.String)
+}
+
+func (db *DB) UpsertMarketingContact(ctx context.Context, email, source string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return nil
+	}
+	_, err := db.SQL.ExecContext(ctx, `
+		INSERT INTO marketing_contacts (email, source, subscribed_at, unsubscribed_at, updated_at)
+		VALUES ($1,$2,now(),NULL,now())
+		ON CONFLICT (email) DO UPDATE SET source = COALESCE(NULLIF(EXCLUDED.source,''), marketing_contacts.source), unsubscribed_at = NULL, updated_at = now()`,
+		email, strings.TrimSpace(source))
+	return err
 }
 
 func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
@@ -939,6 +1037,12 @@ func (db *DB) scanOrder(row scanner) (*models.Order, error) {
 			o.PixPhone = plain
 		}
 	}
+	o.PixKey = firstNonEmpty(o.PixPhone, o.PixCpf)
+	if o.PixPhone != "" {
+		o.PixType = "pix"
+	} else if o.PixCpf != "" {
+		o.PixType = "cpf"
+	}
 	if txHash.Valid {
 		o.TxHash = &txHash.String
 	}
@@ -963,6 +1067,15 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func requestIDFromPayload(payload any) string {
@@ -1040,12 +1153,16 @@ CREATE TABLE IF NOT EXISTS order_private (
   order_id UUID PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
   pix_cpf_enc TEXT,
   pix_phone_enc TEXT,
+  email_enc TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE order_private ADD COLUMN IF NOT EXISTS email_enc TEXT;
 
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS request_id TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_cpf_hash TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_phone_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_deposit_tx_unique ON orders (deposit_tx) WHERE deposit_tx IS NOT NULL AND deposit_tx <> '';
 
 CREATE TABLE IF NOT EXISTS order_events (
   id UUID PRIMARY KEY,
@@ -1131,6 +1248,20 @@ UPDATE buy_orders SET amount_fiat = amount_brl WHERE amount_fiat IS NULL;
 UPDATE buy_orders SET access_token = encode(gen_random_bytes(32), 'hex') WHERE access_token IS NULL OR access_token = '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_orders_access_token ON buy_orders (access_token);
 
+CREATE TABLE IF NOT EXISTS buy_order_private (
+  buy_order_id UUID PRIMARY KEY REFERENCES buy_orders(id) ON DELETE CASCADE,
+  email_enc TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS marketing_contacts (
+  email TEXT PRIMARY KEY,
+  source TEXT,
+  subscribed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  unsubscribed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS buy_order_events (
   id UUID PRIMARY KEY,
   buy_order_id UUID REFERENCES buy_orders(id),
@@ -1143,36 +1274,4 @@ CREATE TABLE IF NOT EXISTS buy_order_events (
 ALTER TABLE buy_order_events ADD COLUMN IF NOT EXISTS request_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_webhook_provider_once ON buy_order_events (buy_order_id, (payload ->> 'providerId')) WHERE type = 'webhook.provider' AND payload ? 'providerId';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_order_idempotency_once ON order_events (order_id, (payload ->> 'key')) WHERE type = 'idempotency' AND payload ? 'key';
-
-CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-  id UUID PRIMARY KEY,
-  provider VARCHAR(32) NOT NULL DEFAULT 'generic',
-  target_url TEXT NOT NULL,
-  secret TEXT,
-  events TEXT[] NOT NULL DEFAULT '{}',
-  active BOOLEAN NOT NULL DEFAULT true,
-  description TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_triggered_at TIMESTAMPTZ,
-  last_status_code INT,
-  last_error TEXT,
-  failure_count INT NOT NULL DEFAULT 0
-);
-
-CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_active ON webhook_subscriptions(active);
-
-CREATE TABLE IF NOT EXISTS webhook_deliveries (
-  id UUID PRIMARY KEY,
-  subscription_id UUID REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
-  event VARCHAR(64) NOT NULL,
-  payload JSONB,
-  status_code INT,
-  ok BOOLEAN NOT NULL DEFAULT false,
-  error TEXT,
-  attempt INT NOT NULL DEFAULT 1,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_subscription ON webhook_deliveries(subscription_id, created_at DESC);
 `
