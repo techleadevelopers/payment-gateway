@@ -1,0 +1,270 @@
+openapi: 3.1.0
+info:
+  title: ChainFX API
+  version: 1.0.0-phase3
+  description: Digital FX Payments API for PIX, stablecoin settlement, marketplace purchases and agent execution.
+servers:
+  - url: https://api.chainfx.com
+    description: Production
+  - url: https://sandbox-api.chainfx.com
+    description: Sandbox
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    CustomerAccessToken:
+      name: X-Customer-Access-Token
+      in: header
+      required: false
+      schema:
+        type: string
+  schemas:
+    APIError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples: [QUOTE_EXPIRED, IDEMPOTENCY_PAYLOAD_MISMATCH]
+        message:
+          type: string
+        requestId:
+          type: string
+    QuoteRequest:
+      type: object
+      required: [side, asset, amount]
+      properties:
+        side:
+          type: string
+          enum: [buy, sell]
+        fiat:
+          type: string
+          enum: [BRL, USD]
+          default: BRL
+        asset:
+          type: string
+          enum: [USDT]
+        amount:
+          type: number
+          description: Buy uses fiat major units; sell uses token major units.
+        paymentMethod:
+          type: string
+          enum: [pix, stripe]
+    Quote:
+      type: object
+      required: [quoteId, side, asset, rate, expiresAt]
+      properties:
+        quoteId:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        fiat:
+          type: string
+        asset:
+          type: string
+        amountMinor:
+          type: integer
+          description: Fiat amount in minor units, such as BRL cents.
+        cryptoAmountUnits:
+          type: string
+          description: Stablecoin amount in minimum units.
+        rate:
+          type: string
+          description: Decimal rate serialized as a string.
+        feeMinor:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+    BuyRequest:
+      type: object
+      required: [quoteId, wallet, customer]
+      properties:
+        quoteId:
+          type: string
+        wallet:
+          type: string
+        paymentMethod:
+          type: string
+          enum: [pix, stripe]
+        customer:
+          type: object
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+              format: email
+            cpf:
+              type: string
+            phone:
+              type: string
+            birthDate:
+              type: string
+    SellRequest:
+      type: object
+      required: [quoteId, pix]
+      properties:
+        quoteId:
+          type: string
+        network:
+          type: string
+          enum: [BSC, POLYGON]
+        pix:
+          type: object
+          properties:
+            cpf:
+              type: string
+            phone:
+              type: string
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        status:
+          type: string
+        amountMinor:
+          type: integer
+        cryptoAmountUnits:
+          type: string
+        rate:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+  responses:
+    Error:
+      description: Standard error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/APIError'
+paths:
+  /rates:
+    get:
+      summary: Current FX and crypto rates.
+      responses:
+        '200':
+          description: Rates.
+  /quote:
+    post:
+      summary: Create and persist a rate-locked quote.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+      responses:
+        '200':
+          description: Persisted quote.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+        '400':
+          $ref: '#/components/responses/Error'
+  /buy:
+    post:
+      summary: Consume a quote and create a fiat-to-stablecoin order.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuyRequest'
+      responses:
+        '201':
+          description: Buy order created.
+        '409':
+          $ref: '#/components/responses/Error'
+  /sell:
+    post:
+      summary: Consume a quote and create a stablecoin-to-PIX order.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SellRequest'
+      responses:
+        '201':
+          description: Sell order created.
+        '409':
+          $ref: '#/components/responses/Error'
+  /order/{id}:
+    get:
+      summary: Read an order by ID using customer access token.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CustomerAccessToken'
+      responses:
+        '200':
+          description: Order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/quote:
+    post:
+      deprecated: true
+      summary: Legacy quote adapter.
+      responses:
+        '200':
+          description: Legacy quote response.
+  /api/buy:
+    post:
+      deprecated: true
+      summary: Legacy buy adapter. Use /buy.
+      responses:
+        '201':
+          description: Legacy buy response.
+  /api/order:
+    post:
+      deprecated: true
+      summary: Legacy sell adapter. Use /sell.
+      responses:
+        '201':
+          description: Legacy sell response.
+  /webhooks/retry:
+    post:
+      summary: Retry a registered webhook subscription delivery.
+      responses:
+        '200':
+          description: Retry attempt.
+x-chainfx:
+  money:
+    fiat: MoneyMinor, persisted in minor units.
+    stablecoin: TokenUnits, persisted in minimum units.
+    rate: RateDecimal, serialized as decimal string.
+  idempotency:
+    header: Idempotency-Key
+    samePayload: replays the original result
+    differentPayload: returns 409
