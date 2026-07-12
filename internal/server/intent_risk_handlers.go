@@ -4,7 +4,7 @@ package server
 //   GET /app/intent/{id}        — M2M payment intent detail
 //   GET /app/risk               — M2M risk / settlement operational dashboard
 //   GET /mcp/capabilities.json  — public MCP capability registry (machine-readable)
-//   GET /agent/pricing/{wallet} — per-agent pricing policy lookup
+//   GET /agent/v1/pricing/{wallet} — per-agent pricing policy lookup
 
 import (
 	"fmt"

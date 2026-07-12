@@ -86,7 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /agent/v1/pay", s.handleM2MCreateIntent)
 	mux.HandleFunc("GET /agent/v1/pay/{id}", s.handleM2MGetIntent)
 	// Agent pricing policy (per-agent fee overrides)
-	mux.HandleFunc("GET /agent/pricing/{wallet}", s.handleGetAgentPricingPolicy)
+	mux.HandleFunc("GET /agent/v1/pricing/{wallet}", s.handleGetAgentPricingPolicy)
 	// Detail pages
 	mux.HandleFunc("GET /app/intent/{id}", s.handleAppIntentDetail)
 	// Risk / settlement operational dashboard
