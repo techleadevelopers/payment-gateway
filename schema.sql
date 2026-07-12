@@ -150,6 +150,45 @@ CREATE INDEX IF NOT EXISTS idx_sweeps_status ON sweeps(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_webhook_provider_once ON buy_order_events (buy_order_id, (payload ->> 'providerId')) WHERE type = 'webhook.provider' AND payload ? 'providerId';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_order_idempotency_once ON order_events (order_id, (payload ->> 'key')) WHERE type = 'idempotency' AND payload ? 'key';
 
+CREATE TABLE IF NOT EXISTS quotes (
+  id TEXT PRIMARY KEY,
+  side VARCHAR(8) NOT NULL CHECK (side IN ('buy','sell')),
+  asset VARCHAR(16) NOT NULL,
+  fiat_currency VARCHAR(8) NOT NULL,
+  payment_method VARCHAR(32) NOT NULL DEFAULT 'pix',
+  amount_minor BIGINT NOT NULL,
+  crypto_amount_units TEXT NOT NULL,
+  rate NUMERIC(28,8) NOT NULL,
+  market_rate NUMERIC(28,8) NOT NULL DEFAULT 0,
+  fee_minor BIGINT NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  api_key_hash TEXT NOT NULL DEFAULT '',
+  body_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_quotes_api_key_expires ON quotes(api_key_hash, expires_at);
+CREATE INDEX IF NOT EXISTS idx_quotes_consumable ON quotes(expires_at) WHERE consumed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  key TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  api_key_hash TEXT,
+  body_hash TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'started',
+  result_type TEXT,
+  result_id TEXT,
+  response_status INT,
+  response_json JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (key, operation, api_key_hash)
+);
+ALTER TABLE idempotency_keys ALTER COLUMN api_key_hash SET DEFAULT '';
+UPDATE idempotency_keys SET api_key_hash = '' WHERE api_key_hash IS NULL;
+ALTER TABLE idempotency_keys ALTER COLUMN api_key_hash SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_idempotency_result ON idempotency_keys(result_type, result_id);
+
 CREATE TABLE IF NOT EXISTS buy_order_private (
   buy_order_id UUID PRIMARY KEY REFERENCES buy_orders(id) ON DELETE CASCADE,
   email_enc TEXT,
