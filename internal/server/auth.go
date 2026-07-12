@@ -6,7 +6,27 @@ import (
 )
 
 func (s *Server) chainFXAuthContext(r *http.Request) chainFXAuth {
-	return s.chainFXAuthForKey(chainFXAPIKey(r))
+	key := chainFXAPIKey(r)
+	auth := s.chainFXAuthForKey(key)
+	if auth.Valid {
+		return auth
+	}
+	if s == nil || s.db == nil || key == "" {
+		return chainFXAuth{}
+	}
+	validated, err := s.db.ValidateDeveloperAPIKey(r.Context(), key)
+	if err != nil || validated == nil {
+		return chainFXAuth{}
+	}
+	return chainFXAuth{
+		Valid:         true,
+		Sandbox:       validated.Environment != "production",
+		Mode:          validated.Environment,
+		ProjectID:     validated.ProjectID,
+		APIKeyID:      validated.KeyID,
+		APIKeyLogHash: validated.LogHash,
+		Scopes:        validated.Scopes,
+	}
 }
 
 func (s *Server) chainFXAuthForKey(key string) chainFXAuth {
