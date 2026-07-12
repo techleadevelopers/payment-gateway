@@ -33,30 +33,30 @@ const (
 
 // AgentPaymentIntent is the full state of one M2M payment intent.
 type AgentPaymentIntent struct {
-	ID                 string          `json:"id"`
-	IdempotencyKey     string          `json:"-"`
-	AgentWallet        string          `json:"agent_wallet"`
-	PaymentType        M2MPaymentType  `json:"payment_type"`
-	PixKey             string          `json:"pix_key,omitempty"`
-	AmountBRL          float64         `json:"amount_brl"`
-	FeeBps             int             `json:"fee_bps"`
-	FeeUSDT            float64         `json:"fee_usdt"`
-	GrossUSDT          float64         `json:"gross_usdt"`
-	RequiredUSDT       float64         `json:"required_usdt"`
-	USDTRate           float64         `json:"usdt_rate"`
-	PaymentAddress     string          `json:"payment_address"`
-	Status             M2MIntentStatus `json:"status"`
-	DepositTx          *string         `json:"deposit_tx,omitempty"`
-	DepositAmountUSDT  *float64        `json:"deposit_amount_usdt,omitempty"`
-	EfiEndToEndID      *string         `json:"efi_end_to_end_id,omitempty"`
-	EfiStatus          *string         `json:"efi_status,omitempty"`
-	ErrorMessage       *string         `json:"error_message,omitempty"`
-	Attempts           int             `json:"attempts"`
-	RequestHash        string          `json:"request_hash"`
-	ExpiresAt          time.Time       `json:"expires_at"`
-	SettledAt          *time.Time      `json:"settled_at,omitempty"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	ID                string          `json:"id"`
+	IdempotencyKey    string          `json:"-"`
+	AgentWallet       string          `json:"agent_wallet"`
+	PaymentType       M2MPaymentType  `json:"payment_type"`
+	PixKey            string          `json:"pix_key,omitempty"`
+	AmountBRL         float64         `json:"amount_brl"`
+	FeeBps            int             `json:"fee_bps"`
+	FeeUSDT           float64         `json:"fee_usdt"`
+	GrossUSDT         float64         `json:"gross_usdt"`
+	RequiredUSDT      float64         `json:"required_usdt"`
+	USDTRate          float64         `json:"usdt_rate"`
+	PaymentAddress    string          `json:"payment_address"`
+	Status            M2MIntentStatus `json:"status"`
+	DepositTx         *string         `json:"deposit_tx,omitempty"`
+	DepositAmountUSDT *float64        `json:"deposit_amount_usdt,omitempty"`
+	EfiEndToEndID     *string         `json:"efi_end_to_end_id,omitempty"`
+	EfiStatus         *string         `json:"efi_status,omitempty"`
+	ErrorMessage      *string         `json:"error_message,omitempty"`
+	Attempts          int             `json:"attempts"`
+	RequestHash       string          `json:"request_hash"`
+	ExpiresAt         time.Time       `json:"expires_at"`
+	SettledAt         *time.Time      `json:"settled_at,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 // M2MCreateInput contains the validated fields for creating a new intent.
@@ -126,13 +126,13 @@ RETURNING id, idempotency_key, agent_wallet, payment_type, pix_key,
 	}
 
 	if err := txAppendAuditLog(ctx, tx, intent.ID, "created", map[string]any{
-		"payment_type":   intent.PaymentType,
-		"amount_brl":     intent.AmountBRL,
-		"required_usdt":  intent.RequiredUSDT,
-		"fee_bps":        intent.FeeBps,
-		"agent_wallet":   intent.AgentWallet,
+		"payment_type":    intent.PaymentType,
+		"amount_brl":      intent.AmountBRL,
+		"required_usdt":   intent.RequiredUSDT,
+		"fee_bps":         intent.FeeBps,
+		"agent_wallet":    intent.AgentWallet,
 		"payment_address": intent.PaymentAddress,
-		"expires_at":     intent.ExpiresAt,
+		"expires_at":      intent.ExpiresAt,
 	}); err != nil {
 		return nil, false, fmt.Errorf("m2m: audit log insert: %w", err)
 	}
@@ -232,8 +232,8 @@ WHERE  id = $1
 	}
 
 	_ = db.appendAuditLog(ctx, intentID, "deposit_confirmed", map[string]any{
-		"deposit_tx":    txHash,
-		"deposit_usdt":  depositUSDT,
+		"deposit_tx":   txHash,
+		"deposit_usdt": depositUSDT,
 	})
 	return true, nil
 }
@@ -411,10 +411,6 @@ func scanIntent(row *sql.Row) (*AgentPaymentIntent, error) {
 		i.PixKey = pixKey.String
 	}
 	return &i, nil
-}
-
-type rowScanner interface {
-	Scan(dest ...any) error
 }
 
 func scanIntentFull(row rowScanner) (*AgentPaymentIntent, error) {
