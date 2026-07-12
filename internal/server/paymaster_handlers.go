@@ -3,6 +3,7 @@ package server
 import (
         "encoding/json"
         "net/http"
+        "strconv"
         "strings"
 
         "payment-gateway/internal/paymaster"
@@ -243,5 +244,5 @@ func (e *fieldError) Error() string {
 }
 
 func itoa(i int) string {
-        return string(rune('0' + i%10))
+        return strconv.Itoa(i)
 }

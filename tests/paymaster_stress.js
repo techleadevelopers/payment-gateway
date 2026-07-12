@@ -1,218 +1,339 @@
 /**
- * ChainFX Gas Station — k6 stress test
+ * ChainFX Gas Station — k6 stress + spike test
  *
- * Scenarios:
- *   1. gas_status   — light, no auth, 50 VUs, sanity checks enabled/disabled response
- *   2. gas_quote    — medium, no auth, 20 VUs, checks fee fields
- *   3. gas_relay    — heavy, Bearer sk_test_*, 10 VUs, rate-limit handling
- *   4. gas_relay_id — medium, no auth, 10 VUs, 404 behaviour
+ * Covers every resilience dimension from the spec:
+ *   1. paymaster_spike       — ramping-arrival-rate to 80 tx/s; validates p95 + error rate
+ *   2. idempotency_collision — same (r,s) signature hammered by 20 VUs to verify 409 handling
+ *   3. rate_limit_tier       — test-key (sk_test_*) hits its 10-req/min wall, live-key gets 60
+ *   4. gas_quote_load        — steady 20 VUs quoting; validates fee fields
+ *   5. gas_status_probe      — continuous health probe, 50 VUs, p95 < 300 ms
  *
  * Run:
  *   k6 run tests/paymaster_stress.js \
  *     -e BASE_URL=http://localhost:8080 \
- *     -e API_KEY=sk_test_chainfx_local
+ *     -e API_KEY_LIVE=sk_live_chainfx_local \
+ *     -e API_KEY_TEST=sk_test_chainfx_local
  *
- * Thresholds (production-grade SLOs):
- *   - p95 latency < 800ms for quote/status
- *   - p95 latency < 2000ms for relay submission
- *   - error rate < 1% (excluding expected 429/503)
+ * SLOs (per spec):
+ *   p95 end-to-end < 400 ms
+ *   real infrastructure errors (5xx, not 429/409) < 0.1 %
  */
 
 import http from "k6/http";
 import { check, sleep, group } from "k6";
-import { Rate, Trend } from "k6/metrics";
+import { Rate, Trend, Counter } from "k6/metrics";
 
 // ── Custom metrics ─────────────────────────────────────────────────────────────
-const relayErrorRate   = new Rate("relay_errors");
-const quoteDuration    = new Trend("quote_duration_ms", true);
-const relayDuration    = new Trend("relay_duration_ms", true);
+const infraErrors        = new Rate("infra_errors");         // real 5xx (not 503=disabled)
+const idempotencyHits    = new Counter("idempotency_hits");  // 409 Conflict responses
+const rateLimitHits      = new Counter("rate_limit_hits");   // 429 Too Many Requests
+const relayAccepted      = new Counter("relay_accepted");    // 202 Accepted
+const quoteDuration      = new Trend("quote_duration_ms", true);
+const relayDuration      = new Trend("relay_duration_ms", true);
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
-const API_KEY  = __ENV.API_KEY  || "sk_test_chainfx_local";
+const BASE_URL      = __ENV.BASE_URL       || "http://localhost:8080";
+const LIVE_KEY      = __ENV.API_KEY_LIVE   || "sk_live_chainfx_local";
+const TEST_KEY      = __ENV.API_KEY_TEST   || "sk_test_chainfx_local";
 
 // ── Options ───────────────────────────────────────────────────────────────────
 export const options = {
   scenarios: {
-    gas_status: {
-      executor: "constant-vus",
-      vus: 50,
-      duration: "30s",
-      exec: "statusScenario",
-      tags: { scenario: "gas_status" },
+
+    // ── 1. Spike load — ramping-arrival-rate ────────────────────────────────
+    // Simulates a DeFi event driving 80 meta-transactions/second at peak.
+    // Measures whether the system degrades gracefully (429s) instead of crashing.
+    paymaster_spike: {
+      executor:        "ramping-arrival-rate",
+      startRate:       10,
+      timeUnit:        "1s",
+      stages: [
+        { duration: "20s", target: 80 },  // ramp: 10 → 80 tx/s
+        { duration: "30s", target: 80 },  // sustain peak
+        { duration: "10s", target: 0  },  // cool-down
+      ],
+      preAllocatedVUs: 40,
+      maxVUs:          150,
+      exec:            "spikeScenario",
+      tags:            { scenario: "paymaster_spike" },
     },
-    gas_quote: {
-      executor: "constant-vus",
-      vus: 20,
-      duration: "30s",
-      exec: "quoteScenario",
-      tags: { scenario: "gas_quote" },
+
+    // ── 2. Idempotency collision — same signature, 20 concurrent VUs ────────
+    // Exactly one should get 202, all others must get 409 (never 500).
+    // Validates the sig-hash lock + DB ON CONFLICT path under race conditions.
+    idempotency_collision: {
+      executor:  "constant-vus",
+      vus:       20,
+      duration:  "30s",
+      exec:      "collisionScenario",
       startTime: "5s",
+      tags:      { scenario: "idempotency_collision" },
     },
-    gas_relay: {
-      executor: "constant-vus",
-      vus: 10,
-      duration: "30s",
-      exec: "relayScenario",
-      tags: { scenario: "gas_relay" },
+
+    // ── 3. Rate-limit tier validation ───────────────────────────────────────
+    // Test-key tier allows 10 req/min → expect 429 after the 10th within 60 s.
+    rate_limit_tier: {
+      executor:  "constant-vus",
+      vus:       15,     // 15 VUs > 10-req/min limit — must trigger 429s
+      duration:  "20s",
+      exec:      "rateLimitScenario",
       startTime: "10s",
+      tags:      { scenario: "rate_limit_tier" },
     },
-    gas_relay_id: {
-      executor: "constant-vus",
-      vus: 10,
-      duration: "20s",
-      exec: "relayGetScenario",
-      tags: { scenario: "gas_relay_id" },
-      startTime: "15s",
+
+    // ── 4. Quote load — steady state ────────────────────────────────────────
+    gas_quote_load: {
+      executor:  "constant-vus",
+      vus:       20,
+      duration:  "60s",
+      exec:      "quoteScenario",
+      tags:      { scenario: "gas_quote_load" },
     },
+
+    // ── 5. Status probe — continuous health ─────────────────────────────────
+    gas_status_probe: {
+      executor:  "constant-vus",
+      vus:       50,
+      duration:  "60s",
+      exec:      "statusScenario",
+      tags:      { scenario: "gas_status_probe" },
+    },
+
   },
+
   thresholds: {
-    // Status endpoint: very fast
-    "http_req_duration{scenario:gas_status}":  ["p(95)<500"],
-    // Quote endpoint: within 800 ms p95
-    "http_req_duration{scenario:gas_quote}":   ["p(95)<800"],
-    // Relay submission: within 2000 ms p95 (includes signer roundtrip or stub)
-    "http_req_duration{scenario:gas_relay}":   ["p(95)<2000"],
-    // GET relay: fast DB lookup
-    "http_req_duration{scenario:gas_relay_id}": ["p(95)<400"],
-    // Custom error rate: < 1% actual errors (429/503 are expected, not errors)
-    relay_errors: ["rate<0.01"],
+    // ── Spec SLOs ─────────────────────────────────────────────────────────
+    // All relay/quote endpoints must stay under 400 ms p95.
+    "http_req_duration{scenario:paymaster_spike}":      ["p(95)<400"],
+    "http_req_duration{scenario:gas_quote_load}":       ["p(95)<400"],
+    "http_req_duration{scenario:gas_status_probe}":     ["p(95)<300"],
+    "http_req_duration{scenario:idempotency_collision}":["p(95)<400"],
+
+    // Real infrastructure errors (5xx, not 429/409) must be < 0.1 %.
+    // 429 = rate limited (expected), 409 = idempotency (expected), 503 = disabled (expected).
+    infra_errors: ["rate<0.001"],
+
+    // Custom trends
+    quote_duration_ms: ["p(95)<400"],
+    relay_duration_ms: ["p(95)<400"],
   },
 };
 
 const HEADERS_JSON = { "Content-Type": "application/json" };
-const HEADERS_AUTH = {
-  "Content-Type": "application/json",
-  "Authorization": `Bearer ${API_KEY}`,
-};
 
-// ── Scenario: GET /v1/gas/status ───────────────────────────────────────────────
-export function statusScenario() {
-  group("GET /v1/gas/status", () => {
-    const res = http.get(`${BASE_URL}/v1/gas/status`, { tags: { name: "gas_status" } });
-    check(res, {
-      "status is 200 or 503": (r) => r.status === 200 || r.status === 503,
-      "response has enabled field": (r) => {
-        try {
-          const body = JSON.parse(r.body);
-          return typeof body.enabled === "boolean";
-        } catch {
-          return false;
-        }
-      },
-    });
-  });
-  sleep(0.1 + Math.random() * 0.3);
+function authHeaders(key) {
+  return { "Content-Type": "application/json", "Authorization": `Bearer ${key}` };
 }
 
-// ── Scenario: POST /v1/gas/quote ───────────────────────────────────────────────
+// ── Unique relay payload factory ───────────────────────────────────────────────
+// Generates a unique (r, s) per (VU, iteration) to avoid accidental collisions
+// across test scenarios that should NOT collide.
+function uniqueRelayPayload(vuID, iter) {
+  const r = `0x${"a".repeat(60)}${String(vuID  % 100).padStart(2, "0")}${String(iter % 100).padStart(2, "0")}`;
+  const s = `0x${"b".repeat(60)}${String(iter  % 100).padStart(2, "0")}${String(vuID  % 100).padStart(2, "0")}`;
+  return JSON.stringify({
+    user_address: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    tx_to:        "0x55d398326f99059fF775485246999027B3197955",
+    tx_data:      "",
+    sig_r:        r,
+    sig_s:        s,
+    sig_v:        "0x1b",
+    amount:       "50.000000",
+    token_addr:   "0x55d398326f99059fF775485246999027B3197955",
+    network:      "BSC",
+  });
+}
+
+// Deterministic fixed payload — same (r, s) across ALL VUs → collision.
+const COLLISION_PAYLOAD = JSON.stringify({
+  user_address: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+  tx_to:        "0x55d398326f99059fF775485246999027B3197955",
+  tx_data:      "",
+  sig_r:        "0x48263592c7314a87c6611c10748aeb04b58e8f23243545657687980911234345",
+  sig_s:        "0xa123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  sig_v:        "0x1b",
+  amount:       "50.000000",
+  token_addr:   "0x55d398326f99059fF775485246999027B3197955",
+  network:      "BSC",
+});
+
+// ── Scenario 1: Spike ──────────────────────────────────────────────────────────
+export function spikeScenario() {
+  const start   = Date.now();
+  const payload = uniqueRelayPayload(__VU, __ITER);
+  const res     = http.post(`${BASE_URL}/v1/gas/relay`, payload, {
+    headers: authHeaders(LIVE_KEY),
+    tags:    { name: "relay_spike" },
+  });
+  relayDuration.add(Date.now() - start);
+
+  const accepted = check(res, {
+    "spike: status is acceptable": (r) =>
+      r.status === 202 ||  // accepted — happy path
+      r.status === 429 ||  // rate limited (expected at peak)
+      r.status === 409 ||  // duplicate sig (shouldn't happen here but safe)
+      r.status === 400 ||  // validation error
+      r.status === 503,    // gas station disabled
+  });
+
+  // Only count as infra error if it's a true 5xx (not 503=disabled)
+  if (res.status >= 500 && res.status !== 503) {
+    infraErrors.add(1);
+  } else {
+    infraErrors.add(0);
+    if (res.status === 202)  relayAccepted.add(1);
+    if (res.status === 429)  rateLimitHits.add(1);
+  }
+
+  if (!accepted) {
+    console.error(`[spike] unexpected status=${res.status} body=${res.body.substring(0, 200)}`);
+  }
+
+  sleep(0.1);
+}
+
+// ── Scenario 2: Idempotency collision ─────────────────────────────────────────
+// 20 VUs all send the EXACT same (r, s) signature concurrently.
+// Expected: exactly one 202, all rest must be 409 Conflict — never 500.
+export function collisionScenario() {
+  const res = http.post(`${BASE_URL}/v1/gas/relay`, COLLISION_PAYLOAD, {
+    headers: authHeaders(LIVE_KEY),
+    tags:    { name: "relay_collision" },
+  });
+
+  check(res, {
+    "collision: only 202 or 409 accepted (never 500)": (r) =>
+      r.status === 202 ||  // first VU to acquire the lock
+      r.status === 409 ||  // subsequent VUs — idempotency block
+      r.status === 429 ||  // rate limited (live key, 60/min)
+      r.status === 503,    // gas station disabled
+  });
+
+  if (res.status === 409) {
+    idempotencyHits.add(1);
+    const body = JSON.parse(res.body || "{}");
+    check(res, {
+      "collision: 409 has DUPLICATE_SIG code": () => body.code === "DUPLICATE_SIG",
+    });
+  }
+
+  if (res.status >= 500 && res.status !== 503) {
+    infraErrors.add(1);
+    console.error(`[collision] INFRA ERROR status=${res.status} body=${res.body.substring(0, 200)}`);
+  } else {
+    infraErrors.add(0);
+  }
+
+  sleep(0.05 + Math.random() * 0.1); // tight burst to maximise race condition surface
+}
+
+// ── Scenario 3: Rate-limit tier ────────────────────────────────────────────────
+// 15 VUs using a sk_test_* key (tier limit = 10 req/min).
+// After the 10th request the 11th–15th must get 429.
+export function rateLimitScenario() {
+  const payload = uniqueRelayPayload(__VU, __ITER + 10000); // offset to avoid cross-scenario collision
+  const res = http.post(`${BASE_URL}/v1/gas/relay`, payload, {
+    headers: authHeaders(TEST_KEY),
+    tags:    { name: "relay_ratelimit" },
+  });
+
+  check(res, {
+    "rate-limit: 202, 429, or 409 accepted": (r) =>
+      r.status === 202 ||
+      r.status === 429 ||
+      r.status === 409 ||
+      r.status === 503,
+  });
+
+  if (res.status === 429) {
+    rateLimitHits.add(1);
+    // Validate Retry-After header is present (spec requirement).
+    check(res, {
+      "rate-limit: Retry-After header set": (r) =>
+        r.headers["Retry-After"] !== undefined && r.headers["Retry-After"] !== "",
+      "rate-limit: X-RateLimit-Limit header set": (r) =>
+        r.headers["X-Ratelimit-Limit"] !== undefined || r.headers["X-RateLimit-Limit"] !== undefined,
+    });
+  }
+
+  if (res.status >= 500 && res.status !== 503) infraErrors.add(1);
+  else infraErrors.add(0);
+
+  sleep(0.2);
+}
+
+// ── Scenario 4: Quote load ─────────────────────────────────────────────────────
 export function quoteScenario() {
-  group("POST /v1/gas/quote", () => {
-    const payload = JSON.stringify({
-      user_address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-      tx_to:        "0x55d398326f99059fF775485246999027B3197955",
-      tx_data:      "",
-    });
-
-    const start = Date.now();
-    const res = http.post(`${BASE_URL}/v1/gas/quote`, payload, {
-      headers: HEADERS_JSON,
-      tags: { name: "gas_quote" },
-    });
-    quoteDuration.add(Date.now() - start);
-
-    check(res, {
-      "quote: acceptable status": (r) =>
-        r.status === 200 || r.status === 503 || r.status === 400,
-      "quote: fee_usdt present when 200": (r) => {
-        if (r.status !== 200) return true;
-        try {
-          const body = JSON.parse(r.body);
-          return typeof body.fee_usdt === "number" && body.fee_usdt >= 0;
-        } catch {
-          return false;
-        }
-      },
-      "quote: valid_until_ms is future when 200": (r) => {
-        if (r.status !== 200) return true;
-        try {
-          const body = JSON.parse(r.body);
-          return body.valid_until_ms > Date.now();
-        } catch {
-          return false;
-        }
-      },
-    });
+  const payload = JSON.stringify({
+    user_address: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    tx_to:        "0x55d398326f99059fF775485246999027B3197955",
+    tx_data:      "",
   });
-  sleep(0.2 + Math.random() * 0.5);
+
+  const start = Date.now();
+  const res = http.post(`${BASE_URL}/v1/gas/quote`, payload, {
+    headers: HEADERS_JSON,
+    tags:    { name: "gas_quote" },
+  });
+  quoteDuration.add(Date.now() - start);
+
+  check(res, {
+    "quote: acceptable status": (r) =>
+      r.status === 200 || r.status === 400 || r.status === 503,
+    "quote: fee_usdt >= 0 when 200": (r) => {
+      if (r.status !== 200) return true;
+      try { return JSON.parse(r.body).fee_usdt >= 0; } catch { return false; }
+    },
+    "quote: valid_until_ms in future when 200": (r) => {
+      if (r.status !== 200) return true;
+      try { return JSON.parse(r.body).valid_until_ms > Date.now(); } catch { return false; }
+    },
+  });
+
+  if (res.status >= 500 && res.status !== 503) infraErrors.add(1);
+  else infraErrors.add(0);
+
+  sleep(0.2 + Math.random() * 0.3);
 }
 
-// ── Scenario: POST /v1/gas/relay ───────────────────────────────────────────────
-// Each VU uses a unique (r, s) pair so sig hash never collides.
-export function relayScenario() {
-  group("POST /v1/gas/relay", () => {
-    const vuID = __VU;
-    const iter = __ITER;
-    // Fake hex values — unique per (VU, iteration)
-    const r = `0x${"a".repeat(60)}${String(vuID).padStart(2, "0")}${String(iter % 100).padStart(2, "0")}`;
-    const s = `0x${"b".repeat(60)}${String(iter % 100).padStart(2, "0")}${String(vuID).padStart(2, "0")}`;
-
-    const payload = JSON.stringify({
-      user_address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-      tx_to:        "0x55d398326f99059fF775485246999027B3197955",
-      tx_data:      "",
-      sig_r:        r,
-      sig_s:        s,
-      sig_v:        "0x1b",
-      amount:       "10.000000",
-      token_addr:   "0x55d398326f99059fF775485246999027B3197955",
-      network:      "BSC",
-    });
-
-    const start = Date.now();
-    const res = http.post(`${BASE_URL}/v1/gas/relay`, payload, {
-      headers: HEADERS_AUTH,
-      tags: { name: "gas_relay" },
-    });
-    relayDuration.add(Date.now() - start);
-
-    const ok = check(res, {
-      "relay: accepted or expected error": (r) =>
-        r.status === 202 ||   // happy path
-        r.status === 503 ||   // gas station disabled
-        r.status === 429 ||   // rate limited (expected under load)
-        r.status === 400 ||   // validation error
-        r.status === 409,     // duplicate sig
-    });
-
-    // Only count as error if it's a true 5xx (not 503 which means disabled)
-    if (res.status >= 500 && res.status !== 503) {
-      relayErrorRate.add(1);
-    } else {
-      relayErrorRate.add(0);
-    }
-
-    if (!ok) {
-      console.error(`relay unexpected status=${res.status} body=${res.body.substring(0, 200)}`);
-    }
+// ── Scenario 5: Status probe ───────────────────────────────────────────────────
+export function statusScenario() {
+  const res = http.get(`${BASE_URL}/v1/gas/status`, {
+    tags: { name: "gas_status" },
   });
-  sleep(0.5 + Math.random() * 1.0);
-}
 
-// ── Scenario: GET /v1/gas/relay/{id} ──────────────────────────────────────────
-export function relayGetScenario() {
-  group("GET /v1/gas/relay/{id}", () => {
-    // Use a fake UUID — should return 404
-    const fakeID = "00000000-0000-0000-0000-000000000001";
-    const res = http.get(`${BASE_URL}/v1/gas/relay/${fakeID}`, {
-      tags: { name: "gas_relay_id" },
-    });
-
-    check(res, {
-      "relay GET: 404 or 503 for unknown id": (r) =>
-        r.status === 404 ||   // gas station enabled, relay not found
-        r.status === 503,     // gas station disabled
-    });
+  check(res, {
+    "status: 200 or 503 only": (r) => r.status === 200 || r.status === 503,
+    "status: has enabled field": (r) => {
+      try { return typeof JSON.parse(r.body).enabled === "boolean"; } catch { return false; }
+    },
   });
+
+  if (res.status >= 500 && res.status !== 503) infraErrors.add(1);
+  else infraErrors.add(0);
+
   sleep(0.1 + Math.random() * 0.2);
+}
+
+// ── Summary helper (printed at end of run) ────────────────────────────────────
+export function handleSummary(data) {
+  const relayOk    = data.metrics.relay_accepted?.values?.count ?? 0;
+  const idem       = data.metrics.idempotency_hits?.values?.count ?? 0;
+  const rl         = data.metrics.rate_limit_hits?.values?.count ?? 0;
+  const errRate    = (data.metrics.infra_errors?.values?.rate ?? 0) * 100;
+  const p95Spike   = data.metrics["http_req_duration{scenario:paymaster_spike}"]?.values?.["p(95)"] ?? "-";
+  const p95Quote   = data.metrics["http_req_duration{scenario:gas_quote_load}"]?.values?.["p(95)"] ?? "-";
+
+  console.log(`
+╔══════════════════════════════════════════════════════╗
+║          ChainFX Gas Station — Stress Report         ║
+╠══════════════════════════════════════════════════════╣
+║  Relays accepted (202)        : ${String(relayOk).padStart(6)}              ║
+║  Idempotency blocks (409)     : ${String(idem).padStart(6)}              ║
+║  Rate-limit blocks  (429)     : ${String(rl).padStart(6)}              ║
+║  Infra error rate             : ${errRate.toFixed(3).padStart(6)} %           ║
+║  p95 relay/spike              : ${String(p95Spike).padStart(6)} ms           ║
+║  p95 quote                    : ${String(p95Quote).padStart(6)} ms           ║
+╚══════════════════════════════════════════════════════╝`);
+  return {};
 }

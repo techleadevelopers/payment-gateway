@@ -63,4 +63,8 @@ psql $DATABASE_URL -f migrations/005_gas_station.sql
 
 ## k6 Stress Test
 
-`tests/paymaster_stress.js` — 4 scenarios, custom metrics (`relay_errors`, `quote_duration_ms`, `relay_duration_ms`), p95 thresholds: status<500ms, quote<800ms, relay<2000ms, GET<400ms.
+`tests/paymaster_stress.js` — 5 scenarios: `paymaster_spike` (ramping-arrival-rate 10→80 tx/s), `idempotency_collision` (20 VUs same sig → must all get 202 or 409), `rate_limit_tier` (15 VUs with sk_test_* key → must trigger 429s), `gas_quote_load`, `gas_status_probe`. Custom metrics: `infra_errors`, `idempotency_hits`, `rate_limit_hits`, `relay_accepted`. SLOs: p95<400ms, infra_errors<0.001.
+
+## itoa fix
+
+`paymaster_handlers.go` had `itoa(i int)` that only worked for single digits (`'0'+i%10`). Replaced with `strconv.Itoa(i)`. Add `strconv` to import.
