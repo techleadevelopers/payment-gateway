@@ -1649,6 +1649,61 @@ CREATE INDEX IF NOT EXISTS idx_agent_trade_wallet ON agent_trade_intents(agent_w
 CREATE INDEX IF NOT EXISTS idx_agent_trade_status ON agent_trade_intents(status, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_trade_payment_log ON agent_trade_intents(chain_id, tx_hash, log_index) WHERE tx_hash IS NOT NULL AND log_index IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS agent_bill_payments (
+  id TEXT PRIMARY KEY,
+  agent_wallet TEXT NOT NULL,
+  rail TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'quoted',
+  fiat_currency TEXT NOT NULL DEFAULT 'BRL',
+  amount_brl NUMERIC(28,8) NOT NULL,
+  markup_bps INT NOT NULL,
+  fee_brl NUMERIC(28,8) NOT NULL,
+  total_brl NUMERIC(28,8) NOT NULL,
+  usdt_brl_rate NUMERIC(28,8) NOT NULL,
+  usdt_amount NUMERIC(28,8) NOT NULL,
+  payment_asset TEXT NOT NULL DEFAULT 'USDT',
+  payment_network TEXT NOT NULL DEFAULT 'BSC',
+  payment_contract TEXT NOT NULL,
+  payment_address TEXT NOT NULL,
+  pix_key_hash TEXT,
+  pix_key_enc TEXT,
+  beneficiary_name TEXT,
+  description TEXT,
+  external_reference TEXT,
+  request_hash TEXT NOT NULL UNIQUE,
+  idempotency_key TEXT UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  paid_at TIMESTAMPTZ,
+  executed_at TIMESTAMPTZ,
+  failed_at TIMESTAMPTZ,
+  tx_hash TEXT,
+  chain_id BIGINT,
+  tx_log_index INT,
+  block_number BIGINT,
+  block_hash TEXT,
+  transfer_from TEXT,
+  transfer_to TEXT,
+  transfer_amount_raw TEXT,
+  overpayment_amount NUMERIC(28,8) NOT NULL DEFAULT 0,
+  provider_id TEXT,
+  provider_status TEXT,
+  failure_code TEXT,
+  failure_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE agent_bill_payments ADD COLUMN IF NOT EXISTS chain_id BIGINT;
+ALTER TABLE agent_bill_payments ADD COLUMN IF NOT EXISTS block_number BIGINT;
+ALTER TABLE agent_bill_payments ADD COLUMN IF NOT EXISTS block_hash TEXT;
+ALTER TABLE agent_bill_payments ADD COLUMN IF NOT EXISTS transfer_from TEXT;
+ALTER TABLE agent_bill_payments ADD COLUMN IF NOT EXISTS transfer_to TEXT;
+ALTER TABLE agent_bill_payments ADD COLUMN IF NOT EXISTS transfer_amount_raw TEXT;
+ALTER TABLE agent_bill_payments ADD COLUMN IF NOT EXISTS overpayment_amount NUMERIC(28,8) NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_agent_bill_payments_wallet ON agent_bill_payments(agent_wallet, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_bill_payments_status ON agent_bill_payments(status, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_bill_payments_payment_log ON agent_bill_payments(chain_id, tx_hash, tx_log_index) WHERE tx_hash IS NOT NULL AND tx_log_index IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS marketplace_providers (
   id TEXT PRIMARY KEY,
   slug TEXT NOT NULL UNIQUE,
