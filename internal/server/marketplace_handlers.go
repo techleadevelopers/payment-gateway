@@ -154,6 +154,22 @@ func (s *Server) handleMarketplacePurchaseCreate(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	productForPolicy, planForPolicy, err := s.db.GetMarketplacePlan(r.Context(), req.PlanID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if productForPolicy != nil && planForPolicy != nil {
+		_, decision, policyErr := s.db.ValidateAgentPurchasePolicy(r.Context(), req.AgentWallet, productForPolicy.CapabilityID, planForPolicy.PaymentAsset, planForPolicy.PriceAmount)
+		if policyErr != nil {
+			writeError(w, policyErr)
+			return
+		}
+		if !decision.Allowed {
+			writeAPIError(w, r, http.StatusForbidden, decision.Code, decision.Message)
+			return
+		}
+	}
 	purchase, product, plan, err := s.db.CreateMarketplacePurchase(r.Context(), database.MarketplacePurchaseInput{
 		PlanID:          req.PlanID,
 		AgentWallet:     req.AgentWallet,
@@ -216,6 +232,15 @@ func (s *Server) handleMarketplaceCapabilityPurchase(w http.ResponseWriter, r *h
 	}
 	if !strings.EqualFold(req.AgentWallet, req.PayerWallet) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "agentWallet deve ser igual a payerWallet neste corte"})
+		return
+	}
+	_, decision, policyErr := s.db.ValidateAgentPurchasePolicy(r.Context(), req.AgentWallet, capability.ID, plan.PaymentAsset, plan.PriceAmount)
+	if policyErr != nil {
+		writeError(w, policyErr)
+		return
+	}
+	if !decision.Allowed {
+		writeAPIError(w, r, http.StatusForbidden, decision.Code, decision.Message)
 		return
 	}
 	paymentAddress := s.accessPaymentAddress()
@@ -464,6 +489,18 @@ func (s *Server) handleAgentCapabilityExecute(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Bearer access token, requestId e idempotencyKey sao obrigatorios"})
 		return
 	}
+	policy, decision, policyErr := s.db.ValidateAgentExecutionPolicy(r.Context(), token, capabilityID, req.Provider, req.RequireReal)
+	if policyErr != nil {
+		writeError(w, policyErr)
+		return
+	}
+	if !decision.Allowed {
+		writeAPIError(w, r, http.StatusForbidden, decision.Code, decision.Message)
+		return
+	}
+	if policy != nil {
+		req.RequireReal = req.RequireReal || policy.RequireRealProvider
+	}
 	result, err := s.db.ExecuteMarketplaceCapabilityMock(r.Context(), database.MarketplaceCapabilityExecuteInput{
 		Token:             token,
 		CapabilityID:      capabilityID,
@@ -694,9 +731,22 @@ func (s *Server) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		AgentWallet string `json:"agentWallet"`
-		Wallet      string `json:"wallet"`
+		Name                string   `json:"name"`
+		Description         string   `json:"description"`
+		Environment         string   `json:"environment"`
+		AgentType           string   `json:"agentType"`
+		WalletMode          string   `json:"walletMode"`
+		AgentWallet         string   `json:"agentWallet"`
+		Wallet              string   `json:"wallet"`
+		DailyLimitUSDT      string   `json:"dailyLimitUsdt"`
+		MonthlyLimitUSDT    string   `json:"monthlyLimitUsdt"`
+		MaxTransactionUSDT  string   `json:"maxTransactionUsdt"`
+		AllowedAssets       []string `json:"allowedAssets"`
+		AllowedCapabilities []string `json:"allowedCapabilities"`
+		AllowedProviders    []string `json:"allowedProviders"`
+		Permissions         []string `json:"permissions"`
+		RequireRealProvider bool     `json:"requireRealProvider"`
+		MockFallback        *bool    `json:"mockFallback"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invalido"})
@@ -712,12 +762,32 @@ func (s *Server) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
+	policy, err := s.db.UpsertAgentPolicy(r.Context(), identity.AgentID, database.AgentPolicyInput{
+		Environment:         req.Environment,
+		AgentType:           req.AgentType,
+		WalletMode:          req.WalletMode,
+		DailyLimitUSDT:      req.DailyLimitUSDT,
+		MonthlyLimitUSDT:    req.MonthlyLimitUSDT,
+		MaxTransactionUSDT:  req.MaxTransactionUSDT,
+		AllowedAssets:       req.AllowedAssets,
+		AllowedCapabilities: req.AllowedCapabilities,
+		AllowedProviders:    req.AllowedProviders,
+		Permissions:         req.Permissions,
+		RequireRealProvider: req.RequireRealProvider,
+		MockFallback:        req.MockFallback,
+		Status:              "active",
+	})
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"agentId":      identity.AgentID,
 		"wallet":       identity.Wallet,
 		"apiKey":       identity.APIKey,
 		"capabilities": identity.Capabilities,
 		"status":       identity.Status,
+		"policy":       policy,
 		"walletProvisioning": map[string]any{
 			"status": "bring_your_own_wallet",
 			"note":   "custodial wallet creation is not enabled in this cut",
