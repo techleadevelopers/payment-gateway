@@ -101,6 +101,11 @@ func (ow *OnchainWorker) Start(ctx context.Context) {
 	}
 }
 
+// m2mTreasuryAddress returns the normalised TREASURY_HOT address used for M2M deposits.
+func (ow *OnchainWorker) m2mTreasuryAddress() string {
+	return strings.ToLower(strings.TrimSpace(ow.cfg.TreasuryHot))
+}
+
 func (ow *OnchainWorker) poll(ctx context.Context, network onchainNetworkConfig) {
 	pool := ow.pools[network.Name]
 	if pool == nil || strings.TrimSpace(network.TokenContract) == "" {
@@ -138,11 +143,8 @@ func (ow *OnchainWorker) poll(ctx context.Context, network onchainNetworkConfig)
 		slog.Warn("OnchainWorker: erro ao buscar ordens pendentes; cursor nao avancado", "network", network.Name, "err", err)
 		return
 	}
-	if len(pendingOrders) == 0 {
-		ow.saveCursor(pollCtx, network.Name, toBlock)
-		return
-	}
 
+	// Build address→orderIDs map from sell/swap orders.
 	addrSet := make(map[string][]string, len(pendingOrders))
 	for _, o := range pendingOrders {
 		if o.Address != "" {
@@ -150,6 +152,17 @@ func (ow *OnchainWorker) poll(ctx context.Context, network onchainNetworkConfig)
 			addrSet[key] = append(addrSet[key], o.ID)
 		}
 	}
+
+	// Also watch TREASURY_HOT for M2M agent deposit intents.
+	treasuryAddr := ow.m2mTreasuryAddress()
+	m2mEnabled := treasuryAddr != "" && common.IsHexAddress(treasuryAddr)
+	if m2mEnabled {
+		// Sentinel value: empty slice signals "check M2M" rather than a sell order.
+		if _, exists := addrSet[treasuryAddr]; !exists {
+			addrSet[treasuryAddr] = nil // nil slice = M2M sentinel
+		}
+	}
+
 	if len(addrSet) == 0 {
 		ow.saveCursor(pollCtx, network.Name, toBlock)
 		return
@@ -193,6 +206,15 @@ func (ow *OnchainWorker) poll(ctx context.Context, network onchainNetworkConfig)
 			continue
 		}
 		rawAmount := new(big.Int).SetBytes(log.Data)
+
+		// ── M2M intent matching (transfers to TREASURY_HOT) ──────────────────
+		if m2mEnabled && toAddr == treasuryAddr {
+			// orderIDs is nil here (M2M sentinel). Dispatch async to avoid blocking poll.
+			go ow.matchM2MDeposit(ctx, network, log.TxHash.Hex(), rawAmount, log.BlockNumber)
+			continue
+		}
+
+		// ── Regular sell-order deposit ────────────────────────────────────────
 		for _, orderID := range orderIDs {
 			ow.confirmDeposit(ctx, network, orderID, log.TxHash.Hex(), rawAmount, log.BlockNumber)
 		}
@@ -201,6 +223,98 @@ func (ow *OnchainWorker) poll(ctx context.Context, network onchainNetworkConfig)
 	if safeToBlock > fromBlock {
 		ow.saveCursor(pollCtx, network.Name, safeToBlock)
 	}
+}
+
+// matchM2MDeposit tries to match an on-chain transfer to TREASURY_HOT against
+// a pending M2M payment intent. It uses amount-proximity matching with the
+// configured tolerance (M2M_DEPOSIT_TOLERANCE_PCT, default 0.5%).
+//
+// If exactly one intent matches (closest amount within tolerance), that intent
+// is atomically claimed via ConfirmM2MDeposit and a bus event is published so
+// the M2MSettlementWorker can act immediately.
+func (ow *OnchainWorker) matchM2MDeposit(ctx context.Context, network onchainNetworkConfig, txHash string, rawAmount *big.Int, blockNum uint64) {
+	matchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	divisor := new(big.Float).SetInt(
+		new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(network.TokenDecimals)), nil),
+	)
+	depositUSDT, _ := new(big.Float).Quo(new(big.Float).SetInt(rawAmount), divisor).Float64()
+
+	candidates, err := ow.db.FindPendingIntentsByDepositAddress(matchCtx, ow.m2mTreasuryAddress())
+	if err != nil {
+		slog.Warn("OnchainWorker: erro ao buscar M2M intents", "tx", txHash, "err", err)
+		return
+	}
+	if len(candidates) == 0 {
+		slog.Debug("OnchainWorker: nenhuma M2M intent pendente para este deposito", "tx", txHash, "amount_usdt", depositUSDT)
+		return
+	}
+
+	tol := ow.cfg.M2MDepositTolerancePct
+	if tol <= 0 {
+		tol = 0.005 // 0.5%
+	}
+
+	// Find the best-matching intent: smallest absolute amount deviation within tolerance.
+	bestIdx := -1
+	bestDiff := tol + 1 // sentinel larger than tolerance
+	for i, c := range candidates {
+		if c.RequiredUSDT <= 0 {
+			continue
+		}
+		diff := (depositUSDT - c.RequiredUSDT) / c.RequiredUSDT
+		if diff < -tol || diff > tol {
+			continue // outside tolerance window
+		}
+		absDiff := diff
+		if absDiff < 0 {
+			absDiff = -absDiff
+		}
+		if absDiff < bestDiff {
+			bestDiff = absDiff
+			bestIdx = i
+		}
+	}
+
+	if bestIdx < 0 {
+		slog.Warn("OnchainWorker: deposito em TREASURY_HOT sem M2M intent correspondente",
+			"tx", txHash, "deposit_usdt", depositUSDT, "candidates", len(candidates))
+		return
+	}
+
+	chosen := candidates[bestIdx]
+	claimed, err := ow.db.ConfirmM2MDeposit(matchCtx, chosen.IntentID, txHash, depositUSDT)
+	if err != nil {
+		slog.Error("OnchainWorker: erro ao confirmar M2M deposito",
+			"intent_id", chosen.IntentID, "tx", txHash, "err", err)
+		return
+	}
+	if !claimed {
+		slog.Debug("OnchainWorker: M2M intent ja confirmada por outro worker",
+			"intent_id", chosen.IntentID, "tx", txHash)
+		return
+	}
+
+	slog.Info("OnchainWorker: M2M deposito confirmado",
+		"intent_id", chosen.IntentID,
+		"tx", txHash,
+		"deposit_usdt", depositUSDT,
+		"required_usdt", chosen.RequiredUSDT,
+		"block", blockNum,
+		"network", network.Name)
+
+	// Signal the M2MSettlementWorker immediately (OrderID field reused as intentID).
+	ow.bus.Publish(Event{
+		Type:    "m2m.deposit.confirmed",
+		OrderID: chosen.IntentID,
+		Payload: map[string]any{
+			"deposit_tx":    txHash,
+			"deposit_usdt":  depositUSDT,
+			"block":         blockNum,
+			"network":       network.Name,
+		},
+	})
 }
 
 func (ow *OnchainWorker) confirmDeposit(ctx context.Context, network onchainNetworkConfig, orderID, txHash string, rawAmount *big.Int, blockNum uint64) {
