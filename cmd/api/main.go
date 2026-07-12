@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"payment-gateway/internal/email"
 	"payment-gateway/internal/logger"
 	"payment-gateway/internal/mobile"
+	"payment-gateway/internal/rpc"
 	"payment-gateway/internal/server"
 	"payment-gateway/internal/workers"
 )
@@ -33,17 +35,35 @@ func main() {
 	}
 	defer db.Close()
 
-	// 1. Criamos um Contexto cancelável para gerenciar o desligamento ordenado da aplicação
+	// 1. Contexto cancelável para desligamento ordenado.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	mailer := email.NewService(cfg)
 
-	// 2. Inicializa o gerenciador e dispara os Workers de Produção
-	workerMgr := workers.NewWorkerManager(db, cfg, mailer)
+	// 2. RPC pool (BSC). Nil-safe — workers self-disable gracefully if absent.
+	var pool *rpc.Pool
+	if cfg.BscRpcUrls != "" {
+		pool, err = rpc.NewPool(cfg.BscRpcUrls)
+		if err != nil {
+			slog.Warn("RPC pool init failed, Gas Station + Auto-Sweeper will be disabled", "error", err)
+		} else {
+			pool.StartHealthChecks(ctx, 30*time.Second)
+		}
+	}
+
+	// 3. Worker manager — includes Gas Station (Paymaster) + Auto-Sweeper.
+	workerMgr := workers.NewWorkerManager(db, cfg, mailer, pool)
 	workerMgr.StartAll(ctx)
 
+	// 4. HTTP API server.
 	api := server.New(cfg, db, workerMgr, mailer)
+
+	// Wire the Paymaster service into the HTTP server for /v1/gas/* routes.
+	if workerMgr.PaymasterService != nil {
+		api.WithPaymaster(workerMgr.PaymasterService)
+	}
+
 	mob := mobile.New(cfg, db, workerMgr)
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -62,14 +82,12 @@ func main() {
 
 	log.Println("API e motores em background foram disparados e isolados.")
 
-	// 3. Captura sinais de desligamento do terminal (Ctrl+C, SIGTERM do Docker/Kubernetes)
+	// 5. Espera sinal de desligamento.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
 
-	<-stop // O código "trava" aqui de forma eficiente até receber um comando de parada
 	log.Println("Sinal de encerramento recebido. Desligando sistemas de forma limpa...")
-
-	// Cancela o contexto principal, avisando a todas as Goroutines de background para pararem imediatamente
 	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)

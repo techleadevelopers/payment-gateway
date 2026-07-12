@@ -61,7 +61,7 @@ type CreateGasRelayParams struct {
 // ── CRUD ───────────────────────────────────────────────────────────────────────
 
 // CreateGasRelayRequest inserts a new relay request and returns its UUID.
-// Handles duplicate sig_hash gracefully — returns existing ID.
+// ON CONFLICT on sig_hash is idempotent — returns existing ID.
 func (db *DB) CreateGasRelayRequest(ctx context.Context, p CreateGasRelayParams) (string, error) {
 	const q = `
 		INSERT INTO gas_relay_requests
@@ -71,7 +71,7 @@ func (db *DB) CreateGasRelayRequest(ctx context.Context, p CreateGasRelayParams)
 		ON CONFLICT (sig_hash) DO UPDATE SET updated_at = NOW()
 		RETURNING id`
 	var id string
-	err := db.QueryRowContext(ctx, q,
+	err := db.SQL.QueryRowContext(ctx, q,
 		p.UserAddress, p.SigR, p.SigS, p.SigHash, p.TxTo, p.TxData,
 		p.FeeUSDT, p.GasPriceGwei, p.GasLimit,
 	).Scan(&id)
@@ -90,7 +90,7 @@ func (db *DB) GetGasRelayRequest(ctx context.Context, id string) (*GasRelayReque
 		FROM gas_relay_requests
 		WHERE id = $1`
 	r := &GasRelayRequest{}
-	err := db.QueryRowContext(ctx, q, id).Scan(
+	err := db.SQL.QueryRowContext(ctx, q, id).Scan(
 		&r.ID, &r.UserAddress, &r.SigR, &r.SigS, &r.SigHash, &r.TxTo, &r.TxData,
 		&r.FeeUSDT, &r.GasPriceGwei, &r.GasLimit, &r.Status, &r.TxHash,
 		&r.Attempts, &r.NextRetryAt, &r.DLQAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
@@ -138,7 +138,7 @@ func (db *DB) UpdateGasRelayStatus(ctx context.Context, id, status string, txHas
 		UPDATE gas_relay_requests
 		SET status = $2, tx_hash = COALESCE($3, tx_hash), updated_at = NOW()
 		WHERE id = $1`
-	_, err := db.ExecContext(ctx, q, id, status, txHash)
+	_, err := db.SQL.ExecContext(ctx, q, id, status, txHash)
 	if err != nil {
 		return fmt.Errorf("UpdateGasRelayStatus: %w", err)
 	}
@@ -155,7 +155,7 @@ func (db *DB) IncrementRelayAttempts(ctx context.Context, id, errMsg string, nex
 		    status = 'failed',
 		    updated_at = NOW()
 		WHERE id = $1`
-	_, err := db.ExecContext(ctx, q, id, errMsg, nextRetry)
+	_, err := db.SQL.ExecContext(ctx, q, id, errMsg, nextRetry)
 	if err != nil {
 		return fmt.Errorf("IncrementRelayAttempts: %w", err)
 	}
@@ -171,7 +171,7 @@ func (db *DB) MarkRelayDLQ(ctx context.Context, id, errMsg string) error {
 		    last_error = $2,
 		    updated_at = NOW()
 		WHERE id = $1`
-	_, err := db.ExecContext(ctx, q, id, errMsg)
+	_, err := db.SQL.ExecContext(ctx, q, id, errMsg)
 	if err != nil {
 		return fmt.Errorf("MarkRelayDLQ: %w", err)
 	}
@@ -191,7 +191,7 @@ func (db *DB) GasRelayStats(ctx context.Context) (map[string]any, error) {
 			COUNT(*) AS total
 		FROM gas_relay_requests
 		WHERE created_at > NOW() - INTERVAL '24 hours'`
-	row := db.QueryRowContext(ctx, q)
+	row := db.SQL.QueryRowContext(ctx, q)
 	var pending, processing, sent, failed, dlq, total int64
 	var totalFee float64
 	if err := row.Scan(&pending, &processing, &sent, &failed, &dlq, &totalFee, &total); err != nil {
@@ -216,7 +216,7 @@ func (db *DB) RecordAutoSweeperRun(ctx context.Context, r AutoSweeperRun) error 
 		INSERT INTO auto_sweeper_runs
 			(network, hot_wallet, cold_wallet, balance_usdt, swept_usdt, tx_hash, status, error_msg)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	_, err := db.ExecContext(ctx, q,
+	_, err := db.SQL.ExecContext(ctx, q,
 		r.Network, r.HotWallet, r.ColdWallet, r.BalanceUSDT, r.SweptUSDT,
 		r.TxHash, r.Status, r.ErrorMsg,
 	)
@@ -237,7 +237,7 @@ func (db *DB) ListAutoSweeperRuns(ctx context.Context, limit int) ([]AutoSweeper
 		FROM auto_sweeper_runs
 		ORDER BY ran_at DESC
 		LIMIT $1`
-	rows, err := db.QueryContext(ctx, q, limit)
+	rows, err := db.SQL.QueryContext(ctx, q, limit)
 	if err != nil {
 		return nil, fmt.Errorf("ListAutoSweeperRuns: %w", err)
 	}
@@ -267,7 +267,7 @@ func (db *DB) AutoSweeperStats(ctx context.Context) (map[string]any, error) {
 			COALESCE(SUM(swept_usdt) FILTER (WHERE status = 'ok'), 0) AS total_swept_usdt
 		FROM auto_sweeper_runs
 		WHERE ran_at > NOW() - INTERVAL '24 hours'`
-	row := db.QueryRowContext(ctx, q)
+	row := db.SQL.QueryRowContext(ctx, q)
 	var total, successful, errors, skipped int64
 	var totalSwept float64
 	if err := row.Scan(&total, &successful, &errors, &skipped, &totalSwept); err != nil {
@@ -285,7 +285,7 @@ func (db *DB) AutoSweeperStats(ctx context.Context) (map[string]any, error) {
 // ── Scanner helper ─────────────────────────────────────────────────────────────
 
 func (db *DB) scanRelays(ctx context.Context, query string, args ...any) ([]GasRelayRequest, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
+	rows, err := db.SQL.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("scanRelays: %w", err)
 	}
