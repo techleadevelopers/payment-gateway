@@ -119,6 +119,75 @@ func TestMCPInitializeRouteUsesAPIKeyAuth(t *testing.T) {
 	}
 }
 
+func TestSmartRateLimitSkipsCriticalWebhooks(t *testing.T) {
+	s := &Server{cfg: &config.Config{}}
+	for _, path := range []string{"/api/pix/webhook", "/api/pix/webhook/buy", "/api/stripe/webhook/buy"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		if !s.shouldSkipSmartRateLimit(req) {
+			t.Fatalf("expected %s to bypass global smart rate limit", path)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/order", nil)
+	if s.shouldSkipSmartRateLimit(req) {
+		t.Fatal("expected /api/order to stay protected by global smart rate limit")
+	}
+}
+
+func TestSmartRateLimitRouteClasses(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   string
+	}{
+		{http.MethodGet, "/openapi.json", "discovery"},
+		{http.MethodPost, "/mcp/tools/call", "mcp"},
+		{http.MethodPost, "/marketplace/purchase/mp_1/execute", "execution"},
+		{http.MethodPost, "/api/order", "write"},
+		{http.MethodGet, "/api/price", "read"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		if got := smartRateLimitRouteClass(req); got != tc.want {
+			t.Fatalf("%s %s: expected class %s, got %s", tc.method, tc.path, tc.want, got)
+		}
+	}
+	if got := smartRateLimitMax("live", "mcp", 100); got != 800 {
+		t.Fatalf("expected live MCP limit 800, got %d", got)
+	}
+}
+
+func TestNormalizeSellNetworkAliases(t *testing.T) {
+	cases := map[string]string{
+		"":        "BSC",
+		"BEP20":   "BSC",
+		"binance": "BSC",
+		"POL":     "POLYGON",
+		"matic":   "POLYGON",
+		"polygon": "POLYGON",
+	}
+	for input, want := range cases {
+		if got := normalizeSellNetwork(input); got != want {
+			t.Fatalf("normalizeSellNetwork(%q): expected %s, got %s", input, want, got)
+		}
+	}
+}
+
+func TestSellNetworkEnabledRequiresPolygonConfig(t *testing.T) {
+	s := &Server{cfg: &config.Config{}}
+	if !s.sellNetworkEnabled("BSC") {
+		t.Fatal("expected BSC sell network to remain enabled")
+	}
+	if s.sellNetworkEnabled("POLYGON") {
+		t.Fatal("expected Polygon sell network to require Polygon RPC and USDT contract config")
+	}
+
+	s.cfg.PolygonRpcUrls = "https://polygon-rpc.example"
+	s.cfg.PolygonUsdtContract = "0xc2132d05d31c914a87c6611c10748aeb04b58e8f"
+	if !s.sellNetworkEnabled("POL") {
+		t.Fatal("expected Polygon aliases to be enabled when Polygon config exists")
+	}
+}
+
 func TestAgentDiscoveryAdvertisesSixPercentFee(t *testing.T) {
 	s := &Server{cfg: &config.Config{TreasuryHot: "0x000000000000000000000000000000000000dEaD"}}
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/ai-services.json", nil)
@@ -143,6 +212,23 @@ func TestUSDTAmountToWeiUsesBSCUSDTDecimals(t *testing.T) {
 	want := "10000000000000000000"
 	if got.String() != want {
 		t.Fatalf("expected %s wei, got %s", want, got.String())
+	}
+}
+
+func TestDecimalStringToBaseUnitsAvoidsFloatRounding(t *testing.T) {
+	got, err := decimalStringToBaseUnits("300.000001", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != "300000001" {
+		t.Fatalf("expected 300000001 base units, got %s", got.String())
+	}
+	got, err = decimalStringToBaseUnits("300.000000", 18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != "300000000000000000000" {
+		t.Fatalf("expected 300e18 base units, got %s", got.String())
 	}
 }
 
