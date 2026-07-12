@@ -393,9 +393,16 @@ func (s *Server) sendAgentTradeSettlement(ctx context.Context, intent *database.
 }
 
 func (s *Server) verifyERC20TransferTx(ctx context.Context, txHash, tokenContract, fromAddress, toAddress string, amount float64, asset string, decimals int, expectedLogIndex *int) (database.AgentTradeReceipt, error) {
+	return s.verifyERC20TransferTxRaw(ctx, txHash, tokenContract, fromAddress, toAddress, amountToBaseUnits(amount, decimals), asset, decimals, expectedLogIndex)
+}
+
+func (s *Server) verifyERC20TransferTxRaw(ctx context.Context, txHash, tokenContract, fromAddress, toAddress string, expected *big.Int, asset string, decimals int, expectedLogIndex *int) (database.AgentTradeReceipt, error) {
 	rpcURL := firstCSV(s.cfg.BscRpcUrls)
 	if rpcURL == "" {
 		return database.AgentTradeReceipt{}, fmt.Errorf("BSC_RPC_URLS nao configurado para verificar pagamento")
+	}
+	if expected == nil || expected.Sign() <= 0 {
+		return database.AgentTradeReceipt{}, fmt.Errorf("amount interno invalido")
 	}
 	if !common.IsHexAddress(fromAddress) || !common.IsHexAddress(toAddress) || !common.IsHexAddress(tokenContract) {
 		return database.AgentTradeReceipt{}, fmt.Errorf("wallet, paymentAddress ou tokenContract invalido")
@@ -436,7 +443,6 @@ func (s *Server) verifyERC20TransferTx(ctx context.Context, txHash, tokenContrac
 	if header.Hash() != receipt.BlockHash {
 		return database.AgentTradeReceipt{}, fmt.Errorf("blockHash do pagamento nao esta canonico")
 	}
-	expected := amountToBaseUnits(amount, decimals)
 	from := common.HexToAddress(fromAddress)
 	to := common.HexToAddress(toAddress)
 	token := common.HexToAddress(tokenContract)
@@ -468,6 +474,43 @@ func (s *Server) verifyERC20TransferTx(ctx context.Context, txHash, tokenContrac
 		}
 	}
 	return database.AgentTradeReceipt{}, fmt.Errorf("tx nao contem Transfer %s suficiente para o trade", strings.ToUpper(asset))
+}
+
+func decimalStringToBaseUnits(amount string, decimals int) (*big.Int, error) {
+	if decimals < 0 {
+		decimals = 18
+	}
+	text := strings.TrimSpace(amount)
+	if text == "" {
+		return nil, fmt.Errorf("amount vazio")
+	}
+	if strings.HasPrefix(text, "-") {
+		return nil, fmt.Errorf("amount negativo")
+	}
+	parts := strings.SplitN(text, ".", 2)
+	if parts[0] == "" {
+		parts[0] = "0"
+	}
+	whole := new(big.Int)
+	if _, ok := whole.SetString(parts[0], 10); !ok {
+		return nil, fmt.Errorf("amount invalido")
+	}
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	whole.Mul(whole, scale)
+	frac := big.NewInt(0)
+	if len(parts) == 2 && decimals > 0 {
+		f := parts[1]
+		if len(f) > decimals {
+			f = f[:decimals]
+		}
+		f += strings.Repeat("0", decimals-len(f))
+		if strings.TrimLeft(f, "0") != "" {
+			if _, ok := frac.SetString(f, 10); !ok {
+				return nil, fmt.Errorf("amount invalido")
+			}
+		}
+	}
+	return whole.Add(whole, frac), nil
 }
 
 func amountToBaseUnits(amount float64, decimals int) *big.Int {
