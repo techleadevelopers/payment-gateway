@@ -63,7 +63,7 @@ func DefaultAgentPolicyInput() AgentPolicyInput {
 		AllowedAssets:       []string{"USDT", "USDC"},
 		AllowedCapabilities: []string{},
 		AllowedProviders:    []string{},
-		Permissions:         []string{"capabilities:read", "capabilities:purchase", "capabilities:execute", "trades:create", "settlements:read", "webhooks:write"},
+		Permissions:         []string{"capabilities:read", "capabilities:purchase", "capabilities:execute", "trades:create", "payments:create", "settlements:read", "webhooks:write"},
 		RequireRealProvider: false,
 		MockFallback:        &mockFallback,
 		Status:              "active",
@@ -168,6 +168,32 @@ func (db *DB) ValidateAgentPurchasePolicy(ctx context.Context, wallet, capabilit
 	}
 	if limitExceeded(grossAmount, policy.MaxTransactionUSDT) {
 		return policy, AgentPolicyDecision{Allowed: false, Code: "MAX_TRANSACTION_EXCEEDED", Message: "Purchase exceeds the agent maximum transaction policy."}, nil
+	}
+	if decision := db.enforceAgentSpendLimits(ctx, wallet, grossAmount, policy); !decision.Allowed {
+		return policy, decision, nil
+	}
+	return policy, AgentPolicyDecision{Allowed: true}, nil
+}
+
+func (db *DB) ValidateAgentPaymentPolicy(ctx context.Context, wallet, asset, grossAmount string) (*AgentPolicy, AgentPolicyDecision, error) {
+	policy, err := db.GetAgentPolicyByWallet(ctx, wallet)
+	if err != nil || policy == nil {
+		return policy, AgentPolicyDecision{Allowed: err == nil}, err
+	}
+	if policy.Status != "active" {
+		return policy, AgentPolicyDecision{Allowed: false, Code: "AGENT_POLICY_INACTIVE", Message: "Agent policy is not active."}, nil
+	}
+	if !jsonListContains(policy.Permissions, "payments:create") {
+		return policy, AgentPolicyDecision{Allowed: false, Code: "AGENT_PERMISSION_DENIED", Message: "Agent cannot create payment intents."}, nil
+	}
+	if !jsonListEmpty(policy.AllowedAssets) && !jsonListContains(policy.AllowedAssets, strings.ToUpper(asset)) {
+		return policy, AgentPolicyDecision{Allowed: false, Code: "ASSET_NOT_ALLOWED", Message: "Payment asset is not allowed for this agent."}, nil
+	}
+	if limitExceeded(grossAmount, policy.MaxTransactionUSDT) {
+		return policy, AgentPolicyDecision{Allowed: false, Code: "MAX_TRANSACTION_EXCEEDED", Message: "Payment exceeds the agent maximum transaction policy."}, nil
+	}
+	if decision := db.enforceAgentSpendLimits(ctx, wallet, grossAmount, policy); !decision.Allowed {
+		return policy, decision, nil
 	}
 	return policy, AgentPolicyDecision{Allowed: true}, nil
 }
@@ -285,4 +311,57 @@ func limitExceeded(amount, limit string) bool {
 	amountValue, _ := strconv.ParseFloat(strings.TrimSpace(amount), 64)
 	limitValue, _ := strconv.ParseFloat(strings.TrimSpace(limit), 64)
 	return limitValue > 0 && amountValue > limitValue
+}
+
+func (db *DB) enforceAgentSpendLimits(ctx context.Context, wallet, amount string, policy *AgentPolicy) AgentPolicyDecision {
+	amountValue, _ := strconv.ParseFloat(strings.TrimSpace(amount), 64)
+	if amountValue <= 0 || policy == nil {
+		return AgentPolicyDecision{Allowed: true}
+	}
+	dailyLimit, _ := strconv.ParseFloat(strings.TrimSpace(policy.DailyLimitUSDT), 64)
+	monthlyLimit, _ := strconv.ParseFloat(strings.TrimSpace(policy.MonthlyLimitUSDT), 64)
+	if dailyLimit <= 0 && monthlyLimit <= 0 {
+		return AgentPolicyDecision{Allowed: true}
+	}
+	daily, monthly, err := db.AgentPolicySpendUSDT(ctx, wallet)
+	if err != nil {
+		return AgentPolicyDecision{Allowed: false, Code: "AGENT_POLICY_SPEND_UNAVAILABLE", Message: "Agent spend could not be verified."}
+	}
+	if dailyLimit > 0 && daily+amountValue > dailyLimit {
+		return AgentPolicyDecision{Allowed: false, Code: "DAILY_LIMIT_EXCEEDED", Message: "Payment exceeds the agent daily spend policy."}
+	}
+	if monthlyLimit > 0 && monthly+amountValue > monthlyLimit {
+		return AgentPolicyDecision{Allowed: false, Code: "MONTHLY_LIMIT_EXCEEDED", Message: "Payment exceeds the agent monthly spend policy."}
+	}
+	return AgentPolicyDecision{Allowed: true}
+}
+
+func (db *DB) AgentPolicySpendUSDT(ctx context.Context, wallet string) (daily float64, monthly float64, err error) {
+	wallet = strings.ToLower(strings.TrimSpace(wallet))
+	if wallet == "" {
+		return 0, 0, nil
+	}
+	const q = `
+WITH spend AS (
+  SELECT gross_amount::numeric AS amount, created_at
+    FROM marketplace_purchases
+   WHERE lower(agent_wallet) = lower($1)
+     AND status NOT IN ('expired','payment_invalid','grant_failed')
+  UNION ALL
+  SELECT pay_amount::numeric AS amount, created_at
+    FROM agent_trade_intents
+   WHERE lower(agent_wallet) = lower($1)
+     AND status NOT IN ('expired','failed')
+  UNION ALL
+  SELECT required_usdt::numeric AS amount, created_at
+    FROM agent_payment_intents
+   WHERE lower(agent_wallet) = lower($1)
+     AND status NOT IN ('expired','failed')
+)
+SELECT
+  COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')), 0)::float8,
+  COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::float8
+FROM spend`
+	err = db.SQL.QueryRowContext(ctx, q, wallet).Scan(&daily, &monthly)
+	return daily, monthly, err
 }
