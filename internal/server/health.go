@@ -70,9 +70,13 @@ func (s *Server) operationalGaps() []string {
 }
 
 type chainFXAuth struct {
-	Valid   bool
-	Sandbox bool
-	Mode    string
+	Valid         bool
+	Sandbox       bool
+	Mode          string
+	ProjectID     string
+	APIKeyID      string
+	APIKeyLogHash string
+	Scopes        []string
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) (*database.AdminUser, chainFXAuth, bool) {
