@@ -4,6 +4,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -130,6 +132,96 @@ func TestSmartRateLimitSkipsCriticalWebhooks(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/order", nil)
 	if s.shouldSkipSmartRateLimit(req) {
 		t.Fatal("expected /api/order to stay protected by global smart rate limit")
+	}
+}
+
+func TestProductionRejectsAPIKeyInQueryString(t *testing.T) {
+	s := &Server{cfg: &config.Config{Environment: "production"}}
+	req := httptest.NewRequest(http.MethodGet, "/developers/dashboard?apiKey=sk_live_secret", nil)
+	rec := httptest.NewRecorder()
+
+	withRequestID(s.withPublicSurfaceGuards(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be reached")
+	}))).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "SECRET_IN_QUERY_NOT_ALLOWED") {
+		t.Fatalf("expected secret-in-query error, got %s", rec.Body.String())
+	}
+}
+
+func TestDevelopmentAllowsAPIKeyInQueryStringForCompatibility(t *testing.T) {
+	s := &Server{cfg: &config.Config{Environment: "development"}}
+	req := httptest.NewRequest(http.MethodGet, "/developers/dashboard?apiKey=sk_test_local", nil)
+	rec := httptest.NewRecorder()
+
+	withRequestID(s.withPublicSurfaceGuards(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected compatibility path to pass, got %d", rec.Code)
+	}
+}
+
+func TestManualWebhookTargetRejectsSSRFAndPlainHTTP(t *testing.T) {
+	for _, target := range []string{
+		"http://example.com/hook",
+		"https://127.0.0.1/hook",
+		"https://169.254.169.254/latest/meta-data",
+		"https://localhost/hook",
+	} {
+		if err := validateManualWebhookTarget(target); err == nil {
+			t.Fatalf("expected %s to be rejected", target)
+		}
+	}
+}
+
+func TestInternalSurfaceRequiresHMACAndAllowedRemoteIP(t *testing.T) {
+	s := &Server{cfg: &config.Config{InternalAllowedCIDRs: "10.10.0.0/16"}}
+	req := httptest.NewRequest(http.MethodPost, "/internal/sweep", strings.NewReader(`{}`))
+	req.RemoteAddr = "10.11.0.5:1234"
+	req.Header.Set("x-internal-hmac", "sig")
+	rec := httptest.NewRecorder()
+
+	withRequestID(s.withPublicSurfaceGuards(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be reached")
+	}))).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden for remote IP outside CIDR, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/internal/sweep", strings.NewReader(`{}`))
+	req.RemoteAddr = "10.10.8.5:1234"
+	req.Header.Set("x-internal-hmac", "sig")
+	rec = httptest.NewRecorder()
+	withRequestID(s.withPublicSurfaceGuards(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected allowed internal request to pass to handler, got %d", rec.Code)
+	}
+}
+
+func TestWriteErrorUsesStandardSanitizedResponse(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeError(rec, errors.New("provider leaked secret token"))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "provider leaked secret token") {
+		t.Fatalf("raw error leaked to client: %s", rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["code"] != "INTERNAL_ERROR" || body["message"] == "" {
+		t.Fatalf("expected standard error body, got %#v", body)
 	}
 }
 
