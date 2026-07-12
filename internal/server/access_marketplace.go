@@ -199,6 +199,15 @@ func (s *Server) handleAgentCapabilities(w http.ResponseWriter, r *http.Request)
 			"providerExecution": map[string]any{
 				"status":  "partial_available",
 				"enabled": true,
+				"productionReadiness": map[string]any{
+					"metering_billing_settlement": true,
+					"mock_dev_fallback":           false,
+					"seed_fixtures":               false,
+					"provider_credentials_required_for_real_execution": []string{
+						"OPENAI_API_KEY",
+						"CAPABILITY_OCR_URL",
+					},
+				},
 				"realProviders": map[string]any{
 					"semantic_memory": "native_postgres",
 					"llm_chat":        "openai_compatible_when_configured",
