@@ -185,14 +185,18 @@ func (db *DB) ListAgentActiveGrants(ctx context.Context, wallet string) ([]*Agen
 
 // RiskDashboardStats holds the aggregated risk and settlement data for the operator.
 type RiskDashboardStats struct {
-	PendingIntents      int     `json:"pendingIntents"`
-	PendingDepositBRL   float64 `json:"pendingDepositBrl"`
-	SettledToday        int     `json:"settledToday"`
-	SettledTodayBRL     float64 `json:"settledTodayBrl"`
-	FailedToday         int     `json:"failedToday"`
-	DailyOutflowBRL     float64 `json:"dailyOutflowBrl"`
-	EfiPendingCount     int     `json:"efiPendingCount"`
-	ExpiredToday        int     `json:"expiredToday"`
+	PendingIntents       int     `json:"pendingIntents"`
+	PendingDepositBRL    float64 `json:"pendingDepositBrl"`
+	SettledToday         int     `json:"settledToday"`
+	SettledTodayBRL      float64 `json:"settledTodayBrl"`
+	FailedToday          int     `json:"failedToday"`
+	DailyOutflowBRL      float64 `json:"dailyOutflowBrl"`
+	EfiPendingCount      int     `json:"efiPendingCount"`
+	ExpiredToday         int     `json:"expiredToday"`
+	// Overpayment tracking: deposits where agent sent more USDT than required.
+	// Excess stays in TREASURY_HOT and requires manual reconciliation.
+	OverpaidIntents      int     `json:"overpaidIntents"`
+	OverpaymentUSDT      float64 `json:"overpaymentUsdt"`
 }
 
 // GetRiskDashboardStats returns the aggregated M2M risk/settlement stats.
@@ -213,7 +217,14 @@ func (db *DB) GetRiskDashboardStats(ctx context.Context) (*RiskDashboardStats, e
 		      WHERE status IN ('settled','settling','paid_crypto')), 0)                AS daily_outflow_brl,
 		  COUNT(*) FILTER (WHERE status = 'settling')                                 AS efi_pending,
 		  COUNT(*) FILTER (WHERE status = 'expired'
-		                     AND updated_at >= date_trunc('day', now() AT TIME ZONE 'UTC')) AS expired_today
+		                     AND updated_at >= date_trunc('day', now() AT TIME ZONE 'UTC')) AS expired_today,
+		  -- Overpayment: intents where agent sent more than required (deposit_amount_usdt > required_usdt)
+		  COUNT(*) FILTER (WHERE deposit_amount_usdt IS NOT NULL
+		                     AND deposit_amount_usdt > required_usdt + 0.001) AS overpaid_intents,
+		  COALESCE(SUM(
+		    GREATEST(deposit_amount_usdt - required_usdt, 0)
+		  ) FILTER (WHERE deposit_amount_usdt IS NOT NULL
+		              AND deposit_amount_usdt > required_usdt + 0.001), 0) AS overpayment_usdt
 		FROM agent_payment_intents
 		WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') - INTERVAL '1 day'
 	`).Scan(
@@ -221,6 +232,7 @@ func (db *DB) GetRiskDashboardStats(ctx context.Context) (*RiskDashboardStats, e
 		&s.SettledToday, &s.SettledTodayBRL,
 		&s.FailedToday, &s.DailyOutflowBRL,
 		&s.EfiPendingCount, &s.ExpiredToday,
+		&s.OverpaidIntents, &s.OverpaymentUSDT,
 	)
 	if err != nil {
 		return nil, err

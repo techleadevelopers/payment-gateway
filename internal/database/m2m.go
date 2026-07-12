@@ -177,6 +177,7 @@ WHERE id = $1`
 // M2MDepositMatch holds a candidate intent that matches a blockchain deposit.
 type M2MDepositMatch struct {
 	IntentID     string
+	AgentWallet  string
 	RequiredUSDT float64
 }
 
@@ -184,7 +185,7 @@ type M2MDepositMatch struct {
 // for a given deposit address so the on-chain worker can attempt amount-matching.
 func (db *DB) FindPendingIntentsByDepositAddress(ctx context.Context, address string) ([]M2MDepositMatch, error) {
 	const q = `
-SELECT id, required_usdt
+SELECT id, agent_wallet, required_usdt
 FROM   agent_payment_intents
 WHERE  payment_address = $1
   AND  status = 'pending_deposit'
@@ -200,7 +201,7 @@ ORDER BY created_at`
 	var matches []M2MDepositMatch
 	for rows.Next() {
 		var m M2MDepositMatch
-		if err := rows.Scan(&m.IntentID, &m.RequiredUSDT); err != nil {
+		if err := rows.Scan(&m.IntentID, &m.AgentWallet, &m.RequiredUSDT); err != nil {
 			return nil, err
 		}
 		matches = append(matches, m)

@@ -21,9 +21,12 @@ import (
 var erc20TransferTopic = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
 
 const (
-	bscRequiredConfirmations     = uint64(6)
-	polygonRequiredConfirmations = uint64(128)
-	scanBlockRange               = uint64(50)
+	// Fallback confirmation counts used when config values are zero.
+	// BSC: finalistic consensus, 6 blocks ≈ 18 s — safe for most reorgs.
+	// Polygon: bor consensus can produce deep reorgs; 128 blocks ≈ 5 min — conservative.
+	defaultBSCConfirmations     = uint64(6)
+	defaultPolygonConfirmations = uint64(128)
+	scanBlockRange              = uint64(50)
 )
 
 type onchainNetworkConfig struct {
@@ -53,9 +56,22 @@ func NewOnchainWorker(bus *EventBus, db *database.DB, cfg *config.Config) *Oncha
 		dlq:   NewDLQ(1000, nil),
 	}
 
+		bscConf := cfg.BSCMinConfirmations
+	if bscConf == 0 {
+		bscConf = defaultBSCConfirmations
+	}
+	polyConf := cfg.PolygonMinConfirmations
+	if polyConf == 0 {
+		polyConf = defaultPolygonConfirmations
+	}
+	slog.Info("OnchainWorker: confirmacoes configuradas",
+		"bsc_confirmations", bscConf,
+		"polygon_confirmations", polyConf,
+		"note", "aumente via BSC_MIN_CONFIRMATIONS / POLYGON_MIN_CONFIRMATIONS se reorgs forem detectados")
+
 	for _, network := range []onchainNetworkConfig{
-		{Name: "BSC", RPCUrls: cfg.BscRpcUrls, TokenContract: cfg.BscUsdtContract, TokenDecimals: 18, RequiredConfirmations: bscRequiredConfirmations},
-		{Name: "POLYGON", RPCUrls: cfg.PolygonRpcUrls, TokenContract: cfg.PolygonUsdtContract, TokenDecimals: 6, RequiredConfirmations: polygonRequiredConfirmations},
+		{Name: "BSC", RPCUrls: cfg.BscRpcUrls, TokenContract: cfg.BscUsdtContract, TokenDecimals: 18, RequiredConfirmations: bscConf},
+		{Name: "POLYGON", RPCUrls: cfg.PolygonRpcUrls, TokenContract: cfg.PolygonUsdtContract, TokenDecimals: 6, RequiredConfirmations: polyConf},
 	} {
 		if strings.TrimSpace(network.RPCUrls) == "" || strings.TrimSpace(network.TokenContract) == "" {
 			continue
@@ -296,11 +312,40 @@ func (ow *OnchainWorker) matchM2MDeposit(ctx context.Context, network onchainNet
 		return
 	}
 
+	// Detect overpayment: when the agent deposited more than the required amount.
+	// The excess stays in TREASURY_HOT and requires manual reconciliation or refund.
+	overpaymentUSDT := depositUSDT - chosen.RequiredUSDT
+	if overpaymentUSDT > 0.001 { // threshold: ignore sub-cent dust differences
+		slog.Warn("OnchainWorker: OVERPAYMENT detectado — excesso em TREASURY_HOT, reconciliacao manual necessaria",
+			"intent_id", chosen.IntentID,
+			"deposit_usdt", depositUSDT,
+			"required_usdt", chosen.RequiredUSDT,
+			"overpayment_usdt", overpaymentUSDT,
+			"tx", txHash,
+			"network", network.Name,
+			"action_required", "verificar e restituir ou registrar saldo excedente")
+		ow.bus.Publish(Event{
+			Type:    "m2m.overpayment.detected",
+			OrderID: chosen.IntentID,
+			Payload: map[string]any{
+				"intent_id":        chosen.IntentID,
+				"deposit_usdt":     depositUSDT,
+				"required_usdt":    chosen.RequiredUSDT,
+				"overpayment_usdt": overpaymentUSDT,
+				"deposit_tx":       txHash,
+				"network":          network.Name,
+				"agent_wallet":     chosen.AgentWallet,
+				"action_required":  "reconciliation: refund or credit excess to agent",
+			},
+		})
+	}
+
 	slog.Info("OnchainWorker: M2M deposito confirmado",
 		"intent_id", chosen.IntentID,
 		"tx", txHash,
 		"deposit_usdt", depositUSDT,
 		"required_usdt", chosen.RequiredUSDT,
+		"overpayment_usdt", overpaymentUSDT,
 		"block", blockNum,
 		"network", network.Name)
 
@@ -309,10 +354,12 @@ func (ow *OnchainWorker) matchM2MDeposit(ctx context.Context, network onchainNet
 		Type:    "m2m.deposit.confirmed",
 		OrderID: chosen.IntentID,
 		Payload: map[string]any{
-			"deposit_tx":    txHash,
-			"deposit_usdt":  depositUSDT,
-			"block":         blockNum,
-			"network":       network.Name,
+			"deposit_tx":       txHash,
+			"deposit_usdt":     depositUSDT,
+			"required_usdt":    chosen.RequiredUSDT,
+			"overpayment_usdt": overpaymentUSDT,
+			"block":            blockNum,
+			"network":          network.Name,
 		},
 	})
 }

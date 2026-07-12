@@ -222,16 +222,28 @@ func (s *Server) agentTradeAssets(ctx context.Context) ([]*database.AgentSupport
 	if s.db != nil {
 		assets, err := s.db.ListAgentSupportedAssets(ctx)
 		if err == nil && len(assets) > 0 {
+			active := assets[:0]
 			for _, asset := range assets {
 				s.normalizeAgentTradeAsset(asset)
+				// Filter out legacy/disabled assets from the public listing.
+				if asset.Enabled && !strings.EqualFold(asset.Status, "legacy") {
+					active = append(active, asset)
+				}
 			}
-			return assets, nil
+			return active, nil
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
-	return s.fallbackAgentTradeAssets(), nil
+	// Fallback: only return enabled, non-legacy assets.
+	var active []*database.AgentSupportedAsset
+	for _, a := range s.fallbackAgentTradeAssets() {
+		if a.Enabled && !strings.EqualFold(a.Status, "legacy") {
+			active = append(active, a)
+		}
+	}
+	return active, nil
 }
 
 func (s *Server) agentTradeAsset(ctx context.Context, symbol string) (*database.AgentSupportedAsset, error) {
@@ -242,14 +254,24 @@ func (s *Server) agentTradeAsset(ctx context.Context, symbol string) (*database.
 			return nil, err
 		}
 		if asset != nil {
+			// GetAgentSupportedAsset already filters enabled=true at DB level,
+			// but double-check legacy status for defence-in-depth.
+			if !asset.Enabled || strings.EqualFold(asset.Status, "legacy") {
+				return nil, fmt.Errorf("asset %s esta desabilitado (status: %s); consulte GET /agent/v1/assets", normalized, asset.Status)
+			}
 			s.normalizeAgentTradeAsset(asset)
 			return asset, nil
 		}
 	}
+	// Fallback (DB unreachable): reject legacy/disabled assets explicitly.
 	for _, asset := range s.fallbackAgentTradeAssets() {
-		if asset.Symbol == normalized {
-			return asset, nil
+		if asset.Symbol != normalized {
+			continue
 		}
+		if !asset.Enabled || strings.EqualFold(asset.Status, "legacy") {
+			return nil, fmt.Errorf("asset %s nao esta disponivel para trading (status: %s)", normalized, asset.Status)
+		}
+		return asset, nil
 	}
 	return nil, fmt.Errorf("asset nao suportado no rail M2M: consulte GET /agent/v1/assets")
 }

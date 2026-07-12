@@ -40,9 +40,10 @@ const (
 	EventDCAExecuted     = "dca.executed"
 
 	// M2M agent payment lifecycle events
-	EventM2MIntentCreated  = "m2m.intent.created"
-	EventM2MDepositReceived = "m2m.deposit.received"
-	EventM2MSettlementDone  = "m2m.settlement.done"  // canonical name (was m2m.settled)
+	EventM2MIntentCreated    = "m2m.intent.created"
+	EventM2MDepositReceived  = "m2m.deposit.received"
+	EventM2MOverpayment      = "m2m.overpayment.detected" // excess deposit, manual reconciliation needed
+	EventM2MSettlementDone   = "m2m.settlement.done"      // canonical name (was m2m.settled)
 	EventM2MSettlementFailed = "m2m.settlement.failed"
 
 	// Marketplace/capability lifecycle events
@@ -63,6 +64,7 @@ func AllEvents() []string {
 		EventDCAExecuted,
 		EventM2MIntentCreated,
 		EventM2MDepositReceived,
+		EventM2MOverpayment,
 		EventM2MSettlementDone,
 		EventM2MSettlementFailed,
 		EventCapabilityPurchased,
@@ -141,6 +143,8 @@ func busEventMapping(eventType string) []string {
 		return []string{EventM2MIntentCreated}
 	case "m2m.deposit.confirmed":
 		return []string{EventM2MDepositReceived}
+	case "m2m.overpayment.detected":
+		return []string{EventM2MOverpayment}
 	case "m2m.settlement.done":
 		return []string{EventM2MSettlementDone}
 	case "m2m.settlement.failed":
@@ -177,6 +181,7 @@ func (d *Dispatcher) Start(ctx context.Context, bus *workers.EventBus) {
 		"order.failed", "buy.failed",
 		// M2M agent payment lifecycle (new)
 		"m2m.intent.created", "m2m.deposit.confirmed",
+		"m2m.overpayment.detected",
 		"m2m.settlement.done", "m2m.settlement.failed",
 		// Capability marketplace lifecycle (new)
 		"marketplace.capability.purchased", "marketplace.capability.granted",
