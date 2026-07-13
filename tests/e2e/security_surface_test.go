@@ -28,7 +28,7 @@ func TestInternalRouteRequiresHMAC(t *testing.T) {
 	requireStatus(t, resp, 401, 403)
 }
 
-func TestMCPWithoutAuthFails(t *testing.T) {
+func TestMCPDiscoveryIsPublicButProtectedToolsRequireAuth(t *testing.T) {
 	c := newE2EClient(t)
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/mcp/initialize", strings.NewReader(`{}`))
 	if err != nil {
@@ -40,7 +40,21 @@ func TestMCPWithoutAuthFails(t *testing.T) {
 		t.Fatalf("MCP unauthenticated request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected MCP without auth to fail, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected MCP discovery without auth to pass, got %d", resp.StatusCode)
+	}
+
+	protected, err := http.NewRequest(http.MethodPost, c.baseURL+"/mcp/tools/call", strings.NewReader(`{"name":"purchaseCapability","arguments":{}}`))
+	if err != nil {
+		t.Fatalf("new protected request: %v", err)
+	}
+	protected.Header.Set("Content-Type", "application/json")
+	protectedResp, err := c.http.Do(protected)
+	if err != nil {
+		t.Fatalf("MCP protected unauthenticated request failed: %v", err)
+	}
+	defer protectedResp.Body.Close()
+	if protectedResp.StatusCode != http.StatusUnauthorized && protectedResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected protected MCP tool without auth to fail, got %d", protectedResp.StatusCode)
 	}
 }
