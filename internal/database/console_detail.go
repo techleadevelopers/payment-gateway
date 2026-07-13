@@ -11,16 +11,16 @@ import (
 
 // AgentDetail is a full view of one agent: identity, policy, recent activity.
 type AgentDetail struct {
-	AgentID        string         `json:"agentId"`
-	Name           string         `json:"name"`
-	Status         string         `json:"status"`
-	Wallet         string         `json:"wallet"`
-	CapabilityList []string       `json:"capabilities"`
-	SpendUSDT      string         `json:"spendUsdt"`
-	QuotaRemaining int            `json:"quotaRemaining"`
-	LastActivityAt *time.Time     `json:"lastActivityAt,omitempty"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	Policy         *AgentPolicy   `json:"policy,omitempty"`
+	AgentID        string                   `json:"agentId"`
+	Name           string                   `json:"name"`
+	Status         string                   `json:"status"`
+	Wallet         string                   `json:"wallet"`
+	CapabilityList []string                 `json:"capabilities"`
+	SpendUSDT      string                   `json:"spendUsdt"`
+	QuotaRemaining int                      `json:"quotaRemaining"`
+	LastActivityAt *time.Time               `json:"lastActivityAt,omitempty"`
+	CreatedAt      time.Time                `json:"createdAt"`
+	Policy         *AgentPolicy             `json:"policy,omitempty"`
 	Purchases      []*AgentPurchaseSummary  `json:"recentPurchases"`
 	Executions     []*AgentExecutionSummary `json:"recentExecutions"`
 }
@@ -166,6 +166,29 @@ func (db *DB) GetAgentDetail(ctx context.Context, agentIDOrWallet string) (*Agen
 	return detail, nil
 }
 
+func (db *DB) GetAgentDetailForProject(ctx context.Context, projectID, agentIDOrWallet string) (*AgentDetail, error) {
+	projectID = strings.TrimSpace(projectID)
+	agentIDOrWallet = strings.TrimSpace(agentIDOrWallet)
+	if projectID == "" || agentIDOrWallet == "" {
+		return nil, nil
+	}
+	var owned bool
+	if err := db.SQL.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM marketplace_agent_identities a
+			JOIN developer_project_agents dpa ON dpa.agent_id = a.agent_id
+			WHERE dpa.project_id = $1
+			  AND (a.agent_id = $2 OR lower(a.wallet) = lower($2))
+		)`, projectID, agentIDOrWallet).Scan(&owned); err != nil {
+		return nil, err
+	}
+	if !owned {
+		return nil, nil
+	}
+	return db.GetAgentDetail(ctx, agentIDOrWallet)
+}
+
 // ─── Execution Detail ─────────────────────────────────────────────────────────
 
 // GetExecutionDetail returns a full capability execution by ID.
@@ -201,6 +224,31 @@ func (db *DB) GetExecutionDetail(ctx context.Context, id string) (*MarketplaceCa
 	return event, nil
 }
 
+func (db *DB) GetExecutionDetailForProject(ctx context.Context, projectID, id string) (*MarketplaceCapabilityExecution, error) {
+	projectID = strings.TrimSpace(projectID)
+	id = strings.TrimSpace(id)
+	if projectID == "" || id == "" {
+		return nil, nil
+	}
+	var owned bool
+	if err := db.SQL.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM marketplace_execution_events e
+			JOIN api_access_grants g ON g.id = e.grant_id
+			JOIN marketplace_agent_identities a ON lower(a.wallet) = lower(g.buyer_wallet)
+			JOIN developer_project_agents dpa ON dpa.agent_id = a.agent_id
+			WHERE dpa.project_id = $1
+			  AND e.id = $2
+		)`, projectID, id).Scan(&owned); err != nil {
+		return nil, err
+	}
+	if !owned {
+		return nil, nil
+	}
+	return db.GetExecutionDetail(ctx, id)
+}
+
 // ─── Purchase Detail ──────────────────────────────────────────────────────────
 
 // PurchaseDetail is a full view of one purchase including plan + product.
@@ -231,6 +279,30 @@ func (db *DB) GetPurchaseDetail(ctx context.Context, id string) (*PurchaseDetail
 		&detail.ProductName, &detail.PlanName, &detail.ProviderName,
 		&detail.Quota, &detail.ValiditySecs)
 	return detail, nil
+}
+
+func (db *DB) GetPurchaseDetailForProject(ctx context.Context, projectID, id string) (*PurchaseDetail, error) {
+	projectID = strings.TrimSpace(projectID)
+	id = strings.TrimSpace(id)
+	if projectID == "" || id == "" {
+		return nil, nil
+	}
+	var owned bool
+	if err := db.SQL.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM marketplace_purchases p
+			JOIN marketplace_agent_identities a ON lower(a.wallet) = lower(p.agent_wallet)
+			JOIN developer_project_agents dpa ON dpa.agent_id = a.agent_id
+			WHERE dpa.project_id = $1
+			  AND p.id = $2
+		)`, projectID, id).Scan(&owned); err != nil {
+		return nil, err
+	}
+	if !owned {
+		return nil, nil
+	}
+	return db.GetPurchaseDetail(ctx, id)
 }
 
 // ─── List helpers for agent detail ───────────────────────────────────────────
