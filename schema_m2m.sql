@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS agent_payment_intents (
     deposit_amount_usdt NUMERIC(18,6),                   -- actual deposited amount
     efi_end_to_end_id   TEXT,                             -- Efí endToEndId after PIX settlement
     efi_status          TEXT,                             -- Efí returned pix status
+    settlement_receipt_url  TEXT,                         -- receipt URL or uploaded proof for manual/RPA settlement
+    settlement_receipt_note TEXT,                         -- receipt text/reference for manual/RPA settlement
     error_message       TEXT,
     attempts            INT          NOT NULL DEFAULT 0,
     request_hash        TEXT         NOT NULL,            -- SHA-256 of canonical request body for audit
