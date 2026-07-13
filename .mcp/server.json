@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.techleadevelopers/chainfx-mcp",
   "title": "ChainFX Capability Network",
-  "description": "AI agent capability marketplace with stablecoin payments, metering and settlement.",
+  "description": "AI agent capability marketplace, M2M PIX/card payments, stablecoin liquidity trades, metering and settlement.",
   "websiteUrl": "https://www.chainfx.store",
   "repository": {
     "url": "https://github.com/chainfx/payment-gateway",
@@ -46,6 +46,14 @@
         "meter_usage",
         "settle_provider"
       ],
+      "agent_payments_flow": [
+        "create_payment_intent",
+        "quote_required_usdt",
+        "deposit_usdt_to_unique_payment_address",
+        "match_deposit_by_address",
+        "settle_pix_or_credit_card_recipient",
+        "poll_payment_intent_status"
+      ],
       "featured_tools": [
         "searchCapabilities",
         "listCapabilities",
@@ -59,16 +67,39 @@
         "listAssets",
         "quote",
         "trade",
-        "settlementStatus"
+        "settlementStatus",
+        "createPaymentIntent",
+        "getPaymentIntent",
+        "listAgentPaymentIntents"
       ],
       "featured_capabilities": [
         "semantic_memory",
         "llm_chat",
         "document_ocr",
         "payments_fx",
+        "agent_payments",
         "capability_discovery",
         "aml_screening"
       ],
+      "agent_payments": {
+        "status": "available",
+        "types": [
+          "pix",
+          "credit_card"
+        ],
+        "funding_asset": "USDT",
+        "funding_network": "BSC",
+        "rest_endpoints": {
+          "create": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/agent/v1/pay",
+          "status": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/agent/v1/pay/{id}"
+        },
+        "mcp_tools": [
+          "createPaymentIntent",
+          "getPaymentIntent",
+          "listAgentPaymentIntents"
+        ],
+        "settlement_policy": "ChainFX settles fiat only after the agent-funded USDT deposit is confirmed."
+      },
       "payments": {
         "assets": [
           "USDT",
