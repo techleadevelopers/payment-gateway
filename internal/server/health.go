@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"strings"
 	"time"
@@ -80,6 +81,9 @@ type chainFXAuth struct {
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) (*database.AdminUser, chainFXAuth, bool) {
+	if !s.authorizeAdminConsoleKey(w, r) {
+		return nil, chainFXAuth{}, false
+	}
 	token := chainFXAPIKey(r)
 	user, err := s.db.ValidateAdminSession(r.Context(), token)
 	if err != nil {
@@ -105,6 +109,25 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) (*databa
 		"hint":  "POST /api/admin/login with email and password, then send Authorization: Bearer <token>",
 	})
 	return nil, chainFXAuth{}, false
+}
+
+func (s *Server) authorizeAdminConsoleKey(w http.ResponseWriter, r *http.Request) bool {
+	expected := ""
+	if s != nil && s.cfg != nil {
+		expected = strings.TrimSpace(s.cfg.AdminConsoleKey)
+	}
+	if expected == "" {
+		return true
+	}
+	got := strings.TrimSpace(r.Header.Get("X-Admin-Console-Key"))
+	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "palavra-chave administrativa invalida",
+			"hint":  "send X-Admin-Console-Key with the console keyword configured in ADMIN_CONSOLE_KEY",
+		})
+		return false
+	}
+	return true
 }
 
 func (s *Server) authorizeChainFX(w http.ResponseWriter, r *http.Request) (chainFXAuth, bool) {
