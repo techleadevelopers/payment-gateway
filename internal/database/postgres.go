@@ -1292,6 +1292,8 @@ ALTER TABLE order_private ADD COLUMN IF NOT EXISTS email_enc TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS request_id TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_cpf_hash TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_phone_hash TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_deposit_tx_unique ON orders (deposit_tx) WHERE deposit_tx IS NOT NULL AND deposit_tx <> '';
 
 CREATE TABLE IF NOT EXISTS order_events (
@@ -1392,9 +1394,11 @@ ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS provider_payment_id TEXT;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
 UPDATE buy_orders SET amount_fiat = amount_brl WHERE amount_fiat IS NULL;
 UPDATE buy_orders SET access_token = encode(gen_random_bytes(32), 'hex') WHERE access_token IS NULL OR access_token = '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_orders_access_token ON buy_orders (access_token);
+CREATE INDEX IF NOT EXISTS idx_buy_orders_user_created ON buy_orders(user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS buy_order_private (
   buy_order_id UUID PRIMARY KEY REFERENCES buy_orders(id) ON DELETE CASCADE,
