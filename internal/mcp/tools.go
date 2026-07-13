@@ -198,11 +198,15 @@ func (s *Server) tools() []Tool {
 				"O agente deposita o valor em USDT (incluindo taxa) na PaymentAddress; o sistema liquida o fiat ao destinatário. " +
 				"Taxa PIX: 10% | Taxa Cartão: 19%. Validade: 15 minutos (proteção cambial).",
 			InputSchema: schema(map[string]string{
-				"type":            "string obrigatorio: 'pix' ou 'credit_card'",
-				"amount_brl":      "string obrigatorio: valor em BRL que o destinatario final recebera",
-				"pix_key":         "string obrigatorio quando type=pix: chave PIX destino",
-				"idempotency_key": "string obrigatorio: chave unica gerada pelo agente para evitar duplicatas",
-				"agent_wallet":    "string obrigatorio: endereco EVM do agente pagador (audit trail)",
+				"type":             "string obrigatorio: 'pix' ou 'credit_card'",
+				"amount_brl":       "string obrigatorio: valor em BRL que o destinatario final recebera",
+				"pix_key":          "string obrigatorio quando type=pix: chave PIX destino",
+				"payment_link":     "string obrigatorio quando type=credit_card e barcode ausente: link/fatura a pagar",
+				"barcode":          "string obrigatorio quando type=credit_card e payment_link ausente: codigo de barras/linha digitavel",
+				"beneficiary_name": "string opcional: beneficiario/loja/credor",
+				"due_date":         "string opcional: vencimento da fatura",
+				"idempotency_key":  "string obrigatorio: chave unica gerada pelo agente para evitar duplicatas",
+				"agent_wallet":     "string obrigatorio: endereco EVM do agente pagador (audit trail)",
 			}),
 		},
 		{
@@ -831,6 +835,10 @@ func (s *Server) executePaymentsFXCapability(ctx context.Context, event *databas
 		amountBRLStr = strings.TrimSpace(stringFromMap(input, "amountBrl"))
 	}
 	pixKey := strings.TrimSpace(stringFromMap(input, "pix_key"))
+	paymentLink := strings.TrimSpace(stringFromMap(input, "payment_link"))
+	barcode := strings.TrimSpace(stringFromMap(input, "barcode"))
+	beneficiaryName := strings.TrimSpace(stringFromMap(input, "beneficiary_name"))
+	dueDate := strings.TrimSpace(stringFromMap(input, "due_date"))
 	agentWallet := strings.ToLower(strings.TrimSpace(stringFromMap(input, "agent_wallet")))
 	idempotencyKey := firstNonEmptyMCP(
 		strings.TrimSpace(stringFromMap(input, "idempotency_key")),
@@ -839,6 +847,12 @@ func (s *Server) executePaymentsFXCapability(ctx context.Context, event *databas
 
 	if amountBRLStr == "" || agentWallet == "" || idempotencyKey == "" {
 		return nil, fmt.Errorf("payments_fx requer: amount_brl, agent_wallet, idempotency_key no input")
+	}
+	if paymentType == "pix" && pixKey == "" {
+		return nil, fmt.Errorf("payments_fx requer pix_key quando type=pix")
+	}
+	if paymentType == "credit_card" && paymentLink == "" && barcode == "" {
+		return nil, fmt.Errorf("payments_fx requer payment_link ou barcode quando type=credit_card")
 	}
 	// ── Amount parsing — use fixed-point arithmetic to avoid float64 imprecision ──
 	// money.ParseMoney parses "123.45" → MoneyMinor (int64, ×100 = centavos BRL).
@@ -884,7 +898,7 @@ func (s *Server) executePaymentsFXCapability(ctx context.Context, event *databas
 	if !common.IsHexAddress(paymentAddress) {
 		return nil, fmt.Errorf("payments_fx: endereco de deposito M2M invalido")
 	}
-	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, idempotencyKey, agentWallet)
+	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, paymentLink, barcode, beneficiaryName, dueDate, idempotencyKey, agentWallet)
 	hashShort := reqHash
 	if len(hashShort) > 24 {
 		hashShort = hashShort[:24]
@@ -892,20 +906,24 @@ func (s *Server) executePaymentsFXCapability(ctx context.Context, event *databas
 	intentID := "int_m2m_" + hashShort
 
 	in := database.M2MCreateInput{
-		ID:             intentID,
-		IdempotencyKey: idempotencyKey,
-		AgentWallet:    agentWallet,
-		PaymentType:    database.M2MPaymentType(paymentType),
-		PixKey:         pixKey,
-		AmountBRL:      amountBRL,
-		FeeBps:         feeBps,
-		FeeUSDT:        feeUSDT,
-		GrossUSDT:      grossUSDT,
-		RequiredUSDT:   requiredUSDT,
-		USDTRate:       usdtRate,
-		PaymentAddress: paymentAddress,
-		RequestHash:    reqHash,
-		ExpiresAt:      time.Now().UTC().Add(15 * time.Minute),
+		ID:              intentID,
+		IdempotencyKey:  idempotencyKey,
+		AgentWallet:     agentWallet,
+		PaymentType:     database.M2MPaymentType(paymentType),
+		PixKey:          pixKey,
+		PaymentLink:     paymentLink,
+		Barcode:         barcode,
+		BeneficiaryName: beneficiaryName,
+		DueDate:         dueDate,
+		AmountBRL:       amountBRL,
+		FeeBps:          feeBps,
+		FeeUSDT:         feeUSDT,
+		GrossUSDT:       grossUSDT,
+		RequiredUSDT:    requiredUSDT,
+		USDTRate:        usdtRate,
+		PaymentAddress:  paymentAddress,
+		RequestHash:     reqHash,
+		ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 	}
 
 	intent, isIdempotent, err := s.db.CreateAgentPaymentIntent(ctx, in)
@@ -933,6 +951,18 @@ func (s *Server) executePaymentsFXCapability(ctx context.Context, event *databas
 	}
 	if intent.PixKey != "" {
 		out["pix_key"] = intent.PixKey
+	}
+	if intent.PaymentLink != "" {
+		out["payment_link"] = intent.PaymentLink
+	}
+	if intent.Barcode != "" {
+		out["barcode"] = intent.Barcode
+	}
+	if intent.BeneficiaryName != "" {
+		out["beneficiary_name"] = intent.BeneficiaryName
+	}
+	if intent.DueDate != "" {
+		out["due_date"] = intent.DueDate
 	}
 	raw, _ := json.Marshal(out)
 	return raw, nil
@@ -1413,6 +1443,10 @@ func (s *Server) toolCreateM2MPaymentIntent(ctx context.Context, args map[string
 	paymentType := strings.ToLower(strings.TrimSpace(stringArg(args, "type")))
 	amountBRLStr := strings.TrimSpace(stringArg(args, "amount_brl"))
 	pixKey := strings.TrimSpace(stringArg(args, "pix_key"))
+	paymentLink := strings.TrimSpace(stringArg(args, "payment_link"))
+	barcode := strings.TrimSpace(stringArg(args, "barcode"))
+	beneficiaryName := strings.TrimSpace(stringArg(args, "beneficiary_name"))
+	dueDate := strings.TrimSpace(stringArg(args, "due_date"))
 	idempotencyKey := strings.TrimSpace(stringArg(args, "idempotency_key"))
 	agentWallet := strings.ToLower(strings.TrimSpace(stringArg(args, "agent_wallet")))
 
@@ -1432,6 +1466,9 @@ func (s *Server) toolCreateM2MPaymentIntent(ctx context.Context, args map[string
 	}
 	if paymentType == "pix" && pixKey == "" {
 		return nil, fmt.Errorf("pix_key e obrigatorio para type=pix")
+	}
+	if paymentType == "credit_card" && paymentLink == "" && barcode == "" {
+		return nil, fmt.Errorf("payment_link ou barcode e obrigatorio para type=credit_card")
 	}
 
 	// ── Per-agent pricing (falls back to env globals) ─────────────────────────
@@ -1474,7 +1511,7 @@ func (s *Server) toolCreateM2MPaymentIntent(ctx context.Context, args map[string
 	}
 
 	// ── Intent ID ─────────────────────────────────────────────────────────────
-	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, idempotencyKey, agentWallet)
+	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, paymentLink, barcode, beneficiaryName, dueDate, idempotencyKey, agentWallet)
 	hashShort := reqHash
 	if len(hashShort) > 24 {
 		hashShort = hashShort[:24]
@@ -1490,20 +1527,24 @@ func (s *Server) toolCreateM2MPaymentIntent(ctx context.Context, args map[string
 	}
 
 	in := database.M2MCreateInput{
-		ID:             intentID,
-		IdempotencyKey: idempotencyKey,
-		AgentWallet:    agentWallet,
-		PaymentType:    database.M2MPaymentType(paymentType),
-		PixKey:         pixKey,
-		AmountBRL:      amountBRL,
-		FeeBps:         feeBps,
-		FeeUSDT:        feeUSDT,
-		GrossUSDT:      grossUSDT,
-		RequiredUSDT:   requiredUSDT,
-		USDTRate:       usdtRate,
-		PaymentAddress: paymentAddress,
-		RequestHash:    reqHash,
-		ExpiresAt:      time.Now().UTC().Add(15 * time.Minute),
+		ID:              intentID,
+		IdempotencyKey:  idempotencyKey,
+		AgentWallet:     agentWallet,
+		PaymentType:     database.M2MPaymentType(paymentType),
+		PixKey:          pixKey,
+		PaymentLink:     paymentLink,
+		Barcode:         barcode,
+		BeneficiaryName: beneficiaryName,
+		DueDate:         dueDate,
+		AmountBRL:       amountBRL,
+		FeeBps:          feeBps,
+		FeeUSDT:         feeUSDT,
+		GrossUSDT:       grossUSDT,
+		RequiredUSDT:    requiredUSDT,
+		USDTRate:        usdtRate,
+		PaymentAddress:  paymentAddress,
+		RequestHash:     reqHash,
+		ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 	}
 
 	intent, isIdempotent, err := s.db.CreateAgentPaymentIntent(ctx, in)
@@ -1529,6 +1570,18 @@ func (s *Server) toolCreateM2MPaymentIntent(ctx context.Context, args map[string
 	}
 	if intent.PixKey != "" {
 		resp["pix_key"] = intent.PixKey
+	}
+	if intent.PaymentLink != "" {
+		resp["payment_link"] = intent.PaymentLink
+	}
+	if intent.Barcode != "" {
+		resp["barcode"] = intent.Barcode
+	}
+	if intent.BeneficiaryName != "" {
+		resp["beneficiary_name"] = intent.BeneficiaryName
+	}
+	if intent.DueDate != "" {
+		resp["due_date"] = intent.DueDate
 	}
 	return resp, nil
 }
@@ -1564,6 +1617,18 @@ func (s *Server) toolGetM2MPaymentIntent(ctx context.Context, args map[string]an
 	}
 	if intent.PixKey != "" {
 		out["pix_key"] = intent.PixKey
+	}
+	if intent.PaymentLink != "" {
+		out["payment_link"] = intent.PaymentLink
+	}
+	if intent.Barcode != "" {
+		out["barcode"] = intent.Barcode
+	}
+	if intent.BeneficiaryName != "" {
+		out["beneficiary_name"] = intent.BeneficiaryName
+	}
+	if intent.DueDate != "" {
+		out["due_date"] = intent.DueDate
 	}
 	if intent.DepositTx != nil {
 		out["deposit_tx"] = *intent.DepositTx
