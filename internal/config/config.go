@@ -56,6 +56,7 @@ type Config struct {
 	InternalAllowedCIDRs   string
 	AdminBootstrapEmail    string
 	AdminBootstrapPassword string
+	AdminConsoleKey        string
 
 	// Regras de Limite e Fraude
 	PixMaxOrdersPer24h     int
@@ -207,6 +208,7 @@ func LoadConfig() *Config {
 		InternalAllowedCIDRs:   getEnv("INTERNAL_ALLOWED_CIDRS", "127.0.0.1/32,::1/128"),
 		AdminBootstrapEmail:    getEnv("ADMIN_BOOTSTRAP_EMAIL", ""),
 		AdminBootstrapPassword: getEnv("ADMIN_BOOTSTRAP_PASSWORD", ""),
+		AdminConsoleKey:        getEnv("ADMIN_CONSOLE_KEY", ""),
 
 		PixMaxOrdersPer24h:     getEnvAsInt("PIX_MAX_ORDERS_PER_24H", 5),
 		PixMaxBrlPer24h:        getEnvAsFloat("PIX_MAX_BRL_PER_24H", 20000.0),
