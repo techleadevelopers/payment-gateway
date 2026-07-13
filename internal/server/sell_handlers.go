@@ -65,16 +65,6 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "endereco EVM invalido"})
 		return
 	}
-	hasPending, err := s.db.HasPendingOrderForAddressNetwork(ctx, depositAddress, network)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if hasPending {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "ja existe uma ordem SELL aguardando deposito neste endereco e rede"})
-		return
-	}
-
 	rate := s.workers.PriceWorker.GetCurrentPrice()
 	if rate <= 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao ainda nao carregada"})
