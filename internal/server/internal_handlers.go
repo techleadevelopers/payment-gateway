@@ -46,6 +46,8 @@ func (s *Server) handleInternalM2MSettled(w http.ResponseWriter, r *http.Request
 		SettlementID string `json:"settlement_id"`
 		ProviderID   string `json:"provider_id"`
 		Status       string `json:"status"`
+		ReceiptURL   string `json:"receipt_url"`
+		ReceiptNote  string `json:"receipt_note"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invalido"})
@@ -54,6 +56,8 @@ func (s *Server) handleInternalM2MSettled(w http.ResponseWriter, r *http.Request
 	req.IntentID = strings.TrimSpace(req.IntentID)
 	settlementID := firstNonEmpty(strings.TrimSpace(req.SettlementID), strings.TrimSpace(req.ProviderID))
 	status := firstNonEmpty(strings.TrimSpace(req.Status), "paid")
+	receiptURL := strings.TrimSpace(req.ReceiptURL)
+	receiptNote := strings.TrimSpace(req.ReceiptNote)
 	if req.IntentID == "" || settlementID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "intent_id e settlement_id/provider_id sao obrigatorios"})
 		return
@@ -67,7 +71,7 @@ func (s *Server) handleInternalM2MSettled(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "intent em processamento por outro worker"})
 		return
 	}
-	if err := s.db.MarkM2MSettled(r.Context(), tx, req.IntentID, settlementID, status); err != nil {
+	if err := s.db.MarkM2MSettledWithReceipt(r.Context(), tx, req.IntentID, settlementID, status, receiptURL, receiptNote); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -79,6 +83,8 @@ func (s *Server) handleInternalM2MSettled(w http.ResponseWriter, r *http.Request
 				"intent_id":     req.IntentID,
 				"settlement_id": settlementID,
 				"status":        status,
+				"receipt_url":   receiptURL,
+				"receipt_note":  receiptNote,
 				"rail":          "credit_card",
 			},
 		})
