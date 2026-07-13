@@ -110,8 +110,11 @@ func (pw *PayoutWorker) processPayout(ctx context.Context, event Event) {
 	// Validate payout destination before any external call
 	if order.PixKey == "" {
 		slog.Error("PayoutWorker: PixKey vazia, impossível fazer payout", "order_id", orderID)
-		_ = pw.db.UpdateOrderStatus(ctx, orderID, "erro",
+		_ = pw.db.UpdateOrderStatus(ctx, orderID, string(models.StatusIncidenteValidacao),
 			map[string]any{"error": "PixKey vazia — contato suporte"})
+		_ = pw.db.OpenOrderIncident(ctx, orderID, "sell_payout_validation", "critical", "Payout PIX bloqueado para revisao manual: PixKey vazia", map[string]any{
+			"rule": "no_auto_refund_manual_review_required",
+		})
 		pw.dlq.Push(event, 1, "empty pix key")
 		return
 	}
@@ -180,6 +183,17 @@ func (pw *PayoutWorker) processPayout(ctx context.Context, event Event) {
 	if err != nil {
 		slog.Error("PayoutWorker: payout falhou após retries",
 			"order_id", orderID, "attempts", attempt, "err", err)
+		if isPayoutValidationIncident(err.Error()) {
+			reason := "Payout PIX bloqueado para revisao manual: " + err.Error()
+			_ = pw.db.UpdateOrderStatus(ctx, orderID, string(models.StatusIncidenteValidacao),
+				map[string]any{"error": reason, "attempts": attempt})
+			_ = pw.db.OpenOrderIncident(ctx, orderID, "sell_payout_validation", "critical", reason, map[string]any{
+				"attempts": attempt,
+				"rule":     "no_auto_refund_manual_review_required",
+			})
+			pw.dlq.Push(event, attempt, reason)
+			return
+		}
 		_ = pw.db.UpdateOrderStatus(ctx, orderID, "erro",
 			map[string]any{"error": err.Error(), "attempts": attempt})
 		pw.dlq.Push(event, attempt, err.Error())
@@ -246,6 +260,16 @@ func (pw *PayoutWorker) callEfiPix(ctx context.Context, orderID, pixKey string, 
 }
 
 // getEfiToken fetches a short-lived Efí OAuth2 token.
+func isPayoutValidationIncident(msg string) bool {
+	msg = strings.ToLower(msg)
+	for _, marker := range []string{"chave_invalida", "cpf_invalido", "conta_bloqueada", "kyc", "cpf", "titular", "beneficiario", "beneficiário"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (pw *PayoutWorker) getEfiToken(ctx context.Context) (string, error) {
 	body := strings.NewReader("grant_type=client_credentials")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
