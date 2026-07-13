@@ -161,11 +161,18 @@ func smartRateLimitMax(tier, routeClass string, configuredMax int) int {
 }
 
 func cors(cfg *config.Config, next http.Handler) http.Handler {
-	allowed := strings.Split(cfg.AllowedOrigins, ",")
-	allowed = append(allowed, "http://localhost:5173", "http://127.0.0.1:5173", "https://swapped-cryptocurrensy.vercel.app", "https://www.chainfx.store", "https://chainfx.store")
+	allowedOrigins := ""
+	if cfg != nil {
+		allowedOrigins = cfg.AllowedOrigins
+	}
+	allowed := strings.Split(allowedOrigins, ",")
+	allowed = append(allowed, "http://localhost:5173", "http://127.0.0.1:5173", "https://swapped-cryptocurrensy.vercel.app", "https://www.chainfx.store", "https://chainfx.store", "https://chatgpt.com", "https://chat.openai.com", "https://codex.openai.com")
+	allowedHeaders := "Content-Type, Authorization, X-Api-Key, X-Admin-Console-Key, X-Request-Id, X-Correlation-Id, X-Trace-Id, x-internal-hmac, x-idempotency-key, x-efi-signature, x-chainfx-signature"
+	allowedMethods := "GET, POST, PATCH, DELETE, OPTIONS"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		w.Header().Add("Vary", "Origin")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After")
 		for _, item := range allowed {
 			item = strings.TrimSpace(item)
 			if item == "" {
@@ -173,14 +180,14 @@ func cors(cfg *config.Config, next http.Handler) http.Handler {
 			}
 			if item == "*" {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, X-Admin-Console-Key, x-internal-hmac, x-idempotency-key, x-efi-signature, x-chainfx-signature")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
+				w.Header().Set("Access-Control-Allow-Methods", allowedMethods)
 				break
 			}
 			if origin != "" && item == origin {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, X-Admin-Console-Key, x-internal-hmac, x-idempotency-key, x-efi-signature, x-chainfx-signature")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
+				w.Header().Set("Access-Control-Allow-Methods", allowedMethods)
 				break
 			}
 		}
