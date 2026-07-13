@@ -1,4 +1,4 @@
-# Financial Product Interface
+﻿# Financial Product Interface
 
 <div align="center">
   <img src="https://res.cloudinary.com/limpeja/image/upload/v1783198512/d61ccb4b-f711-4a99-b859-1b6f9a5c18fb.png" alt="ChainFx Logo" width="1024" />
@@ -6,23 +6,23 @@
 
 ---
 
-## 📱 ChainFx - Instant PIX to Stablecoin Payments
+## ðŸ“± ChainFx - Instant PIX to Stablecoin Payments
 
-**ChainFx** é uma plataforma Web3 que permite comprar e vender stablecoins como USDT (Tether.io) e EURUSD (Digital Euro Dollar) de forma instantânea e segura. Com integração via PIX, você pode realizar transações em segundos com total confiabilidade.
+**ChainFx** Ã© uma plataforma Web3 que permite comprar e vender stablecoins como USDT (Tether.io) e EURUSD (Digital Euro Dollar) de forma instantÃ¢nea e segura. Com integraÃ§Ã£o via PIX, vocÃª pode realizar transaÃ§Ãµes em segundos com total confiabilidade.
 
-### ✨ Diferenciais da Plataforma
+### âœ¨ Diferenciais da Plataforma
 
-- ⚡ **Compre e venda cripto instantaneamente** via PIX
-- 🔒 **Transações seguras** e sem complicações
-- 👥 **950.000+ usuários** confiam na ChainFx
-- 💳 **30+ opções** de pagamento locais
-- 🪙 **100+ criptomoedas** disponíveis
+- âš¡ **Compre e venda cripto instantaneamente** via PIX
+- ðŸ”’ **TransaÃ§Ãµes seguras** e sem complicaÃ§Ãµes
+- ðŸ‘¥ **950.000+ usuÃ¡rios** confiam na ChainFx
+- ðŸ’³ **30+ opÃ§Ãµes** de pagamento locais
+- ðŸª™ **100+ criptomoedas** disponÃ­veis
 
 ---
 
-## 🛒 Fluxo de Compra (Buy) - Step 1
+## ðŸ›’ Fluxo de Compra (Buy) - Step 1
 
-### Informe o valor e visualize a cotação
+### Informe o valor e visualize a cotaÃ§Ã£o
 
 <div align="center">
   <img src="https://res.cloudinary.com/limpeja/image/upload/v1783058374/compra-removebg-preview_ikab4t.png" alt="ChainFx - Tela de Compra" width="600" />
@@ -32,14 +32,14 @@
 
 1. Selecione a moeda que deseja pagar (BRL)
 2. Informe o valor que deseja comprar
-3. Visualize a cotação atualizada em tempo real
-4. Confirme a quantidade de cripto que irá receber
+3. Visualize a cotaÃ§Ã£o atualizada em tempo real
+4. Confirme a quantidade de cripto que irÃ¡ receber
 
 ---
 
-## 💳 Fluxo de Pagamento - Step 2
+## ðŸ’³ Fluxo de Pagamento - Step 2
 
-### Insira sua wallet e escolha o método de pagamento
+### Insira sua wallet e escolha o mÃ©todo de pagamento
 
 <div align="center">
   <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064002/image-removebg-preview_6_ete3hd.png" alt="ChainFx - Tela de Pagamento" width="680" />
@@ -47,16 +47,16 @@
 
 **Como funciona:**
 
-1. **Informe sua Wallet** - Cole o endereço da sua carteira (ETH, BTC, USDT)
-2. **Escolha o método de pagamento**:
-   - 💰 **PIX** - Instantâneo e sem taxas extras
-   - 💳 **VISA** - Cartão de crédito internacional
-   - 💳 **Mastercard** - Cartão de crédito internacional
-3. **Confirme a transação** e receba suas criptos em segundos
+1. **Informe sua Wallet** - Cole o endereÃ§o da sua carteira (ETH, BTC, USDT)
+2. **Escolha o mÃ©todo de pagamento**:
+   - ðŸ’° **PIX** - InstantÃ¢neo e sem taxas extras
+   - ðŸ’³ **VISA** - CartÃ£o de crÃ©dito internacional
+   - ðŸ’³ **Mastercard** - CartÃ£o de crÃ©dito internacional
+3. **Confirme a transaÃ§Ã£o** e receba suas criptos em segundos
 
 ---
 
-## 💳 Fluxo de Pagamento - Step 3 (PIX)
+## ðŸ’³ Fluxo de Pagamento - Step 3 (PIX)
 
 ### Escaneie o QR Code e confirme o pagamento
 
@@ -66,37 +66,37 @@
 
 **Como funciona:**
 
-1. **Escaneie o QR Code** - Utilize o app do seu banco para escanear o código PIX
-2. **Copie o código PIX** - Caso prefira, copie o código e cole no seu banco
+1. **Escaneie o QR Code** - Utilize o app do seu banco para escanear o cÃ³digo PIX
+2. **Copie o cÃ³digo PIX** - Caso prefira, copie o cÃ³digo e cole no seu banco
 3. **Confirme o pagamento** - Realize o pagamento no valor exibido
-4. **Receba suas criptos** - Após a confirmação do pagamento, suas criptos serão entregues em segundos
+4. **Receba suas criptos** - ApÃ³s a confirmaÃ§Ã£o do pagamento, suas criptos serÃ£o entregues em segundos
 
 ---
 
-## 💳 Fluxo de Pagamento - Step 3 (Cartão de Crédito - Stripe)
+## ðŸ’³ Fluxo de Pagamento - Step 3 (CartÃ£o de CrÃ©dito - Efí)
 
-### Integração em andamento!
+### IntegraÃ§Ã£o consolidada via EfÃ­ Bank
 
 <div align="center">
   <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064734/998ededc-2291-40d7-86c9-6906faea7998_lsbpws.png" alt="ChainFx - Tela de Pagamento" width="480" />
 </div>
 
-**Pagamento com cartão via Stripe estará disponível em breve.**
+O frontend gera `payment_token` com o SDK JavaScript oficial da Efí. O backend nunca recebe dados brutos do cartão; ele recebe o token, cria a cobrança Efí e libera cripto somente quando o webhook/consulta retorna status `paid`.
 
-- 💳 **VISA** - Cartão de crédito internacional
-- 💳 **Mastercard** - Cartão de crédito internacional
+- ðŸ’³ **VISA** - CartÃ£o de crÃ©dito internacional
+- ðŸ’³ **Mastercard** - CartÃ£o de crÃ©dito internacional
 
-*Por enquanto, utilize PIX para compras instantâneas.*
+Estados Efí `approved` e `waiting` ficam pendentes; não liberam cripto automaticamente.
 
 
-## 🔄 Fluxo de Venda (Sell)
+## ðŸ”„ Fluxo de Venda (Sell)
 
 ### Venda suas criptos e receba em reais
 
 1. Selecione a criptomoeda que deseja vender
 2. Informe a quantidade
-3. Escolha o método de recebimento (PIX)
-4. Confirme a transação e receba em sua conta
+3. Escolha o mÃ©todo de recebimento (PIX)
+4. Confirme a transaÃ§Ã£o e receba em sua conta
 
 ---
 
@@ -122,6 +122,28 @@ Este README foca o produto e o fluxo principal. Detalhes profundos de mobile, cu
 - `SECURITY.md`: signer, treasury, EIP-7702, auditoria e limites.
 - `DEVELOPERS.md`: API, SDKs, webhooks e exemplos.
 - `MOBILE.md`: app, WebSocket, DCA e experiencia mobile.
+
+## Status Consolidado de Producao
+
+Integracoes recentes refletidas no backend:
+
+- **Efi PSP Layer**: `internal/psp` com `EfiAdapter`, `Router`, health probe, fallback/restore e parsing de webhooks PIX em lote. `cmd/api/main.go` monta o router quando credenciais/certificado Efi existem.
+- **Efi Credit Card BUY**: `/api/buy` aceita `paymentMethod=credit_card`, `paymentToken`, `customer` e `billingAddress`; `/api/efi/charges/webhook/buy` consulta notificacao Efi e liquida apenas status `paid`.
+- **Gas Station / Paymaster**: `internal/paymaster` entrega oracle, estimator, idempotency, retry, batcher, token relayer e service top-level. Rotas publicas/admin em `/v1/gas/*`.
+- **AutoSweeper + Paymaster Loop**: `NewWorkerManager(db, cfg, mailer, pool *rpc.Pool)` recebe `rpc.Pool`, inicializa 9 workers e inclui AutoSweeper/Paymaster relay loop.
+- **MCP Capability Network**: `.mcp/server.json`, `/mcp/initialize`, `/mcp/capabilities.json`, `/agent/v1/capabilities` e Agent Pay com `createPaymentIntent`, `getPaymentIntent`, `listAgentPaymentIntents`.
+- **Adversarial/Chaos Ops**: `schema_chaos.sql`, `internal/adversarial`, `/v1/admin/gas/chaos-run`, `/v1/admin/gas/chaos-history` e `/admin/chaos`.
+- **Stress tests k6**: `tests/paymaster_stress.js` cobre spike, colisao de idempotencia, rate limit por tier, quote load e status probe.
+
+Schemas/migrations relevantes:
+
+```text
+migrations/005_gas_station.sql
+gas_station.sql
+schema_chaos.sql
+schema_m2m.sql
+schema_agent_pricing.sql
+```
 
 ## Indice
 
@@ -313,6 +335,9 @@ Ferramentas MCP expostas:
 - `quote`
 - `trade`
 - `settlementStatus`
+- `createPaymentIntent`
+- `getPaymentIntent`
+- `listAgentPaymentIntents`
 
 Recursos MCP expostos:
 
@@ -642,7 +667,10 @@ Polygon no sell e opt-in. O fluxo web/mobile existente continua usando BSC se ne
 - API publica em `cmd/api`.
 - Workers concorrentes em `internal/workers`.
 - Persistencia PostgreSQL em `internal/database`.
-- Webhooks PIX e Stripe com idempotencia.
+- Webhooks PIX e Efí com idempotencia.
+- PSP Router Efi com health probe, fallback/restore e parsing de lotes de webhooks.
+- Gas Station/Paymaster em `/v1/gas/*` com quote, relay, status e historico de sweeper.
+- Chaos/adversarial dashboard em `/admin/chaos`.
 - SSE para acompanhamento de status.
 - Healthcheck `/healthz` e readiness `/readyz`.
 - Benchmark do fluxo PIX -> delivery em `cmd/benchflow`.
@@ -885,25 +913,25 @@ Fase 5 sera integrada futuramente com foco em expansao operacional:
 - limites e compliance por mercado;
 - SDKs adicionais como Go e PHP.
 
-## Segurança de Custódia com EIP-7702
+## SeguranÃ§a de CustÃ³dia com EIP-7702
 
-O signer Go inclui uma camada opcional de proteção de custódia baseada em EIP-7702. O objetivo não é executar arbitragem nem alterar o fluxo PIX, mas proteger a hot wallet contra delegações inesperadas de conta EOA.
+O signer Go inclui uma camada opcional de proteÃ§Ã£o de custÃ³dia baseada em EIP-7702. O objetivo nÃ£o Ã© executar arbitragem nem alterar o fluxo PIX, mas proteger a hot wallet contra delegaÃ§Ãµes inesperadas de conta EOA.
 
-O EIP-7702 introduz transações `SET_CODE` (`type 0x04`) com `authorizationList`, permitindo que uma EOA autorize temporariamente/de forma controlada a execução de código delegado. Isso é poderoso para account abstraction, batching e session keys, mas também cria um novo risco operacional: se a hot wallet autorizar um delegate desconhecido ou comprometido, a custódia pode ser afetada.
+O EIP-7702 introduz transaÃ§Ãµes `SET_CODE` (`type 0x04`) com `authorizationList`, permitindo que uma EOA autorize temporariamente/de forma controlada a execuÃ§Ã£o de cÃ³digo delegado. Isso Ã© poderoso para account abstraction, batching e session keys, mas tambÃ©m cria um novo risco operacional: se a hot wallet autorizar um delegate desconhecido ou comprometido, a custÃ³dia pode ser afetada.
 
 Por isso o signer tem um `CustodyGuard`:
 
 ```text
 Signer monitora pending/latest blocks
--> detecta transações EIP-7702 type 0x04
--> lê authorizationList
--> recupera a authority/wallet que assinou a autorização
--> se a authority for uma wallet protegida e o delegate não estiver na allowlist:
+-> detecta transaÃ§Ãµes EIP-7702 type 0x04
+-> lÃª authorizationList
+-> recupera a authority/wallet que assinou a autorizaÃ§Ã£o
+-> se a authority for uma wallet protegida e o delegate nÃ£o estiver na allowlist:
    signer entra em lockdown
-   /hd/transfer deixa de assinar novas saídas
+   /hd/transfer deixa de assinar novas saÃ­das
 ```
 
-Configuração opcional no serviço do signer:
+ConfiguraÃ§Ã£o opcional no serviÃ§o do signer:
 
 ```env
 CUSTODY_GUARD_ENABLED=true
@@ -913,7 +941,7 @@ CUSTODY_ALLOWED_SELECTORS=
 CUSTODY_PROTECTED_WALLETS=
 ```
 
-A hot wallet derivada de `EVM_PRIVATE_KEY` entra automaticamente na lista protegida. `CUSTODY_PROTECTED_WALLETS` serve para adicionar outras carteiras. `CUSTODY_TRUSTED_DELEGATES` deve conter somente contratos auditados e esperados. Se o bytecode de um delegate confiável mudar ou surgir delegate desconhecido, o signer bloqueia a assinatura até intervenção operacional.
+A hot wallet derivada de `EVM_PRIVATE_KEY` entra automaticamente na lista protegida. `CUSTODY_PROTECTED_WALLETS` serve para adicionar outras carteiras. `CUSTODY_TRUSTED_DELEGATES` deve conter somente contratos auditados e esperados. Se o bytecode de um delegate confiÃ¡vel mudar ou surgir delegate desconhecido, o signer bloqueia a assinatura atÃ© intervenÃ§Ã£o operacional.
 
 ## Custodia Operacional em Producao
 
@@ -1101,9 +1129,9 @@ Na camada de custodia, o signer agora possui:
 
 Em producao, use `CUSTODY_MODE=paper` primeiro. `shadow` serve para observar sem bloquear. `live` fica reservado para uma etapa futura com resposta automatica depois de validacao operacional.
 
-# 🏗️ Complete Technical Architecture
+# ðŸ—ï¸ Complete Technical Architecture
 
-## 📱 Mobile + Backend Ecosystem
+## ðŸ“± Mobile + Backend Ecosystem
 
 ```mermaid
 graph TB
@@ -1238,26 +1266,26 @@ graph TB
 
 ---
 
-# 📊 Mobile API (50+ Endpoints)
+# ðŸ“Š Mobile API (50+ Endpoints)
 
 | Module | Endpoints | Methods | Auth |
 |---------|-----------|----------|------|
-| **Auth** | `/api/mobile/auth/register`<br>`/api/mobile/auth/login`<br>`/api/mobile/auth/refresh`<br>`/api/mobile/auth/logout` | POST<br>POST<br>POST<br>POST | ❌<br>❌<br>❌<br>✅ |
-| **User** | `/api/mobile/user/profile`<br>`/api/mobile/user/profile`<br>`/api/mobile/user/kyc`<br>`/api/mobile/user/kyc/status` | GET<br>PUT<br>POST<br>GET | ✅<br>✅<br>✅<br>✅ |
-| **Wallet** | `/api/mobile/wallet/balance`<br>`/api/mobile/wallet/tokens`<br>`/api/mobile/wallet/address`<br>`/api/mobile/wallet/generate`<br>`/api/mobile/wallet/history` | GET<br>GET<br>GET<br>POST<br>GET | ✅<br>✅<br>✅<br>✅<br>✅ |
-| **Orders** | `/api/mobile/order/buy`<br>`/api/mobile/order/sell`<br>`/api/mobile/order/swap`<br>`/api/mobile/order/{id}`<br>`/api/mobile/orders`<br>`/api/mobile/order/cancel` | POST<br>POST<br>POST<br>GET<br>GET<br>POST | ✅<br>✅<br>✅<br>✅<br>✅<br>✅ |
-| **PIX** | `/api/mobile/pix/generate`<br>`/api/mobile/pix/confirm`<br>`/api/mobile/pix/status/{id}`<br>`/api/mobile/pix/copy` | POST<br>POST<br>GET<br>POST | ✅<br>❌<br>✅<br>✅ |
-| **DCA** | `/api/mobile/dca/create`<br>`/api/mobile/dca/strategies`<br>`/api/mobile/dca/{id}`<br>`/api/mobile/dca/{id}`<br>`/api/mobile/dca/{id}/status` | POST<br>GET<br>PUT<br>DELETE<br>GET | ✅<br>✅<br>✅<br>✅<br>✅ |
-| **Security** | `/api/mobile/security/pin`<br>`/api/mobile/security/biometry`<br>`/api/mobile/security/2fa`<br>`/api/mobile/security/devices`<br>`/api/mobile/security/device` | POST<br>POST<br>POST<br>GET<br>DELETE | ✅<br>✅<br>✅<br>✅<br>✅ |
-| **Smart Contracts** | `/api/mobile/contracts/payout`<br>`/api/mobile/contracts/vault`<br>`/api/mobile/contracts/delegate`<br>`/api/mobile/contracts/pause`<br>`/api/mobile/contracts/unpause` | POST<br>GET<br>GET<br>POST<br>POST | ✅<br>✅<br>✅<br>✅<br>✅ |
-| **Notifications** | `/api/mobile/notifications`<br>`/api/mobile/notifications/read`<br>`/api/mobile/notifications/{id}`<br>`/api/mobile/notifications/token` | GET<br>PUT<br>DELETE<br>POST | ✅<br>✅<br>✅<br>✅ |
-| **WebSocket** | `ws://api/mobile/ws/orders`<br>`ws://api/mobile/ws/price`<br>`ws://api/mobile/ws/notifications` | WS<br>WS<br>WS | ✅<br>✅<br>✅ |
-| **Settings** | `/api/mobile/settings`<br>`/api/mobile/settings`<br>`/api/mobile/settings/limits` | GET<br>PUT<br>GET | ✅<br>✅<br>✅ |
-| **Health** | `/api/mobile/health` | GET | ❌ |
+| **Auth** | `/api/mobile/auth/register`<br>`/api/mobile/auth/login`<br>`/api/mobile/auth/refresh`<br>`/api/mobile/auth/logout` | POST<br>POST<br>POST<br>POST | âŒ<br>âŒ<br>âŒ<br>âœ… |
+| **User** | `/api/mobile/user/profile`<br>`/api/mobile/user/profile`<br>`/api/mobile/user/kyc`<br>`/api/mobile/user/kyc/status` | GET<br>PUT<br>POST<br>GET | âœ…<br>âœ…<br>âœ…<br>âœ… |
+| **Wallet** | `/api/mobile/wallet/balance`<br>`/api/mobile/wallet/tokens`<br>`/api/mobile/wallet/address`<br>`/api/mobile/wallet/generate`<br>`/api/mobile/wallet/history` | GET<br>GET<br>GET<br>POST<br>GET | âœ…<br>âœ…<br>âœ…<br>âœ…<br>âœ… |
+| **Orders** | `/api/mobile/order/buy`<br>`/api/mobile/order/sell`<br>`/api/mobile/order/swap`<br>`/api/mobile/order/{id}`<br>`/api/mobile/orders`<br>`/api/mobile/order/cancel` | POST<br>POST<br>POST<br>GET<br>GET<br>POST | âœ…<br>âœ…<br>âœ…<br>âœ…<br>âœ…<br>âœ… |
+| **PIX** | `/api/mobile/pix/generate`<br>`/api/mobile/pix/confirm`<br>`/api/mobile/pix/status/{id}`<br>`/api/mobile/pix/copy` | POST<br>POST<br>GET<br>POST | âœ…<br>âŒ<br>âœ…<br>âœ… |
+| **DCA** | `/api/mobile/dca/create`<br>`/api/mobile/dca/strategies`<br>`/api/mobile/dca/{id}`<br>`/api/mobile/dca/{id}`<br>`/api/mobile/dca/{id}/status` | POST<br>GET<br>PUT<br>DELETE<br>GET | âœ…<br>âœ…<br>âœ…<br>âœ…<br>âœ… |
+| **Security** | `/api/mobile/security/pin`<br>`/api/mobile/security/biometry`<br>`/api/mobile/security/2fa`<br>`/api/mobile/security/devices`<br>`/api/mobile/security/device` | POST<br>POST<br>POST<br>GET<br>DELETE | âœ…<br>âœ…<br>âœ…<br>âœ…<br>âœ… |
+| **Smart Contracts** | `/api/mobile/contracts/payout`<br>`/api/mobile/contracts/vault`<br>`/api/mobile/contracts/delegate`<br>`/api/mobile/contracts/pause`<br>`/api/mobile/contracts/unpause` | POST<br>GET<br>GET<br>POST<br>POST | âœ…<br>âœ…<br>âœ…<br>âœ…<br>âœ… |
+| **Notifications** | `/api/mobile/notifications`<br>`/api/mobile/notifications/read`<br>`/api/mobile/notifications/{id}`<br>`/api/mobile/notifications/token` | GET<br>PUT<br>DELETE<br>POST | âœ…<br>âœ…<br>âœ…<br>âœ… |
+| **WebSocket** | `ws://api/mobile/ws/orders`<br>`ws://api/mobile/ws/price`<br>`ws://api/mobile/ws/notifications` | WS<br>WS<br>WS | âœ…<br>âœ…<br>âœ… |
+| **Settings** | `/api/mobile/settings`<br>`/api/mobile/settings`<br>`/api/mobile/settings/limits` | GET<br>PUT<br>GET | âœ…<br>âœ…<br>âœ… |
+| **Health** | `/api/mobile/health` | GET | âŒ |
 
 ---
 
-# 🔄 Asynchronous Workers
+# ðŸ”„ Asynchronous Workers
 
 | Worker | Responsibility | Interval | Dependencies |
 |----------|---------------|-----------|--------------|
@@ -1269,7 +1297,7 @@ graph TB
 
 ---
 
-# 🛡️ Resilience Layer
+# ðŸ›¡ï¸ Resilience Layer
 
 ```yaml
 Circuit Breaker:
@@ -1299,7 +1327,7 @@ Dead Letter Queue:
 
 ---
 
-# 🚀 Technology Stack
+# ðŸš€ Technology Stack
 
 | Layer | Technology |
 |--------|------------|
@@ -1320,7 +1348,7 @@ Dead Letter Queue:
 | Architecture | Event-Driven Microservices |
 | Resilience | Circuit Breaker, Retry, RPC Fallback, DLQ |
 
-# 🗄️ Database Schema (Mobile)
+# ðŸ—„ï¸ Database Schema (Mobile)
 
 ## Core Tables
 
@@ -1345,7 +1373,7 @@ Dead Letter Queue:
 
 ---
 
-# 🔐 Security Controls
+# ðŸ” Security Controls
 
 | Layer | Control | Details |
 |--------|----------|---------|
@@ -1363,7 +1391,7 @@ Dead Letter Queue:
 
 ---
 
-# 📈 Performance Metrics
+# ðŸ“ˆ Performance Metrics
 
 ```yaml
 SLO Targets:
@@ -1383,7 +1411,7 @@ Monitoring:
 
 ---
 
-# 🚀 Deployment Strategy
+# ðŸš€ Deployment Strategy
 
 ## Infrastructure
 
@@ -1432,7 +1460,7 @@ Scaling:
     - Kubernetes HPA (CPU 70%)
 
   Workers:
-    - 2 → 10 Replicas
+    - 2 â†’ 10 Replicas
 
   Database:
     - Read Replicas
@@ -1441,7 +1469,7 @@ Scaling:
     - Multi-Provider Fallback
 ```
 
-# 📝 Environment Variables
+# ðŸ“ Environment Variables
 
 ```env
 # ============================================================
@@ -1505,7 +1533,7 @@ PIX_WEBHOOK_SECRET=xxx
 
 ---
 
-# 🎯 Evolution Roadmap
+# ðŸŽ¯ Evolution Roadmap
 
 ```mermaid
 timeline
@@ -1653,3 +1681,4 @@ Live payment tests nunca devem rodar em CI automatico. Exigem `RUN_LIVE_PAYMENT_
 ## Licenca
 
 Licenca ainda nao definida neste repositorio. Antes de distribuicao publica, adicionar um arquivo `LICENSE` com a licenca escolhida.
+
