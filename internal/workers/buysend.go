@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"payment-gateway/internal/config"
@@ -22,8 +21,6 @@ type BuySendWorker struct {
 	db     *database.DB
 	cfg    *config.Config
 	client *http.Client
-	mu     sync.Mutex
-	active map[string]struct{}
 }
 
 func NewBuySendWorker(bus *EventBus, db *database.DB, cfg *config.Config) *BuySendWorker {
@@ -32,7 +29,6 @@ func NewBuySendWorker(bus *EventBus, db *database.DB, cfg *config.Config) *BuySe
 		db:     db,
 		cfg:    cfg,
 		client: httpclient.Default(),
-		active: make(map[string]struct{}),
 	}
 }
 
@@ -59,11 +55,7 @@ func (bw *BuySendWorker) Start(ctx context.Context) {
 }
 
 func (bw *BuySendWorker) dispatch(event Event) {
-	if !bw.markActive(event.OrderID) {
-		return
-	}
 	go func() {
-		defer bw.clearActive(event.OrderID)
 		bw.processBuyOnchainSend(event)
 	}()
 }
@@ -84,34 +76,34 @@ func (bw *BuySendWorker) recoverPendingBuys(ctx context.Context) {
 	}
 }
 
-func (bw *BuySendWorker) markActive(orderID string) bool {
-	bw.mu.Lock()
-	defer bw.mu.Unlock()
-	if _, exists := bw.active[orderID]; exists {
-		return false
-	}
-	bw.active[orderID] = struct{}{}
-	return true
-}
-
-func (bw *BuySendWorker) clearActive(orderID string) {
-	bw.mu.Lock()
-	defer bw.mu.Unlock()
-	delete(bw.active, orderID)
-}
-
 func (bw *BuySendWorker) processBuyOnchainSend(event Event) {
 	start := time.Now()
 	orderID := event.OrderID
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
+	// ── Atomic DB claim: replaces in-memory active map ────────────────────────
+	// UPDATE ... WHERE status IN ('pago_fiat','pago_pix') RETURNING id ensures
+	// only one worker (across goroutines AND replicas) processes each order.
+	// The in-memory sync.Map is insufficient for multi-replica deployments.
+	claimCtx, claimCancel := context.WithTimeout(ctx, 5*time.Second)
+	claimed, err := bw.db.ClaimBuyOrderForSend(claimCtx, orderID)
+	claimCancel()
+	if err != nil {
+		slog.Error("Erro ao tentar claim de buy order", "buy_order_id", orderID, "error", err)
+		return
+	}
+	if !claimed {
+		slog.Debug("BuySendWorker: buy order já processada por outro worker", "buy_order_id", orderID)
+		return
+	}
+
 	buy, err := bw.db.GetBuyOrder(ctx, orderID)
 	if err != nil {
 		slog.Error("Erro ao buscar buy order", "buy_order_id", orderID, "error", err)
 		return
 	}
-	if buy == nil || (buy.Status != "pago_fiat" && buy.Status != "pago_pix") {
+	if buy == nil {
 		return
 	}
 
@@ -164,16 +156,16 @@ func (bw *BuySendWorker) processBuyOnchainSend(event Event) {
 
 	resp, err := bw.client.Do(req)
 	if err != nil {
-		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": err.Error()})
-		slog.Error("Erro no signer BUY", "buy_order_id", orderID, "error", err)
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "pendente_confirmacao", map[string]any{"error": err.Error()})
+		slog.Error("Signer BUY ambiguo; ordem marcada como pendente_confirmacao", "buy_order_id", orderID, "error", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errMsg := fmt.Sprintf("signer status %d", resp.StatusCode)
-		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": errMsg})
-		slog.Error("Signer rejeitou BUY", "buy_order_id", orderID, "status", resp.StatusCode)
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "pendente_confirmacao", map[string]any{"error": errMsg})
+		slog.Error("Signer BUY retornou status ambiguo; ordem marcada como pendente_confirmacao", "buy_order_id", orderID, "status", resp.StatusCode)
 		return
 	}
 
@@ -190,11 +182,20 @@ func (bw *BuySendWorker) processBuyOnchainSend(event Event) {
 		signed.TxHash = "signer-accepted-" + orderID
 	}
 
+	if strings.HasPrefix(signed.TxHash, "signer-accepted-") {
+		if err := bw.db.UpdateBuyOrderStatus(ctx, orderID, "pendente_confirmacao", map[string]any{"txHashOut": signed.TxHash}); err != nil {
+			slog.Error("Erro ao atualizar BUY pendente_confirmacao", "buy_order_id", orderID, "error", err)
+			return
+		}
+		bw.bus.Publish(Event{Type: "buy.pending_confirmation", OrderID: orderID, Payload: map[string]any{"txHash": signed.TxHash}})
+		slog.Warn("Envio cripto BUY aceito sem txHash; aguardando confirmacao manual/signer", "buy_order_id", orderID, "duration_ms", time.Since(start).Milliseconds())
+		return
+	}
+
 	if err := bw.db.UpdateBuyOrderStatus(ctx, orderID, "enviado", map[string]any{"txHashOut": signed.TxHash}); err != nil {
 		slog.Error("Erro ao atualizar BUY enviado", "buy_order_id", orderID, "error", err)
 		return
 	}
-
 	bw.bus.Publish(Event{Type: "buy.sent", OrderID: orderID, Payload: map[string]any{"txHash": signed.TxHash}})
 	slog.Info("Envio cripto BUY processado", "buy_order_id", orderID, "duration_ms", time.Since(start).Milliseconds())
 }
