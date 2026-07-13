@@ -1,11 +1,16 @@
 package paymaster
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
+
+	"payment-gateway/internal/database"
 )
 
 // ErrDuplicateSig is returned when an identical EIP-712 (r, s) pair has
@@ -105,4 +110,58 @@ func (sl *InMemorySigLock) gc(stopCh <-chan struct{}) {
 			})
 		}
 	}
+}
+
+// DBSigLock uses PostgreSQL as the primary replay lock so multiple paymaster
+// replicas reject the same EIP-712 signature consistently.
+type DBSigLock struct {
+	db *database.DB
+}
+
+func NewDBSigLock(db *database.DB) *DBSigLock {
+	return &DBSigLock{db: db}
+}
+
+func (sl *DBSigLock) AcquireLock(hash string) (bool, error) {
+	if sl == nil || sl.db == nil || sl.db.SQL == nil {
+		return false, fmt.Errorf("paymaster: db sig lock unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	tx, err := sl.db.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM paymaster_sig_locks WHERE expires_at <= NOW()`); err != nil {
+		return false, err
+	}
+
+	var acquired string
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO paymaster_sig_locks (sig_hash, expires_at)
+		VALUES ($1, NOW() + interval '2 minutes')
+		ON CONFLICT (sig_hash) DO NOTHING
+		RETURNING sig_hash`, hash).Scan(&acquired)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrDuplicateSig
+		}
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (sl *DBSigLock) ReleaseLock(hash string) {
+	if sl == nil || sl.db == nil || sl.db.SQL == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = sl.db.SQL.ExecContext(ctx, `DELETE FROM paymaster_sig_locks WHERE sig_hash = $1`, hash)
 }
