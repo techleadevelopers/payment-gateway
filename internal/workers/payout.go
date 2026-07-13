@@ -35,7 +35,7 @@ func NewPayoutWorker(bus *EventBus, db *database.DB, cfg *config.Config) *Payout
 		db:     db,
 		cfg:    cfg,
 		client: httpclient.Default(),
-		dlq:    NewDLQ(1000, nil),
+		dlq:    NewPersistentDLQ(db, 1000),
 	}
 }
 
@@ -89,6 +89,24 @@ func (pw *PayoutWorker) processPayout(ctx context.Context, event Event) {
 		return
 	}
 
+	// ── Atomic claim: prevents double-payout across goroutines and replicas ──
+	// UPDATE ... WHERE status='pago' RETURNING id guarantees only one worker
+	// proceeds even if the event is delivered multiple times (re-delivery,
+	// crash-loop or multi-replica fan-out). If another worker already claimed
+	// the order, rows affected = 0 → we bail out silently.
+	claimCtx, claimCancel := context.WithTimeout(ctx, 5*time.Second)
+	claimed, err := pw.db.ClaimOrderForPayout(claimCtx, orderID)
+	claimCancel()
+	if err != nil {
+		slog.Error("PayoutWorker: erro ao tentar claim de payout", "order_id", orderID, "err", err)
+		pw.dlq.Push(event, 1, "claim error: "+err.Error())
+		return
+	}
+	if !claimed {
+		slog.Debug("PayoutWorker: ordem já processada por outro worker", "order_id", orderID)
+		return
+	}
+
 	// Validate payout destination before any external call
 	if order.PixKey == "" {
 		slog.Error("PayoutWorker: PixKey vazia, impossível fazer payout", "order_id", orderID)
@@ -102,15 +120,6 @@ func (pw *PayoutWorker) processPayout(ctx context.Context, event Event) {
 		_ = pw.db.UpdateOrderStatus(ctx, orderID, "erro",
 			map[string]any{"error": "PayoutBRL inválido"})
 		pw.dlq.Push(event, 1, "invalid payout amount")
-		return
-	}
-
-	// ── Simulation mode ──────────────────────────────────────────────────────
-	if err := pw.db.UpdateOrderStatus(ctx, orderID, string(models.StatusProcessandoPayout), map[string]any{
-		"status": "processando_payout",
-	}); err != nil {
-		slog.Error("PayoutWorker: erro ao marcar processamento", "order_id", orderID, "err", err)
-		pw.dlq.Push(event, 1, "status update error: "+err.Error())
 		return
 	}
 
