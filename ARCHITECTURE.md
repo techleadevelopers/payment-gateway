@@ -104,19 +104,18 @@ sequenceDiagram
 9. `BuySendWorker` chama signer BSC.
 10. Ordem vai para `enviado`.
 
-### BUY USD via Stripe
+### BUY BRL via Efí Credit Card
 
-1. Frontend ou camada upstream cria PaymentIntent/Checkout com `metadata.buyId`.
-2. Stripe chama `/api/stripe/webhook/buy`.
-3. API valida `Stripe-Signature`.
-4. Eventos liquidados marcam `pago_fiat`.
-5. Delivery segue o mesmo fluxo do PIX.
+1. Frontend gera `payment_token` com a biblioteca JavaScript oficial da Efí.
+2. Frontend chama `/api/buy` com `paymentMethod=credit_card`.
+3. API cria a cobrança Efí em `/v1/charge` com `metadata.custom_id=buyId`.
+4. API paga a cobrança em `/v1/charge/:id/pay` usando apenas o `payment_token`.
+5. Efí chama `/api/efi/charges/webhook/buy` com token de notificação.
+6. API consulta `GET /v1/notification/:token`.
+7. Apenas status Efí `paid` marca `pago_fiat` e publica `buy.paid`.
+8. Delivery segue o mesmo fluxo do PIX.
 
-Eventos aceitos como liquidacao:
-
-- `checkout.session.completed`
-- `payment_intent.succeeded`
-- `charge.succeeded`
+Status Efí `approved` e `waiting` não liberam cripto.
 
 ### SELL USDT -> PIX
 
@@ -133,7 +132,7 @@ Eventos aceitos como liquidacao:
 | Status | Descricao | Proximo status |
 | --- | --- | --- |
 | `aguardando_pix` | Ordem criada e aguardando confirmacao PIX | `pago_fiat`, `erro` |
-| `aguardando_stripe` | Ordem criada e aguardando confirmacao Stripe | `pago_fiat`, `erro` |
+| `aguardando_credit_card` | Ordem criada e aguardando confirmacao final Efí cartão | `pago_fiat`, `erro` |
 | `pago_fiat` | Pagamento fiat confirmado | `enviado`, `erro` |
 | `pago_pix` | Alias legado para pagamento PIX confirmado | `enviado`, `erro` |
 | `enviado` | Cripto enviada para wallet do cliente | Final |
@@ -166,7 +165,7 @@ GET /readyz
 
 ```http
 GET /api/quote?mode=buy&amountBRL=150&asset=USDT
-GET /api/quote?mode=buy&amountUSD=150&fiatCurrency=USD&paymentMethod=stripe&asset=USDT
+GET /api/quote?mode=buy&amountFiat=150&fiatCurrency=BRL&paymentMethod=credit_card&asset=USDT
 POST /api/quote
 ```
 
@@ -205,15 +204,33 @@ PIX BRL:
 }
 ```
 
-Stripe USD:
+Efí Credit Card BRL:
 
 ```json
 {
-  "amountUSD": 150,
-  "fiatCurrency": "USD",
-  "paymentMethod": "stripe",
+  "amountFiat": 150,
+  "fiatCurrency": "BRL",
+  "paymentMethod": "credit_card",
+  "paymentToken": "payment_token_gerado_no_frontend",
+  "cardBrand": "visa",
+  "installments": 1,
   "asset": "USDT",
-  "address": "T..."
+  "address": "0x...",
+  "customer": {
+    "name": "Maria Silva",
+    "cpf": "12345678909",
+    "email": "maria@example.com",
+    "phone": "11999999999",
+    "birthDate": "1990-05-20",
+    "address": {
+      "street": "Av Paulista",
+      "number": "1000",
+      "neighborhood": "Bela Vista",
+      "zipcode": "01310100",
+      "city": "Sao Paulo",
+      "state": "SP"
+    }
+  }
 }
 ```
 
@@ -277,28 +294,20 @@ x-pagbank-signature: <hmac_sha256_hex_raw_body>
 }
 ```
 
-### Stripe BUY
+### Efí Credit Card BUY
 
 ```http
-POST /api/stripe/webhook/buy
-Stripe-Signature: t=<timestamp>,v1=<signature>
+POST /api/efi/charges/webhook/buy
+Content-Type: application/x-www-form-urlencoded
 ```
 
-Exemplo simplificado:
+Payload enviado pela Efí:
 
-```json
-{
-  "id": "evt_123",
-  "type": "payment_intent.succeeded",
-  "data": {
-    "object": {
-      "metadata": {
-        "buyId": "018f3f4e-0000-4000-9000-000000000000"
-      }
-    }
-  }
-}
+```text
+notification=<token>
 ```
+
+A API consulta a Efí com esse token e só liquida se o último status da cobrança for `paid`.
 
 ## Auditoria e LGPD
 
