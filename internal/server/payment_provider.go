@@ -144,13 +144,36 @@ func (s *Server) efiCertificateSource() string {
 }
 
 func (s *Server) efiCertificateReady() (bool, string) {
-	if strings.TrimSpace(s.cfg.EfiCertificatePath) == "" && strings.Trim(strings.TrimSpace(s.cfg.EfiCertificateP12), `"'`) == "" {
-		return false, "certificado Efí nao configurado"
+	certPath := strings.TrimSpace(s.cfg.EfiCertificatePath)
+	certKey := strings.TrimSpace(s.cfg.EfiCertificateKey)
+	p12 := strings.Trim(strings.TrimSpace(s.cfg.EfiCertificateP12), `"'`)
+	if certPath == "" && p12 == "" {
+		return false, "certificado Efi nao configurado"
 	}
-	if _, err := s.loadEfiCertificate(strings.TrimSpace(s.cfg.EfiCertificatePath), strings.TrimSpace(s.cfg.EfiCertificateKey)); err != nil {
-		return false, err.Error()
+	source := certPath + "\x00" + certKey + "\x00" + p12 + "\x00" + s.cfg.EfiCertificatePass
+	now := time.Now()
+
+	s.certReadyMu.Lock()
+	if source == s.certReadySource && now.Sub(s.certReadyChecked) < 30*time.Second {
+		ok, errText := s.certReadyOK, s.certReadyErr
+		s.certReadyMu.Unlock()
+		return ok, errText
 	}
-	return true, ""
+	s.certReadyMu.Unlock()
+
+	ok, errText := true, ""
+	if _, err := s.loadEfiCertificate(certPath, certKey); err != nil {
+		ok, errText = false, err.Error()
+	}
+
+	s.certReadyMu.Lock()
+	s.certReadySource = source
+	s.certReadyChecked = now
+	s.certReadyOK = ok
+	s.certReadyErr = errText
+	s.certReadyMu.Unlock()
+
+	return ok, errText
 }
 
 func (s *Server) createEfiPixCharge(ctx context.Context, buyID string, amountFiat float64, customer paymentCustomerInput) (map[string]any, error) {
