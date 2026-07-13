@@ -38,6 +38,10 @@ type AgentPaymentIntent struct {
 	AgentWallet       string          `json:"agent_wallet"`
 	PaymentType       M2MPaymentType  `json:"payment_type"`
 	PixKey            string          `json:"pix_key,omitempty"`
+	PaymentLink       string          `json:"payment_link,omitempty"`
+	Barcode           string          `json:"barcode,omitempty"`
+	BeneficiaryName   string          `json:"beneficiary_name,omitempty"`
+	DueDate           string          `json:"due_date,omitempty"`
 	AmountBRL         float64         `json:"amount_brl"`
 	FeeBps            int             `json:"fee_bps"`
 	FeeUSDT           float64         `json:"fee_usdt"`
@@ -61,20 +65,24 @@ type AgentPaymentIntent struct {
 
 // M2MCreateInput contains the validated fields for creating a new intent.
 type M2MCreateInput struct {
-	ID             string
-	IdempotencyKey string
-	AgentWallet    string
-	PaymentType    M2MPaymentType
-	PixKey         string
-	AmountBRL      float64
-	FeeBps         int
-	FeeUSDT        float64
-	GrossUSDT      float64
-	RequiredUSDT   float64
-	USDTRate       float64
-	PaymentAddress string
-	RequestHash    string
-	ExpiresAt      time.Time
+	ID              string
+	IdempotencyKey  string
+	AgentWallet     string
+	PaymentType     M2MPaymentType
+	PixKey          string
+	PaymentLink     string
+	Barcode         string
+	BeneficiaryName string
+	DueDate         string
+	AmountBRL       float64
+	FeeBps          int
+	FeeUSDT         float64
+	GrossUSDT       float64
+	RequiredUSDT    float64
+	USDTRate        float64
+	PaymentAddress  string
+	RequestHash     string
+	ExpiresAt       time.Time
 }
 
 // CanonicalRequestHash returns a deterministic hex SHA-256 for audit purposes.
@@ -104,19 +112,24 @@ func (db *DB) CreateAgentPaymentIntent(ctx context.Context, in M2MCreateInput) (
 	}
 
 	pixKey := sql.NullString{String: in.PixKey, Valid: in.PixKey != ""}
+	paymentLink := sql.NullString{String: in.PaymentLink, Valid: in.PaymentLink != ""}
+	barcode := sql.NullString{String: in.Barcode, Valid: in.Barcode != ""}
+	beneficiaryName := sql.NullString{String: in.BeneficiaryName, Valid: in.BeneficiaryName != ""}
+	dueDate := sql.NullString{String: in.DueDate, Valid: in.DueDate != ""}
 
 	const q = `
 INSERT INTO agent_payment_intents
-    (id, idempotency_key, agent_wallet, payment_type, pix_key,
+    (id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
      amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
      payment_address, status, request_hash, expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_deposit',$13,$14)
-RETURNING id, idempotency_key, agent_wallet, payment_type, pix_key,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending_deposit',$17,$18)
+RETURNING id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
           amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
           payment_address, status, request_hash, expires_at, attempts, created_at, updated_at`
 
 	row := tx.QueryRowContext(ctx, q,
 		in.ID, in.IdempotencyKey, in.AgentWallet, string(in.PaymentType), pixKey,
+		paymentLink, barcode, beneficiaryName, dueDate,
 		in.AmountBRL, in.FeeBps, in.FeeUSDT, in.GrossUSDT, in.RequiredUSDT, in.USDTRate,
 		in.PaymentAddress, in.RequestHash, in.ExpiresAt,
 	)
@@ -132,6 +145,10 @@ RETURNING id, idempotency_key, agent_wallet, payment_type, pix_key,
 		"fee_bps":         intent.FeeBps,
 		"agent_wallet":    intent.AgentWallet,
 		"payment_address": intent.PaymentAddress,
+		"payment_link":    intent.PaymentLink,
+		"barcode":         intent.Barcode,
+		"beneficiary":     intent.BeneficiaryName,
+		"due_date":        intent.DueDate,
 		"expires_at":      intent.ExpiresAt,
 	}); err != nil {
 		return nil, false, fmt.Errorf("m2m: audit log insert: %w", err)
@@ -147,7 +164,7 @@ RETURNING id, idempotency_key, agent_wallet, payment_type, pix_key,
 // pending_deposit intents past their expiry to 'expired'.
 func (db *DB) GetAgentPaymentIntent(ctx context.Context, id string) (*AgentPaymentIntent, error) {
 	const q = `
-SELECT id, idempotency_key, agent_wallet, payment_type, pix_key,
+SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
        payment_address, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, error_message, attempts,
@@ -407,7 +424,7 @@ func (db *DB) ListAgentPaymentIntentsByWallet(ctx context.Context, wallet, statu
 		where = "lower(agent_wallet) = $1 AND status = $2"
 	}
 	const qBase = `
-SELECT id, idempotency_key, agent_wallet, payment_type, pix_key,
+SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
        payment_address, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, error_message, attempts,
@@ -434,7 +451,7 @@ WHERE  `
 // GetPaidCryptoIntents returns intents ready for fiat settlement (up to 50 at a time).
 func (db *DB) GetPaidCryptoIntents(ctx context.Context) ([]AgentPaymentIntent, error) {
 	const q = `
-SELECT id, idempotency_key, agent_wallet, payment_type, pix_key,
+SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
        payment_address, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, error_message, attempts,
@@ -485,7 +502,7 @@ func (db *DB) appendAuditLog(ctx context.Context, intentID, event string, payloa
 
 func txGetIntentByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (*AgentPaymentIntent, error) {
 	const q = `
-SELECT id, idempotency_key, agent_wallet, payment_type, pix_key,
+SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
        payment_address, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, error_message, attempts,
@@ -510,9 +527,9 @@ func txAppendAuditLog(ctx context.Context, tx *sql.Tx, intentID, event string, p
 // scanIntent scans the minimal set of columns returned by INSERT … RETURNING.
 func scanIntent(row *sql.Row) (*AgentPaymentIntent, error) {
 	var i AgentPaymentIntent
-	var pixKey sql.NullString
+	var pixKey, paymentLink, barcode, beneficiaryName, dueDate sql.NullString
 	err := row.Scan(
-		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey,
+		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey, &paymentLink, &barcode, &beneficiaryName, &dueDate,
 		&i.AmountBRL, &i.FeeBps, &i.FeeUSDT, &i.GrossUSDT, &i.RequiredUSDT, &i.USDTRate,
 		&i.PaymentAddress, &i.Status, &i.RequestHash, &i.ExpiresAt,
 		&i.Attempts, &i.CreatedAt, &i.UpdatedAt,
@@ -523,16 +540,17 @@ func scanIntent(row *sql.Row) (*AgentPaymentIntent, error) {
 	if pixKey.Valid {
 		i.PixKey = pixKey.String
 	}
+	applyM2MDestinationFields(&i, paymentLink, barcode, beneficiaryName, dueDate)
 	return &i, nil
 }
 
 func scanIntentFull(row rowScanner) (*AgentPaymentIntent, error) {
 	var i AgentPaymentIntent
-	var pixKey, depositTx, efiID, efiStatus, errMsg sql.NullString
+	var pixKey, paymentLink, barcode, beneficiaryName, dueDate, depositTx, efiID, efiStatus, errMsg sql.NullString
 	var depositUSDT sql.NullFloat64
 	var settledAt sql.NullTime
 	err := row.Scan(
-		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey,
+		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey, &paymentLink, &barcode, &beneficiaryName, &dueDate,
 		&i.AmountBRL, &i.FeeBps, &i.FeeUSDT, &i.GrossUSDT, &i.RequiredUSDT, &i.USDTRate,
 		&i.PaymentAddress, &i.Status, &depositTx, &depositUSDT,
 		&efiID, &efiStatus, &errMsg, &i.Attempts,
@@ -544,6 +562,7 @@ func scanIntentFull(row rowScanner) (*AgentPaymentIntent, error) {
 	if pixKey.Valid {
 		i.PixKey = pixKey.String
 	}
+	applyM2MDestinationFields(&i, paymentLink, barcode, beneficiaryName, dueDate)
 	if depositTx.Valid {
 		i.DepositTx = &depositTx.String
 	}
@@ -567,11 +586,11 @@ func scanIntentFull(row rowScanner) (*AgentPaymentIntent, error) {
 
 func scanIntentFullRow(rows *sql.Rows) (*AgentPaymentIntent, error) {
 	var i AgentPaymentIntent
-	var pixKey, depositTx, efiID, efiStatus, errMsg sql.NullString
+	var pixKey, paymentLink, barcode, beneficiaryName, dueDate, depositTx, efiID, efiStatus, errMsg sql.NullString
 	var depositUSDT sql.NullFloat64
 	var settledAt sql.NullTime
 	err := rows.Scan(
-		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey,
+		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey, &paymentLink, &barcode, &beneficiaryName, &dueDate,
 		&i.AmountBRL, &i.FeeBps, &i.FeeUSDT, &i.GrossUSDT, &i.RequiredUSDT, &i.USDTRate,
 		&i.PaymentAddress, &i.Status, &depositTx, &depositUSDT,
 		&efiID, &efiStatus, &errMsg, &i.Attempts,
@@ -583,6 +602,7 @@ func scanIntentFullRow(rows *sql.Rows) (*AgentPaymentIntent, error) {
 	if pixKey.Valid {
 		i.PixKey = pixKey.String
 	}
+	applyM2MDestinationFields(&i, paymentLink, barcode, beneficiaryName, dueDate)
 	if depositTx.Valid {
 		i.DepositTx = &depositTx.String
 	}
@@ -602,4 +622,19 @@ func scanIntentFullRow(rows *sql.Rows) (*AgentPaymentIntent, error) {
 		i.SettledAt = &settledAt.Time
 	}
 	return &i, nil
+}
+
+func applyM2MDestinationFields(i *AgentPaymentIntent, paymentLink, barcode, beneficiaryName, dueDate sql.NullString) {
+	if paymentLink.Valid {
+		i.PaymentLink = paymentLink.String
+	}
+	if barcode.Valid {
+		i.Barcode = barcode.String
+	}
+	if beneficiaryName.Valid {
+		i.BeneficiaryName = beneficiaryName.String
+	}
+	if dueDate.Valid {
+		i.DueDate = dueDate.String
+	}
 }
