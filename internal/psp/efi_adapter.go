@@ -185,30 +185,16 @@ func (e *EfiAdapter) ParseWebhookAll(_ context.Context, body []byte, _ string) (
 	return out, nil
 }
 
-const efiHealthProbeTxID = "CHAINFXHEALTHPROBE0000000001"
-
-// HealthCheck calls GET /v2/cob with a syntactically valid, non-existent TXID.
-// Efí validates txid before lookup; invalid probes return 400 and create false
-// alarms. 404 = provider up (charge not found is expected); 200 is also healthy.
+// HealthCheck validates the Efí OAuth + mTLS path only.
+//
+// Do not probe /v2/cob/{txid} with a synthetic TXID: Efí may return 400 for
+// provider-side business validation even when auth, mTLS and API reachability
+// are healthy, which creates noisy false alarms and can trigger failover.
 func (e *EfiAdapter) HealthCheck(ctx context.Context) error {
-	token, err := e.getToken(ctx)
-	if err != nil {
+	if _, err := e.getToken(ctx); err != nil {
 		return fmt.Errorf("efi health: auth failed: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL+"/v2/cob/"+efiHealthProbeTxID, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode == 404 || resp.StatusCode == 200 {
-		return nil
-	}
-	return fmt.Errorf("efi health: unexpected status %d", resp.StatusCode)
+	return nil
 }
 
 // ── OAuth token cache ──────────────────────────────────────────────────────────
