@@ -16,27 +16,35 @@ import (
 // ─── Request / Response types ────────────────────────────────────────────────
 
 type m2mCreateRequest struct {
-	Type           string `json:"type"`            // "pix" | "credit_card"
-	AmountBRL      string `json:"amount_brl"`      // BRL amount the recipient will receive
-	PixKey         string `json:"pix_key"`         // required when type == "pix"
-	IdempotencyKey string `json:"idempotency_key"` // caller-generated, immutable
-	AgentWallet    string `json:"agent_wallet"`    // EVM address of paying agent (audit)
+	Type            string `json:"type"`             // "pix" | "credit_card"
+	AmountBRL       string `json:"amount_brl"`       // BRL amount the recipient will receive
+	PixKey          string `json:"pix_key"`          // required when type == "pix"
+	PaymentLink     string `json:"payment_link"`     // required for credit_card when barcode is absent
+	Barcode         string `json:"barcode"`          // required for credit_card when payment_link is absent
+	BeneficiaryName string `json:"beneficiary_name"` // optional merchant/beneficiary hint
+	DueDate         string `json:"due_date"`         // optional due date hint
+	IdempotencyKey  string `json:"idempotency_key"`  // caller-generated, immutable
+	AgentWallet     string `json:"agent_wallet"`     // EVM address of paying agent (audit)
 }
 
 type m2mCreateResponse struct {
-	IntentID       string    `json:"intent_id"`
-	Status         string    `json:"status"`
-	PaymentType    string    `json:"payment_type"`
-	AmountBRL      string    `json:"amount_brl"`
-	GrossUSDT      string    `json:"gross_usdt"`
-	FeeUSDT        string    `json:"fee_usdt"`
-	RequiredUSDT   string    `json:"required_usdt"`
-	FeeBps         int       `json:"fee_bps"`
-	USDTRate       string    `json:"usdt_rate"`
-	PaymentAddress string    `json:"payment_address"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	Idempotent     bool      `json:"idempotent,omitempty"` // true when returning cached response
-	NextStep       string    `json:"next_step"`
+	IntentID        string    `json:"intent_id"`
+	Status          string    `json:"status"`
+	PaymentType     string    `json:"payment_type"`
+	AmountBRL       string    `json:"amount_brl"`
+	GrossUSDT       string    `json:"gross_usdt"`
+	FeeUSDT         string    `json:"fee_usdt"`
+	RequiredUSDT    string    `json:"required_usdt"`
+	FeeBps          int       `json:"fee_bps"`
+	USDTRate        string    `json:"usdt_rate"`
+	PaymentAddress  string    `json:"payment_address"`
+	PaymentLink     string    `json:"payment_link,omitempty"`
+	Barcode         string    `json:"barcode,omitempty"`
+	BeneficiaryName string    `json:"beneficiary_name,omitempty"`
+	DueDate         string    `json:"due_date,omitempty"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	Idempotent      bool      `json:"idempotent,omitempty"` // true when returning cached response
+	NextStep        string    `json:"next_step"`
 }
 
 // ─── POST /agent/v1/pay ──────────────────────────────────────────────────────
@@ -58,6 +66,10 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
 	req.AgentWallet = strings.ToLower(strings.TrimSpace(req.AgentWallet))
 	req.PixKey = strings.TrimSpace(req.PixKey)
+	req.PaymentLink = strings.TrimSpace(req.PaymentLink)
+	req.Barcode = strings.TrimSpace(req.Barcode)
+	req.BeneficiaryName = strings.TrimSpace(req.BeneficiaryName)
+	req.DueDate = strings.TrimSpace(req.DueDate)
 
 	if req.IdempotencyKey == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "idempotency_key is required"})
@@ -79,7 +91,10 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "credit_card":
-		// valid — no extra validation needed
+		if req.PaymentLink == "" && req.Barcode == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payment_link or barcode is required for type=credit_card"})
+			return
+		}
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "type must be 'pix' or 'credit_card'"})
 		return
@@ -138,6 +153,7 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 	// ── Audit hash (canonical request fingerprint) ────────────────────────────
 	requestHash := database.CanonicalRequestHash(
 		req.Type, req.AmountBRL, req.PixKey,
+		req.PaymentLink, req.Barcode, req.BeneficiaryName, req.DueDate,
 		req.IdempotencyKey, req.AgentWallet,
 	)
 
@@ -156,20 +172,24 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := database.M2MCreateInput{
-		ID:             intentID,
-		IdempotencyKey: req.IdempotencyKey,
-		AgentWallet:    req.AgentWallet,
-		PaymentType:    database.M2MPaymentType(req.Type),
-		PixKey:         req.PixKey,
-		AmountBRL:      amountBRL,
-		FeeBps:         feeBps,
-		FeeUSDT:        feeUSDT,
-		GrossUSDT:      grossUSDT,
-		RequiredUSDT:   requiredUSDT,
-		USDTRate:       usdtRate,
-		PaymentAddress: paymentAddress,
-		RequestHash:    requestHash,
-		ExpiresAt:      time.Now().UTC().Add(15 * time.Minute),
+		ID:              intentID,
+		IdempotencyKey:  req.IdempotencyKey,
+		AgentWallet:     req.AgentWallet,
+		PaymentType:     database.M2MPaymentType(req.Type),
+		PixKey:          req.PixKey,
+		PaymentLink:     req.PaymentLink,
+		Barcode:         req.Barcode,
+		BeneficiaryName: req.BeneficiaryName,
+		DueDate:         req.DueDate,
+		AmountBRL:       amountBRL,
+		FeeBps:          feeBps,
+		FeeUSDT:         feeUSDT,
+		GrossUSDT:       grossUSDT,
+		RequiredUSDT:    requiredUSDT,
+		USDTRate:        usdtRate,
+		PaymentAddress:  paymentAddress,
+		RequestHash:     requestHash,
+		ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 	}
 
 	intent, isIdempotent, err := s.db.CreateAgentPaymentIntent(r.Context(), in)
@@ -235,19 +255,23 @@ func m2mIntentToResponse(i *database.AgentPaymentIntent, idempotent bool) m2mCre
 		nextStep = fmt.Sprintf("intent is %s — no deposit required", i.Status)
 	}
 	return m2mCreateResponse{
-		IntentID:       i.ID,
-		Status:         string(i.Status),
-		PaymentType:    string(i.PaymentType),
-		AmountBRL:      fmt.Sprintf("%.2f", i.AmountBRL),
-		GrossUSDT:      fmt.Sprintf("%.6f", i.GrossUSDT),
-		FeeUSDT:        fmt.Sprintf("%.6f", i.FeeUSDT),
-		RequiredUSDT:   fmt.Sprintf("%.6f", i.RequiredUSDT),
-		FeeBps:         i.FeeBps,
-		USDTRate:       fmt.Sprintf("%.4f", i.USDTRate),
-		PaymentAddress: i.PaymentAddress,
-		ExpiresAt:      i.ExpiresAt,
-		Idempotent:     idempotent,
-		NextStep:       nextStep,
+		IntentID:        i.ID,
+		Status:          string(i.Status),
+		PaymentType:     string(i.PaymentType),
+		AmountBRL:       fmt.Sprintf("%.2f", i.AmountBRL),
+		GrossUSDT:       fmt.Sprintf("%.6f", i.GrossUSDT),
+		FeeUSDT:         fmt.Sprintf("%.6f", i.FeeUSDT),
+		RequiredUSDT:    fmt.Sprintf("%.6f", i.RequiredUSDT),
+		FeeBps:          i.FeeBps,
+		USDTRate:        fmt.Sprintf("%.4f", i.USDTRate),
+		PaymentAddress:  i.PaymentAddress,
+		PaymentLink:     i.PaymentLink,
+		Barcode:         i.Barcode,
+		BeneficiaryName: i.BeneficiaryName,
+		DueDate:         i.DueDate,
+		ExpiresAt:       i.ExpiresAt,
+		Idempotent:      idempotent,
+		NextStep:        nextStep,
 	}
 }
 
@@ -270,6 +294,18 @@ func intentFullView(i *database.AgentPaymentIntent) map[string]any {
 	}
 	if i.PixKey != "" {
 		out["pix_key"] = i.PixKey
+	}
+	if i.PaymentLink != "" {
+		out["payment_link"] = i.PaymentLink
+	}
+	if i.Barcode != "" {
+		out["barcode"] = i.Barcode
+	}
+	if i.BeneficiaryName != "" {
+		out["beneficiary_name"] = i.BeneficiaryName
+	}
+	if i.DueDate != "" {
+		out["due_date"] = i.DueDate
 	}
 	if i.DepositTx != nil {
 		out["deposit_tx"] = *i.DepositTx
