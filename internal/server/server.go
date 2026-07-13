@@ -6,6 +6,7 @@ import (
         "io"
         "net/http"
         "strings"
+        "sync"
 
         "payment-gateway/internal/agents"
         "payment-gateway/internal/config"
@@ -30,7 +31,12 @@ type Server struct {
         webhookDashboard *webhooks.Dashboard
         agents           *agents.Client
         paymaster        *paymaster.Service
-        pspRouter        *psp.Router  // PSP abstraction; nil = legacy inline Efí parsing
+        pspRouter        *psp.Router // PSP abstraction; nil = legacy inline Efí parsing
+
+        // Chaos / adversarial engine (optional — wired from main.go).
+        adversarialEngine AdversarialEngine
+        chaosMu           sync.Mutex
+        chaosRunning      bool
 }
 
 type requestIDContextKey struct{}
@@ -73,6 +79,12 @@ func (s *Server) WithPaymaster(svc *paymaster.Service) {
 // When router is nil the existing inline behaviour is preserved (backward-compat).
 func (s *Server) WithPSP(router *psp.Router) {
         s.pspRouter = router
+}
+
+// WithAdversarialEngine attaches the chaos/adversarial engine used by
+// POST /v1/admin/gas/chaos-run.  When nil the endpoint returns 503.
+func (s *Server) WithAdversarialEngine(e AdversarialEngine) {
+        s.adversarialEngine = e
 }
 
 func csvContains(csv, value string) bool {
