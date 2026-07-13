@@ -7,11 +7,11 @@ package mobile
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 
 	"payment-gateway/internal/models"
 )
@@ -255,12 +255,11 @@ func (q *mobileQueries) UpdateSwapStatus(ctx context.Context, id string, status 
 // ─── Webhooks ─────────────────────────────────────────────────────────────────
 
 func (q *mobileQueries) CreateWebhookSubscription(ctx context.Context, userID, targetURL, secret string, events []string) (*models.WebhookSubscription, error) {
-	eventsJSON, _ := json.Marshal(events)
 	var id string
 	err := q.sql.QueryRowContext(ctx, `
 		INSERT INTO webhook_subscriptions (user_id, target_url, secret, events)
-		VALUES (NULLIF($1,'')::uuid, $2, $3, $4::jsonb)
-		RETURNING id`, userID, targetURL, secret, string(eventsJSON)).Scan(&id)
+		VALUES (NULLIF($1,'')::uuid, $2, $3, $4::text[])
+		RETURNING id`, userID, targetURL, secret, pq.Array(events)).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -269,11 +268,11 @@ func (q *mobileQueries) CreateWebhookSubscription(ctx context.Context, userID, t
 
 func (q *mobileQueries) GetWebhookSubscription(ctx context.Context, id string) (*models.WebhookSubscription, error) {
 	ws := &models.WebhookSubscription{}
-	var eventsJSON string
+	var events pq.StringArray
 	err := q.sql.QueryRowContext(ctx, `
-		SELECT id, user_id::text, target_url, secret, events::text, active, created_at, updated_at
+		SELECT id, user_id::text, target_url, secret, events, active, created_at, updated_at
 		FROM webhook_subscriptions WHERE id=$1`, id).Scan(
-		&ws.ID, &ws.UserID, &ws.TargetURL, &ws.Secret, &eventsJSON,
+		&ws.ID, &ws.UserID, &ws.TargetURL, &ws.Secret, &events,
 		&ws.Active, &ws.CreatedAt, &ws.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -281,13 +280,13 @@ func (q *mobileQueries) GetWebhookSubscription(ctx context.Context, id string) (
 	if err != nil {
 		return nil, err
 	}
-	_ = json.Unmarshal([]byte(eventsJSON), &ws.Events)
+	ws.Events = []string(events)
 	return ws, nil
 }
 
 func (q *mobileQueries) ListWebhooksByUser(ctx context.Context, userID string) ([]models.WebhookSubscription, error) {
 	rows, err := q.sql.QueryContext(ctx, `
-		SELECT id, user_id::text, target_url, secret, events::text, active, created_at, updated_at
+		SELECT id, user_id::text, target_url, secret, events, active, created_at, updated_at
 		FROM webhook_subscriptions WHERE user_id=$1::uuid ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -296,10 +295,10 @@ func (q *mobileQueries) ListWebhooksByUser(ctx context.Context, userID string) (
 	var out []models.WebhookSubscription
 	for rows.Next() {
 		ws := models.WebhookSubscription{}
-		var eventsJSON string
-		_ = rows.Scan(&ws.ID, &ws.UserID, &ws.TargetURL, &ws.Secret, &eventsJSON,
+		var events pq.StringArray
+		_ = rows.Scan(&ws.ID, &ws.UserID, &ws.TargetURL, &ws.Secret, &events,
 			&ws.Active, &ws.CreatedAt, &ws.UpdatedAt)
-		_ = json.Unmarshal([]byte(eventsJSON), &ws.Events)
+		ws.Events = []string(events)
 		out = append(out, ws)
 	}
 	return out, rows.Err()
@@ -372,12 +371,11 @@ func (q *mobileQueries) MarkDeliveryResult(ctx context.Context, id string, statu
 
 // SubscriptionsForEvent returns all active webhook subscriptions listening to a given event.
 func (q *mobileQueries) SubscriptionsForEvent(ctx context.Context, eventType string) ([]models.WebhookSubscription, error) {
-	// events is stored as a JSONB array; we match if eventType is in the array.
 	rows, err := q.sql.QueryContext(ctx, `
-		SELECT id, user_id::text, target_url, secret, events::text, active, created_at, updated_at
+		SELECT id, user_id::text, target_url, secret, events, active, created_at, updated_at
 		FROM webhook_subscriptions
-		WHERE active=true AND events @> $1::jsonb`,
-		fmt.Sprintf(`["%s"]`, eventType))
+		WHERE active=true AND events @> ARRAY[$1]::text[]`,
+		eventType)
 	if err != nil {
 		return nil, err
 	}
@@ -385,10 +383,10 @@ func (q *mobileQueries) SubscriptionsForEvent(ctx context.Context, eventType str
 	var out []models.WebhookSubscription
 	for rows.Next() {
 		ws := models.WebhookSubscription{}
-		var eventsJSON string
-		_ = rows.Scan(&ws.ID, &ws.UserID, &ws.TargetURL, &ws.Secret, &eventsJSON,
+		var events pq.StringArray
+		_ = rows.Scan(&ws.ID, &ws.UserID, &ws.TargetURL, &ws.Secret, &events,
 			&ws.Active, &ws.CreatedAt, &ws.UpdatedAt)
-		_ = json.Unmarshal([]byte(eventsJSON), &ws.Events)
+		ws.Events = []string(events)
 		out = append(out, ws)
 	}
 	return out, rows.Err()
