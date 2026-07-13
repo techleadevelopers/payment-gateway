@@ -45,6 +45,16 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 			Address   map[string]any `json:"address"`
 		} `json:"customer"`
 		AddressPayload map[string]any `json:"addressPayload"`
+		PaymentToken   string         `json:"paymentToken"`
+		CardBrand      string         `json:"cardBrand"`
+		Installments   int            `json:"installments"`
+		BillingAddress map[string]any `json:"billingAddress"`
+		Card           struct {
+			PaymentToken   string         `json:"paymentToken"`
+			Brand          string         `json:"brand"`
+			Installments   int            `json:"installments"`
+			BillingAddress map[string]any `json:"billingAddress"`
+		} `json:"card"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invÃƒÂ¡lido"})
@@ -96,9 +106,15 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 		BirthDate: firstNonEmpty(req.Customer.BirthDate, req.BirthDate),
 		Address:   firstNonNilMap(req.Customer.Address, req.AddressPayload),
 	}
-	paymentPayload, err := s.createPaymentIntent(r.Context(), buyID, totalFiat, fiatCurrency, paymentMethod, customerInput)
+	cardInput := paymentCardInput{
+		PaymentToken:   firstNonEmpty(req.Card.PaymentToken, req.PaymentToken),
+		Brand:          firstNonEmpty(req.Card.Brand, req.CardBrand),
+		Installments:   firstPositiveInt(req.Card.Installments, req.Installments, 1),
+		BillingAddress: firstNonNilMap(req.Card.BillingAddress, req.BillingAddress, customerInput.Address),
+	}
+	paymentPayload, err := s.createPaymentIntent(r.Context(), buyID, totalFiat, fiatCurrency, paymentMethod, customerInput, cardInput)
 	if err != nil {
-		slog.Error("Erro ao criar cobranca PIX", "buyId", buyID, "provider", "efi", "error", err)
+		slog.Error("Erro ao criar cobranca", "buyId", buyID, "provider", "efi", "paymentMethod", paymentMethod, "error", err)
 		writeAPIError(w, r, http.StatusBadGateway, "PAYMENT_PROVIDER_ERROR", "Payment provider unavailable.")
 		return
 	}
