@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 )
@@ -30,18 +31,22 @@ func (s *Server) handlePixGenerate(w http.ResponseWriter, r *http.Request) {
 
 	payload := map[string]any{
 		"amountBRL": req.AmountBRL,
-		"pixPhone":  req.PixPhone,
+		"pixPhone":  pixKey,
 		"pixCpf":    req.PixCpf,
 	}
-	resp, err := forwardToInternal(r, "POST", s.internalBase(r)+"/api/order", payload, s.cfg.ChainFXTestSecretKeys)
+	resp, err := forwardToInternal(r, "POST", s.internalBase(r)+"/api/order", payload, s.internalAPIKey())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	// Tag with user
-	_ = uid
+	var result map[string]any
+	if json.Unmarshal(body, &result) == nil {
+		if id, ok := result["id"].(string); ok && id != "" {
+			_ = mobileDB(s.db).TagOrderUser(r.Context(), id, uid)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
@@ -65,7 +70,7 @@ func (s *Server) handlePixConfirm(w http.ResponseWriter, r *http.Request) {
 // handlePixStatus — GET /api/mobile/pix/status/{id}
 func (s *Server) handlePixStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := forwardToInternal(r, "GET", s.internalBase(r)+"/api/order/"+id, nil, s.cfg.ChainFXTestSecretKeys)
+	resp, err := forwardToInternal(r, "GET", s.internalBase(r)+"/api/order/"+id, nil, s.internalAPIKey())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
@@ -87,7 +92,7 @@ func (s *Server) handlePixCopy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "order_id obrigatório"})
 		return
 	}
-	resp, err := forwardToInternal(r, "GET", s.internalBase(r)+"/api/order/"+req.OrderID, nil, s.cfg.ChainFXTestSecretKeys)
+	resp, err := forwardToInternal(r, "GET", s.internalBase(r)+"/api/order/"+req.OrderID, nil, s.internalAPIKey())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
