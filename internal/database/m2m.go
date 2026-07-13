@@ -181,10 +181,10 @@ type M2MDepositMatch struct {
 	RequiredUSDT float64
 }
 
-// PickAvailableM2MDepositAddress returns the first configured address that has
-// no active pending intent. If only the fallback is configured, this limits the
-// system to one pending M2M intent for that address instead of accepting unsafe
-// amount-proximity matching.
+// PickAvailableM2MDepositAddress returns a configured deposit address for a new
+// intent. It prefers the least-loaded address, but does not block reuse: the
+// on-chain matcher reconciles shared addresses by deposit amount and fails
+// closed only when the amount is ambiguous.
 func (db *DB) PickAvailableM2MDepositAddress(ctx context.Context, candidates []string, fallback string) (string, error) {
 	seen := make(map[string]struct{}, len(candidates)+1)
 	var addresses []string
@@ -210,22 +210,24 @@ func (db *DB) PickAvailableM2MDepositAddress(ctx context.Context, candidates []s
 	}
 
 	const q = `
-SELECT EXISTS(
-	SELECT 1 FROM agent_payment_intents
-	WHERE LOWER(payment_address) = $1
-	  AND status = 'pending_deposit'
-	  AND expires_at > NOW()
-)`
+SELECT COUNT(*)
+FROM agent_payment_intents
+WHERE LOWER(payment_address) = $1
+  AND status = 'pending_deposit'
+  AND expires_at > NOW()`
+	bestAddress := addresses[0]
+	bestCount := int(^uint(0) >> 1)
 	for _, address := range addresses {
-		var inUse bool
-		if err := db.SQL.QueryRowContext(ctx, q, address).Scan(&inUse); err != nil {
+		var pendingCount int
+		if err := db.SQL.QueryRowContext(ctx, q, address).Scan(&pendingCount); err != nil {
 			return "", fmt.Errorf("m2m: check deposit address: %w", err)
 		}
-		if !inUse {
-			return address, nil
+		if pendingCount < bestCount {
+			bestAddress = address
+			bestCount = pendingCount
 		}
 	}
-	return "", fmt.Errorf("m2m: no free deposit address; configure M2M_DEPOSIT_ADDRESSES for concurrent pending intents")
+	return bestAddress, nil
 }
 
 // ListPendingM2MDepositAddresses returns all active M2M payment addresses the
@@ -254,8 +256,8 @@ WHERE  status = 'pending_deposit'
 }
 
 // FindPendingIntentsByDepositAddress returns non-expired pending intents for a
-// given deposit address. Production matching is address-first and fail-closed if
-// more than one pending intent shares an address.
+// given deposit address. Shared deposit addresses are supported; reconciliation
+// selects a unique candidate by amount in the on-chain worker.
 func (db *DB) FindPendingIntentsByDepositAddress(ctx context.Context, address string) ([]M2MDepositMatch, error) {
 	const q = `
 SELECT id, agent_wallet, required_usdt
