@@ -35,7 +35,7 @@ func (s *Server) handleChainFXRates(w http.ResponseWriter, r *http.Request) {
 		"roadmapAssets":   []string{"EURUSDT", "BTC"},
 		"supportedFiat":   []string{"BRL", "USD"},
 		"rails": map[string][]string{
-			"buy":  {"pix", "stripe"},
+			"buy":  {"pix", "credit_card"},
 			"sell": {"pix"},
 		},
 		"sandbox": map[string]any{
@@ -158,6 +158,15 @@ func (s *Server) handleChainFXBuy(w http.ResponseWriter, r *http.Request) {
 			BirthDate string         `json:"birthDate"`
 			Address   map[string]any `json:"address"`
 		} `json:"customer"`
+		PaymentToken string `json:"paymentToken"`
+		CardBrand    string `json:"cardBrand"`
+		Installments int    `json:"installments"`
+		Card         struct {
+			PaymentToken   string         `json:"paymentToken"`
+			Brand          string         `json:"brand"`
+			Installments   int            `json:"installments"`
+			BillingAddress map[string]any `json:"billingAddress"`
+		} `json:"card"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
@@ -186,6 +195,15 @@ func (s *Server) handleChainFXBuy(w http.ResponseWriter, r *http.Request) {
 			"phone":     req.Customer.Phone,
 			"birthDate": req.Customer.BirthDate,
 			"address":   req.Customer.Address,
+		},
+		"paymentToken": firstNonEmpty(req.Card.PaymentToken, req.PaymentToken),
+		"cardBrand":    firstNonEmpty(req.Card.Brand, req.CardBrand),
+		"installments": firstPositiveInt(req.Card.Installments, req.Installments, 1),
+		"card": map[string]any{
+			"paymentToken":   firstNonEmpty(req.Card.PaymentToken, req.PaymentToken),
+			"brand":          firstNonEmpty(req.Card.Brand, req.CardBrand),
+			"installments":   firstPositiveInt(req.Card.Installments, req.Installments, 1),
+			"billingAddress": firstNonNilMap(req.Card.BillingAddress, req.Customer.Address),
 		},
 	}
 	s.handleCreateBuy(w, cloneJSONRequest(r, payload))
