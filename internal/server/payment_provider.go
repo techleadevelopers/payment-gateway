@@ -15,16 +15,9 @@ import (
 	"payment-gateway/internal/certutil"
 )
 
-func (s *Server) createPaymentIntent(ctx context.Context, buyID string, amountFiat float64, fiatCurrency, paymentMethod string, customer paymentCustomerInput) (map[string]any, error) {
-	if paymentMethod == "stripe" {
-		return map[string]any{
-			"provider":     "stripe",
-			"status":       "requires_provider_checkout",
-			"buyId":        buyID,
-			"amount":       amountFiat,
-			"currency":     fiatCurrency,
-			"instructions": "create Stripe Checkout/PaymentIntent client-side or upstream and include metadata.buyId",
-		}, nil
+func (s *Server) createPaymentIntent(ctx context.Context, buyID string, amountFiat float64, fiatCurrency, paymentMethod string, customer paymentCustomerInput, card paymentCardInput) (map[string]any, error) {
+	if paymentMethod == "credit_card" {
+		return s.createEfiCreditCardCharge(ctx, buyID, amountFiat, fiatCurrency, customer, card)
 	}
 	if paymentMethod != "pix" {
 		return nil, fmt.Errorf("rail de pagamento nao suportado")
@@ -36,6 +29,101 @@ func (s *Server) createPaymentIntent(ctx context.Context, buyID string, amountFi
 		return nil, fmt.Errorf("credenciais EfÃ­ Pix nao configuradas")
 	}
 	return s.createEfiPixCharge(ctx, buyID, amountFiat, customer)
+}
+
+func (s *Server) efiChargesConfigured() bool {
+	return strings.TrimSpace(s.cfg.EfiClientID) != "" &&
+		strings.TrimSpace(s.cfg.EfiClientSecret) != "" &&
+		strings.TrimSpace(s.cfg.EfiChargesBaseURL) != "" &&
+		(strings.TrimSpace(s.cfg.EfiCertificatePath) != "" || strings.Trim(strings.TrimSpace(s.cfg.EfiCertificateP12), `"'`) != "")
+}
+
+func (s *Server) createEfiCreditCardCharge(ctx context.Context, buyID string, amountFiat float64, fiatCurrency string, customer paymentCustomerInput, card paymentCardInput) (map[string]any, error) {
+	if fiatCurrency != "BRL" {
+		return nil, fmt.Errorf("cartao Efí suporta apenas BRL neste fluxo")
+	}
+	if !s.efiChargesConfigured() {
+		return nil, fmt.Errorf("credenciais Efí Cobranças nao configuradas")
+	}
+	card.PaymentToken = strings.TrimSpace(card.PaymentToken)
+	card.Brand = normalizeEfiCardBrand(card.Brand)
+	if card.PaymentToken == "" {
+		return nil, fmt.Errorf("paymentToken Efí obrigatorio para cartao")
+	}
+	if !efiCardBrandSupported(card.Brand) {
+		return nil, fmt.Errorf("bandeira de cartao nao suportada")
+	}
+	if card.Installments <= 0 {
+		card.Installments = 1
+	}
+	creditCard, err := buildEfiCreditCardPayment(customer, card)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.efiHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	token, err := s.efiBillingAccessToken(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	amountCents := int64(math.Round(amountFiat * 100))
+	createPayload := map[string]any{
+		"items": []map[string]any{{
+			"name":   "USDT Purchase",
+			"value":  amountCents,
+			"amount": 1,
+		}},
+		"metadata": map[string]any{
+			"custom_id":        buyID,
+			"notification_url": strings.TrimRight(s.cfg.EmailSiteURL, "/") + "/api/efi/charges/webhook/buy",
+		},
+	}
+	charge, err := s.efiBillingRequest(ctx, client, token, http.MethodPost, "/v1/charge", createPayload)
+	if err != nil {
+		return nil, err
+	}
+	chargeID := mapString(nestedMap(charge, "data"), "charge_id")
+	if chargeID == "" {
+		chargeID = fmt.Sprint(nestedFloat(charge, "data", "charge_id"))
+		chargeID = strings.TrimSuffix(strings.TrimSuffix(chargeID, "0"), ".")
+	}
+	if chargeID == "" {
+		return nil, fmt.Errorf("Efí Cobranças nao retornou charge_id")
+	}
+	payPayload := map[string]any{
+		"payment": map[string]any{
+			"credit_card": creditCard,
+		},
+	}
+	payment, err := s.efiBillingRequest(ctx, client, token, http.MethodPost, "/v1/charge/"+chargeID+"/pay", payPayload)
+	if err != nil {
+		return nil, err
+	}
+	data := nestedMap(payment, "data")
+	status := mapString(data, "status")
+	if status == "" {
+		status = mapString(payment, "status")
+	}
+	out := map[string]any{
+		"provider":          "efi",
+		"paymentMethod":     "credit_card",
+		"buyId":             buyID,
+		"chargeId":          chargeID,
+		"providerPaymentId": chargeID,
+		"providerStatus":    status,
+		"cardBrand":         card.Brand,
+		"installments":      card.Installments,
+		"amount":            amountFiat,
+		"currency":          fiatCurrency,
+		"settlementPolicy":  "release_crypto_only_after_efi_paid_notification",
+		"rawStatus":         data,
+	}
+	if customer.Name != "" || customer.Email != "" || customer.CPF != "" || customer.Phone != "" || customer.BirthDate != "" || len(customer.Address) > 0 {
+		out["customerSubmitted"] = buildCustomerAudit(s.cfg.LGPDSecret, customer.CPF, customer.Phone, customer.Email, customer.Name, customer.BirthDate, customer.Address)
+	}
+	return out, nil
 }
 
 func (s *Server) efiPixConfigured() bool {
@@ -56,8 +144,8 @@ func (s *Server) efiCertificateSource() string {
 }
 
 func (s *Server) efiCertificateReady() (bool, string) {
-	if !s.efiPixConfigured() {
-		return false, "credenciais EfÃ­ incompletas"
+	if strings.TrimSpace(s.cfg.EfiCertificatePath) == "" && strings.Trim(strings.TrimSpace(s.cfg.EfiCertificateP12), `"'`) == "" {
+		return false, "certificado Efí nao configurado"
 	}
 	if _, err := s.loadEfiCertificate(strings.TrimSpace(s.cfg.EfiCertificatePath), strings.TrimSpace(s.cfg.EfiCertificateKey)); err != nil {
 		return false, err.Error()
@@ -217,6 +305,64 @@ func (s *Server) efiAccessToken(ctx context.Context, client *http.Client) (strin
 	return data.AccessToken, nil
 }
 
+func (s *Server) efiBillingAccessToken(ctx context.Context, client *http.Client) (string, error) {
+	raw := []byte(`{"grant_type":"client_credentials"}`)
+	endpoint := strings.TrimRight(s.cfg.EfiChargesBaseURL, "/") + "/v1/authorize"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(s.cfg.EfiClientID, s.cfg.EfiClientSecret)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Efí Cobranças OAuth rejeitou credenciais: status %d body %s", resp.StatusCode, compactProviderBody(body))
+	}
+	var data struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil || strings.TrimSpace(data.AccessToken) == "" {
+		return "", fmt.Errorf("Efí Cobranças OAuth respondeu token invalido")
+	}
+	return data.AccessToken, nil
+}
+
+func (s *Server) efiBillingRequest(ctx context.Context, client *http.Client, token, method, path string, payload any) (map[string]any, error) {
+	var body io.Reader
+	if payload != nil {
+		raw, _ := json.Marshal(payload)
+		body = bytes.NewReader(raw)
+	}
+	endpoint := strings.TrimRight(s.cfg.EfiChargesBaseURL, "/") + path
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("Efí Cobranças rejeitou %s %s: status %d body %s", method, path, resp.StatusCode, compactProviderBody(raw))
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("Efí Cobranças respondeu JSON invalido")
+	}
+	return out, nil
+}
+
 func buildEfiDebtor(customer paymentCustomerInput) map[string]any {
 	cpf := onlyDigits(customer.CPF)
 	name := strings.TrimSpace(customer.Name)
@@ -226,6 +372,70 @@ func buildEfiDebtor(customer paymentCustomerInput) map[string]any {
 	return map[string]any{
 		"cpf":  cpf,
 		"nome": name,
+	}
+}
+
+func buildEfiCreditCardPayment(customer paymentCustomerInput, card paymentCardInput) (map[string]any, error) {
+	cpf := onlyDigits(customer.CPF)
+	phone := onlyDigits(customer.Phone)
+	name := strings.TrimSpace(customer.Name)
+	email := strings.TrimSpace(customer.Email)
+	if name == "" || cpf == "" || email == "" || phone == "" {
+		return nil, fmt.Errorf("nome, cpf, email e telefone sao obrigatorios para cartao Efí")
+	}
+	creditCard := map[string]any{
+		"customer": map[string]any{
+			"name":         name,
+			"cpf":          cpf,
+			"email":        email,
+			"phone_number": phone,
+		},
+		"installments":    card.Installments,
+		"payment_token":   card.PaymentToken,
+		"message":         "ChainFX USDT Purchase",
+		"billing_address": buildEfiBillingAddress(card.BillingAddress),
+	}
+	if birth := strings.TrimSpace(customer.BirthDate); birth != "" {
+		creditCard["customer"].(map[string]any)["birth"] = birth
+	}
+	if len(creditCard["billing_address"].(map[string]any)) == 0 {
+		delete(creditCard, "billing_address")
+	}
+	return creditCard, nil
+}
+
+func buildEfiBillingAddress(address map[string]any) map[string]any {
+	out := make(map[string]any)
+	copyAddressField(out, address, "street", "street", "logradouro", "addressLine1")
+	copyAddressField(out, address, "number", "number", "numero")
+	copyAddressField(out, address, "neighborhood", "neighborhood", "bairro")
+	copyAddressField(out, address, "zipcode", "zipcode", "zipCode", "postalCode", "cep")
+	copyAddressField(out, address, "city", "city", "cidade")
+	copyAddressField(out, address, "state", "state", "uf", "province")
+	copyAddressField(out, address, "complement", "complement", "complemento", "addressLine2")
+	if zip := mapString(out, "zipcode"); zip != "" {
+		out["zipcode"] = onlyDigits(zip)
+	}
+	return out
+}
+
+func normalizeEfiCardBrand(brand string) string {
+	switch strings.ToLower(strings.TrimSpace(brand)) {
+	case "master", "mastercard":
+		return "mastercard"
+	case "americanexpress", "american_express", "amex":
+		return "amex"
+	default:
+		return strings.ToLower(strings.TrimSpace(brand))
+	}
+}
+
+func efiCardBrandSupported(brand string) bool {
+	switch brand {
+	case "visa", "mastercard", "amex", "elo":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -290,4 +500,17 @@ func mapString(values map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func nestedMap(root map[string]any, keys ...string) map[string]any {
+	var current any = root
+	for _, key := range keys {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = obj[key]
+	}
+	out, _ := current.(map[string]any)
+	return out
 }
