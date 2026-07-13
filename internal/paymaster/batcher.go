@@ -144,6 +144,14 @@ func (rb *RelayBatcher) dispatchBatch(ctx context.Context, batch []relayJob) {
                 "multicall", len(batch) >= 2 && rb.multicall != "",
         )
 
+        if len(batch) >= 2 && rb.multicall != "" {
+                if rb.canMulticall(batch) {
+                        rb.dispatchMulticallBatch(ctx, batch)
+                        return
+                }
+                slog.Info("relay batcher: multicall skipped; batch is not homogeneous or has invalid relay data", "size", len(batch))
+        }
+
         sem := make(chan struct{}, batchConcurrent)
         var wg sync.WaitGroup
 
@@ -169,6 +177,16 @@ type signerTransferPayload struct {
         TokenContract   string `json:"tokenContract"`
         Network         string `json:"network"`
         IdempotencyKey  string `json:"idempotencyKey"`
+}
+
+type signerContractCallPayload struct {
+        DerivationIndex int    `json:"derivationIndex"`
+        To              string `json:"to"`
+        Data            string `json:"data"`
+        Network         string `json:"network"`
+        IdempotencyKey  string `json:"idempotencyKey"`
+        Amount          string `json:"amount,omitempty"`
+        TokenContract   string `json:"tokenContract,omitempty"`
 }
 
 // dispatchOne sends one relay to the signer with retry + backoff.
