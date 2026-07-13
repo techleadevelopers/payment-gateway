@@ -13,6 +13,7 @@ const (
 	StatusExpirada            OrderStatus = "expirada"
 	StatusPago                OrderStatus = "pago"
 	StatusProcessandoPayout   OrderStatus = "processando_payout"
+	StatusIncidenteValidacao  OrderStatus = "incidente_validacao"
 	StatusConcluida           OrderStatus = "concluida"
 	StatusErro                OrderStatus = "erro"
 )
@@ -24,6 +25,7 @@ var ValidStatuses = map[OrderStatus]bool{
 	StatusExpirada:            true,
 	StatusPago:                true,
 	StatusProcessandoPayout:   true,
+	StatusIncidenteValidacao:  true,
 	StatusConcluida:           true,
 	StatusErro:                true,
 }
@@ -35,7 +37,7 @@ func (s OrderStatus) IsValid() bool {
 
 // IsFinal verifica se o status é terminal (não muda mais)
 func (s OrderStatus) IsFinal() bool {
-	return s == StatusConcluida || s == StatusExpirada || s == StatusErro
+	return s == StatusConcluida || s == StatusExpirada || s == StatusErro || s == StatusIncidenteValidacao
 }
 
 // IsPaid verifica se o status indica pagamento confirmado
@@ -48,19 +50,20 @@ func (s OrderStatus) CanTransition(to OrderStatus) bool {
 	// Definir transições válidas
 	transitions := map[OrderStatus][]OrderStatus{
 		StatusAguardandoDeposito:  {StatusAguardandoValidacao, StatusExpirada, StatusErro},
-		StatusAguardandoValidacao: {StatusPago, StatusExpirada, StatusErro},
-		StatusPago:                {StatusProcessandoPayout, StatusErro},
-		StatusProcessandoPayout:   {StatusConcluida, StatusErro},
+		StatusAguardandoValidacao: {StatusPago, StatusExpirada, StatusErro, StatusIncidenteValidacao},
+		StatusPago:                {StatusProcessandoPayout, StatusErro, StatusIncidenteValidacao},
+		StatusProcessandoPayout:   {StatusConcluida, StatusErro, StatusIncidenteValidacao},
+		StatusIncidenteValidacao:  {},
 		StatusConcluida:           {}, // Terminal
 		StatusExpirada:            {}, // Terminal
 		StatusErro:                {}, // Terminal
 	}
-	
+
 	allowed, exists := transitions[s]
 	if !exists {
 		return false
 	}
-	
+
 	for _, status := range allowed {
 		if status == to {
 			return true
@@ -139,17 +142,17 @@ func (OnchainCursor) TableName() string {
 
 // PendingSweep representa sweeps pendentes
 type PendingSweep struct {
-	ID              string    `json:"id" db:"id"`
-	OrderID         *string   `json:"order_id,omitempty" db:"order_id"`
-	ChildIndex      int       `json:"child_index" db:"child_index"`
-	FromAddr        string    `json:"from_addr" db:"from_addr"`
-	ToAddr          string    `json:"to_addr" db:"to_addr"`
-	Amount          float64   `json:"amount" db:"amount"`
-	Status          string    `json:"status" db:"status"` // pending, sent, failed
-	TxHash          *string   `json:"tx_hash,omitempty" db:"tx_hash"`
-	Error           *string   `json:"error,omitempty" db:"error"`
-	CreatedAt       time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
+	ID         string    `json:"id" db:"id"`
+	OrderID    *string   `json:"order_id,omitempty" db:"order_id"`
+	ChildIndex int       `json:"child_index" db:"child_index"`
+	FromAddr   string    `json:"from_addr" db:"from_addr"`
+	ToAddr     string    `json:"to_addr" db:"to_addr"`
+	Amount     float64   `json:"amount" db:"amount"`
+	Status     string    `json:"status" db:"status"` // pending, sent, failed
+	TxHash     *string   `json:"tx_hash,omitempty" db:"tx_hash"`
+	Error      *string   `json:"error,omitempty" db:"error"`
+	CreatedAt  time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // TableName retorna o nome da tabela no banco
@@ -159,16 +162,16 @@ func (PendingSweep) TableName() string {
 
 // BuyOrder representa ordens de compra
 type BuyOrder struct {
-	ID          string    `json:"id" db:"id"`
-	DestAddress string    `json:"dest_address" db:"dest_address"`
+	ID           string    `json:"id" db:"id"`
+	DestAddress  string    `json:"dest_address" db:"dest_address"`
 	CryptoAmount float64   `json:"crypto_amount" db:"crypto_amount"`
-	FiatAmount  float64   `json:"fiat_amount" db:"fiat_amount"`
-	FiatCurrency string   `json:"fiat_currency" db:"fiat_currency"`
-	Status      string    `json:"status" db:"status"` // pago_fiat, pago_pix, enviado, erro
-	TxHashOut   *string   `json:"tx_hash_out,omitempty" db:"tx_hash_out"`
-	Error       *string   `json:"error,omitempty" db:"error"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	FiatAmount   float64   `json:"fiat_amount" db:"fiat_amount"`
+	FiatCurrency string    `json:"fiat_currency" db:"fiat_currency"`
+	Status       string    `json:"status" db:"status"` // pago_fiat, pago_pix, enviado, erro
+	TxHashOut    *string   `json:"tx_hash_out,omitempty" db:"tx_hash_out"`
+	Error        *string   `json:"error,omitempty" db:"error"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // TableName retorna o nome da tabela no banco
