@@ -430,6 +430,37 @@ func (rb *RelayBatcher) signerTransfer(ctx context.Context, to, amount, token, n
         return nil
 }
 
+// signerContractCall calls the signer service /hd/contract-call endpoint.
+func (rb *RelayBatcher) signerContractCall(ctx context.Context, payload signerContractCallPayload) error {
+        body, err := json.Marshal(payload)
+        if err != nil {
+                return fmt.Errorf("%w: marshal: %v", ErrNonRetryable, err)
+        }
+
+        req, err := http.NewRequestWithContext(ctx, http.MethodPost, rb.signerURL+"/hd/contract-call", bytes.NewReader(body))
+        if err != nil {
+                return fmt.Errorf("%w: build request: %v", ErrNonRetryable, err)
+        }
+        req.Header.Set("Content-Type", "application/json")
+        security.SignRawBodyHeaders(req, rb.signerHMAC, body)
+
+        resp, err := rb.httpClient.Do(req)
+        if err != nil {
+                return err
+        }
+        defer resp.Body.Close()
+
+        if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+                var errBody struct{ Error string `json:"error"` }
+                _ = json.NewDecoder(resp.Body).Decode(&errBody)
+                return fmt.Errorf("%w: signer contract-call 4xx %d: %s", ErrNonRetryable, resp.StatusCode, errBody.Error)
+        }
+        if resp.StatusCode >= 500 {
+                return fmt.Errorf("signer contract-call 5xx %d", resp.StatusCode)
+        }
+        return nil
+}
+
 // microUSDTToString converts micro-USDT *big.Int to a decimal string with 6 places.
 // e.g. big.Int(99000000) → "99.000000"
 func microUSDTToString(micro *big.Int) string {
