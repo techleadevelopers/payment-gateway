@@ -316,25 +316,19 @@ func (ow *OnchainWorker) matchM2MDeposit(ctx context.Context, network onchainNet
 		return
 	}
 
-	if len(candidates) > 1 {
-		slog.Error("OnchainWorker: M2M endereco com multiplas intents pendentes; falhando fechado",
-			"payment_address", depositAddress, "tx", txHash, "candidates", len(candidates))
-		return
-	}
-
-	chosen := candidates[0]
 	tol := ow.cfg.M2MDepositTolerancePct
 	if tol <= 0 {
 		tol = 0.005
 	}
-	if chosen.RequiredUSDT > 0 {
-		diff := (depositUSDT - chosen.RequiredUSDT) / chosen.RequiredUSDT
-		if diff < -tol {
-			slog.Warn("OnchainWorker: deposito M2M abaixo da tolerancia; aguardando conciliacao",
-				"intent_id", chosen.IntentID, "payment_address", depositAddress,
-				"tx", txHash, "deposit_usdt", depositUSDT, "required_usdt", chosen.RequiredUSDT)
-			return
-		}
+	chosen, matchErr := chooseM2MDepositCandidate(candidates, depositUSDT, tol)
+	if matchErr != nil {
+		slog.Warn("OnchainWorker: deposito M2M nao conciliado automaticamente",
+			"payment_address", depositAddress,
+			"tx", txHash,
+			"deposit_usdt", depositUSDT,
+			"candidates", len(candidates),
+			"reason", matchErr.Error())
+		return
 	}
 	claimed, err := ow.db.ConfirmM2MDeposit(matchCtx, chosen.IntentID, txHash, depositUSDT)
 	if err != nil {
