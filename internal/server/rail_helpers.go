@@ -65,19 +65,15 @@ func (s *Server) isDeliveryAddress(address string) bool {
 func normalizePaymentRail(currency, method string, amountFiat, amountBRL, amountUSD float64) (string, string, float64) {
 	currency = strings.ToUpper(strings.TrimSpace(currency))
 	method = strings.ToLower(strings.TrimSpace(method))
+	switch method {
+	case "card", "cartao", "cartao_credito", "credit", "creditcard", "credit-card", "visa", "master", "mastercard":
+		method = "credit_card"
+	}
 	if currency == "" {
-		if amountUSD > 0 {
-			currency = "USD"
-		} else {
-			currency = "BRL"
-		}
+		currency = "BRL"
 	}
 	if method == "" {
-		if currency == "USD" {
-			method = "stripe"
-		} else {
-			method = "pix"
-		}
+		method = "pix"
 	}
 	if amountFiat <= 0 {
 		if currency == "USD" {
@@ -89,7 +85,7 @@ func normalizePaymentRail(currency, method string, amountFiat, amountBRL, amount
 	switch {
 	case currency == "BRL" && method == "pix":
 		return currency, method, amountFiat
-	case currency == "USD" && method == "stripe":
+	case currency == "BRL" && method == "credit_card":
 		return currency, method, amountFiat
 	default:
 		return "", "", 0
