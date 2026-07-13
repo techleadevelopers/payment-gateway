@@ -146,12 +146,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux, authorize Authorize) {
 			h(w, r)
 		}
 	}
-	mux.HandleFunc("POST /mcp/initialize", guard(s.handleInitialize))
-	mux.HandleFunc("POST /mcp/tools/list", guard(s.handleToolsList))
-	mux.HandleFunc("POST /mcp/tools/call", guard(s.handleToolsCall))
-	mux.HandleFunc("POST /mcp/resources/list", guard(s.handleResourcesList))
+	mux.HandleFunc("POST /mcp/initialize", s.handleInitialize)
+	mux.HandleFunc("POST /mcp/tools/list", s.handleToolsList)
+	mux.HandleFunc("POST /mcp/tools/call", s.handleToolsCallWithAuthorize(authorize))
+	mux.HandleFunc("POST /mcp/resources/list", s.handleResourcesList)
 	mux.HandleFunc("POST /mcp/resources/read", guard(s.handleResourcesRead))
-	mux.HandleFunc("POST /mcp/prompts/list", guard(s.handlePromptsList))
+	mux.HandleFunc("POST /mcp/prompts/list", s.handlePromptsList)
 }
 
 func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
