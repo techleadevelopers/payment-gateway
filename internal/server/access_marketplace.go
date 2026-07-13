@@ -31,7 +31,7 @@ func (s *Server) handleAIServicesWellKnown(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":        "ChainFX Agent Liquidity Rail",
 		"version":     "1.0",
-		"description": "AI agents can acquire API access and execute BSC stablecoin liquidity trades. Machine-to-machine payments. No card. No manual onboarding.",
+		"description": "AI agents can acquire API access, execute BSC stablecoin liquidity trades, and create M2M PIX or credit-card payment intents funded with USDT.",
 		"capabilities": []string{
 			"crypto_purchase",
 			"crypto_sale",
@@ -87,6 +87,15 @@ func (s *Server) handleAIServicesWellKnown(w http.ResponseWriter, r *http.Reques
 			"supportedFlow": "enabled BSC stablecoin pairs with different symbols",
 			"feeBps":        agentGatewayFeeBps,
 		},
+		"agentPayments": map[string]any{
+			"create":         base + "/agent/v1/pay",
+			"status":         base + "/agent/v1/pay/{id}",
+			"types":          []string{"pix", "credit_card"},
+			"fundingAsset":   "USDT",
+			"fundingNetwork": "BSC",
+			"feesBps":        map[string]int{"pix": s.cfg.M2MPixFeeBps, "credit_card": s.cfg.M2MCreditFeeBps},
+			"flow":           "agent creates intent -> deposits required_usdt to payment_address -> ChainFX settles PIX/card recipient",
+		},
 	})
 }
 
@@ -108,6 +117,16 @@ func (s *Server) handleAgentCapabilities(w http.ResponseWriter, r *http.Request)
 			"execute":     base + "/agent/v1/trade/execute",
 			"status":      base + "/agent/v1/trade/{id}",
 			"assets":      base + "/agent/v1/assets",
+		}, {
+			"id":          "agent_payments",
+			"name":        "agent_payments",
+			"status":      "available",
+			"version":     "v1",
+			"description": "Create M2M payment intents for PIX or credit-card bills. The agent funds the intent with BSC USDT and ChainFX settles the fiat recipient.",
+			"create":      base + "/agent/v1/pay",
+			"statusUrl":   base + "/agent/v1/pay/{id}",
+			"types":       []string{"pix", "credit_card"},
+			"feesBps":     map[string]int{"pix": s.cfg.M2MPixFeeBps, "credit_card": s.cfg.M2MCreditFeeBps},
 		}, {
 			"id":          "marketplace_api_purchase",
 			"name":        "marketplace_api_purchase",
@@ -173,6 +192,14 @@ func (s *Server) handleAgentCapabilities(w http.ResponseWriter, r *http.Request)
 			"mock_provider_execution",
 			"consume_api",
 			"report_usage",
+		},
+		"agentPaymentLifecycle": []string{
+			"create_payment_intent",
+			"quote_required_usdt",
+			"deposit_usdt_to_unique_payment_address",
+			"chainfx_matches_deposit_by_address",
+			"settle_pix_or_credit_card_recipient",
+			"poll_payment_intent_status",
 		},
 		"capabilityExchange": map[string]any{
 			"networkName":  "ChainFX Capability Network",
@@ -301,12 +328,13 @@ Core endpoints:
 - %s/agent/v1/assets
 - %s/agent/v1/trade/quote
 - %s/agent/v1/trade/execute
+- %s/agent/v1/pay
 
 Positioning:
 AI agents can acquire liquidity and API access with stablecoins on BSC.
-Machine-to-machine payment rail.
-No card. No account. No manual onboarding.
-`, base, base, base, base, base, base, base, base, base, base, base, base, base, base, base, base)
+Machine-to-machine payment rail for stablecoin trades and agent-funded PIX/card payment intents.
+No manual onboarding.
+`, base, base, base, base, base, base, base, base, base, base, base, base, base, base, base, base, base)
 }
 
 func (s *Server) handleRobotsTxt(w http.ResponseWriter, _ *http.Request) {
