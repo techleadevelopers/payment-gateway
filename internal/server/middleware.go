@@ -173,13 +173,13 @@ func cors(cfg *config.Config, next http.Handler) http.Handler {
 			}
 			if item == "*" {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, x-internal-hmac, x-idempotency-key, x-efi-signature, x-chainfx-signature")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, X-Admin-Console-Key, x-internal-hmac, x-idempotency-key, x-efi-signature, x-chainfx-signature")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				break
 			}
 			if origin != "" && item == origin {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, x-internal-hmac, x-idempotency-key, x-efi-signature, x-chainfx-signature")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, X-Admin-Console-Key, x-internal-hmac, x-idempotency-key, x-efi-signature, x-chainfx-signature")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				break
 			}
