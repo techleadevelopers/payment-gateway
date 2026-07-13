@@ -17,7 +17,6 @@ type Config struct {
 	DatabaseURL            string
 	AllowedOrigins         string
 	WebhookSecret          string
-	StripeWebhookSecret    string
 	Port                   string
 	OrderMinBrl            float64
 	OrderMaxBrl            float64
@@ -68,6 +67,7 @@ type Config struct {
 	EfiClientSecret    string
 	EfiPixKey          string
 	EfiApiBaseURL      string
+	EfiChargesBaseURL  string
 	EfiCertificatePath string
 	EfiCertificateKey  string
 	EfiCertificatePass string
@@ -168,7 +168,6 @@ func LoadConfig() *Config {
 		DatabaseURL:            getEnv("DATABASE_URL", ""),
 		AllowedOrigins:         getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://swapped-cryptocurrensy.vercel.app,https://www.chainfx.store,https://chainfx.store"),
 		WebhookSecret:          getEnv("WEBHOOK_SECRET", ""),
-		StripeWebhookSecret:    getEnv("STRIPE_WEBHOOK_SECRET", ""),
 		Port:                   getEnv("PORT", "8080"),
 		OrderMinBrl:            getEnvAsFloat("ORDER_MIN_BRL", 10.0),
 		OrderMaxBrl:            getEnvAsFloat("ORDER_MAX_BRL", 10000.0),
@@ -217,6 +216,7 @@ func LoadConfig() *Config {
 		EfiClientSecret:    getEnv("EFI_CLIENT_SECRET", ""),
 		EfiPixKey:          getEnv("EFI_PIX_KEY", ""),
 		EfiApiBaseURL:      getEnv("EFI_API_BASE_URL", "https://pix.api.efipay.com.br"),
+		EfiChargesBaseURL:  getEnv("EFI_CHARGES_API_BASE_URL", efiChargesDefaultBaseURL(getEnv("APP_ENV", getEnv("GO_ENV", "development")))),
 		EfiCertificatePath: getEnv("EFI_CERTIFICATE_PATH", ""),
 		EfiCertificateKey:  getEnv("EFI_CERTIFICATE_KEY_PATH", ""),
 		EfiCertificatePass: getEnv("EFI_CERTIFICATE_PASSWORD", ""),
@@ -288,6 +288,15 @@ func LoadConfig() *Config {
 func (c *Config) IsProduction() bool {
 	env := strings.ToLower(strings.TrimSpace(c.Environment))
 	return env == "production" || env == "prod"
+}
+
+func efiChargesDefaultBaseURL(env string) string {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "production", "prod":
+		return "https://cobrancas.api.efipay.com.br"
+	default:
+		return "https://cobrancas-h.api.efipay.com.br"
+	}
 }
 
 func (c *Config) ValidateProduction() error {
