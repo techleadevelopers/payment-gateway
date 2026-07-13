@@ -272,3 +272,32 @@ Capability Router	Execução roteada	6%	6% da execução
 API Access	10.000 requests	10 USDT	10 USDT
 MCP Access	10.000 tool calls	10 USDT	10 USDT
 Metering	Consumo de quota	Sem taxa adicional atual	Receita reconhecida na venda do pacote
+
+9. Gas Station / Paymaster
+Serviço
+
+Relay de transações EVM com gas patrocinado/abstraído, quote em USDT e split de taxa.
+
+Arquitetura financeira
+
+- `internal/paymaster/estimator.go` estima custo base via RPC e aplica surcharge/floor/cap.
+- `internal/paymaster/token_relayer.go` calcula `feeAmount = total * spreadBps / 10000` e `netAmount = total - feeAmount` usando aritmética inteira.
+- `gas_relay_requests` persiste status, tentativas, DLQ e chaves de idempotência.
+- `auto_sweeper_runs` registra sweeps da hot wallet para auditoria operacional.
+
+Receita
+
+Receita ChainFX =
+feeAmount cobrado no relay
+-
+custo real de gas
+-
+custo do signer/RPC
+
+Controles
+
+- idempotência por `sig_hash`;
+- rate limit por tier (`sk_test_*`, `sk_live_*`);
+- retry com exponential backoff e jitter;
+- DLQ persistida depois das tentativas;
+- k6 em `tests/paymaster_stress.js` para validar spike, colisão de idempotência e SLOs.
