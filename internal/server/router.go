@@ -116,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pix/webhook/buy", s.handlePixWebhookBuy)
 	mux.HandleFunc("POST /api/efi/charges/webhook/buy", s.handleEfiChargesWebhookBuy)
 	mux.HandleFunc("POST /internal/sweep", s.handleInternalSweep)
+	mux.HandleFunc("POST /internal/m2m/settled", s.handleInternalM2MSettled)
 	mux.HandleFunc("POST /internal/email/test", s.handleEmailTest)
 	mux.HandleFunc("POST /internal/email/marketing", s.handleMarketingEmail)
 	// ── Gas Station (Paymaster) ───────────────────────────────────────────────
