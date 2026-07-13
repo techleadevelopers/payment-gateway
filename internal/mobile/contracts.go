@@ -8,10 +8,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"payment-gateway/internal/workers"
 )
 
-// handleContractVault — GET /api/mobile/contracts/vault
 func (s *Server) handleContractVault(w http.ResponseWriter, r *http.Request) {
 	vaultAddr := strings.TrimSpace(s.cfg.TreasuryHot)
 	if vaultAddr == "" {
@@ -31,7 +29,6 @@ func (s *Server) handleContractVault(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleContractDelegate — GET /api/mobile/contracts/delegate
 func (s *Server) handleContractDelegate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"signer_url":     s.cfg.SignerUrl,
@@ -40,46 +37,23 @@ func (s *Server) handleContractDelegate(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// handleContractPayout — POST /api/mobile/contracts/payout
 func (s *Server) handleContractPayout(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		OrderID string  `json:"order_id"`
-		Amount  float64 `json:"amount"`
-		ToAddr  string  `json:"to_address"`
-	}
-	if err := decodeJSON(r, &req); err != nil || req.OrderID == "" || req.ToAddr == "" || req.Amount <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "order_id, to_address e amount obrigatórios"})
-		return
-	}
-	if s.cfg.SignerUrl == "" {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "signer não configurado", "hint": "set SIGNER_URL in .env"})
-		return
-	}
-	s.workers.Bus.Publish(workers.Event{
-		Type:    "mobile.payout.requested",
-		OrderID: req.OrderID,
-		Payload: map[string]any{"toAddr": req.ToAddr, "amount": req.Amount},
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": "payout de contrato exige rota admin/internal, nao JWT mobile",
 	})
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "order_id": req.OrderID, "status": "payout_enqueued"})
 }
 
-// handleContractPause — POST /api/mobile/contracts/pause
 func (s *Server) handleContractPause(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"ok":   true,
-		"hint": "Pause via signer service — configure SIGNER_URL e TREASURY_HOT",
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": "pause de contrato exige rota admin/internal, nao JWT mobile",
 	})
 }
 
-// handleContractUnpause — POST /api/mobile/contracts/unpause
 func (s *Server) handleContractUnpause(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"ok":   true,
-		"hint": "Unpause via signer service — configure SIGNER_URL e TREASURY_HOT",
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": "unpause de contrato exige rota admin/internal, nao JWT mobile",
 	})
 }
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
 
 func fetchBNBBalance(ctx context.Context, rpcURLs, address string) (string, error) {
 	url := strings.Split(rpcURLs, ",")[0]
