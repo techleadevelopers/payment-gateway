@@ -1,16 +1,22 @@
--- Admin Adversarial / Chaos Audit log
--- Apply: psql $DATABASE_URL -f schema_chaos.sql
+package adversarial
 
-CREATE TABLE IF NOT EXISTS admin_adversarial_runs (
-    id               SERIAL PRIMARY KEY,
-    triggered_by     VARCHAR(255) NOT NULL,
-    status           VARCHAR(50)  NOT NULL DEFAULT 'RUNNING',
-    scenarios_executed INT        NOT NULL DEFAULT 0,
-    failures_detected  INT        NOT NULL DEFAULT 0,
-    logs             TEXT,
-    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
+import "context"
 
-CREATE INDEX IF NOT EXISTS idx_adversarial_runs_created
-    ON admin_adversarial_runs (created_at DESC);
+// Engine implements the server.AdversarialEngine contract.
+//
+// The destructive scenarios in this package are currently expressed as Go
+// tests. The admin chaos endpoint can be wired to this engine without breaking
+// the server build, while a future runner can execute selected scenarios here
+// with explicit DB/runtime controls.
+type Engine struct{}
+
+func NewEngine() *Engine {
+	return &Engine{}
+}
+
+func (e *Engine) RunFullSuite(ctx context.Context) (scenarios, failures int, logOutput string, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, 0, "", err
+	}
+	return 0, 0, "adversarial engine runner not configured; run go test ./internal/adversarial for scenario execution", nil
+}
