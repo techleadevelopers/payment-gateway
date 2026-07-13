@@ -374,7 +374,7 @@ func (q *mobileQueries) SubscriptionsForEvent(ctx context.Context, eventType str
 	rows, err := q.sql.QueryContext(ctx, `
 		SELECT id, user_id::text, target_url, secret, events, active, created_at, updated_at
 		FROM webhook_subscriptions
-		WHERE active=true AND events @> ARRAY[$1]::text[]`,
+		WHERE active=true AND ($1 = ANY(events) OR '*' = ANY(events))`,
 		eventType)
 	if err != nil {
 		return nil, err
