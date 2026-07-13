@@ -12,6 +12,7 @@ import (
 
 	"payment-gateway/internal/database"
 
+	"github.com/lib/pq"
 	"gopkg.in/yaml.v3"
 )
 
@@ -137,6 +138,145 @@ func (s *Server) handleAdminTransactions(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"transactions": transactions,
 		"count":        len(transactions),
+	})
+}
+
+func (s *Server) handleAdminMobileTestPurge(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := s.authorizeAdmin(w, r); !ok {
+		return
+	}
+	var req struct {
+		Emails []string `json:"emails"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	emails := make([]string, 0, len(req.Emails))
+	seen := map[string]struct{}{}
+	for _, email := range req.Emails {
+		email = strings.ToLower(strings.TrimSpace(email))
+		if !strings.HasPrefix(email, "loadtest+") || !strings.HasSuffix(email, "@chainfx.local") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "cleanup only accepts loadtest+...@chainfx.local users",
+				"email": email,
+			})
+			return
+		}
+		if _, ok := seen[email]; !ok {
+			seen[email] = struct{}{}
+			emails = append(emails, email)
+		}
+	}
+	if len(emails) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"deletedUsers": 0, "emails": []string{}})
+		return
+	}
+
+	tx, err := s.db.SQL.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	rows, err := tx.QueryContext(r.Context(), `SELECT id::text, email FROM users WHERE lower(email) = ANY($1)`, pq.Array(emails))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	type testUser struct {
+		ID    string
+		Email string
+	}
+	users := []testUser{}
+	for rows.Next() {
+		var u testUser
+		if err := rows.Scan(&u.ID, &u.Email); err != nil {
+			_ = rows.Close()
+			writeError(w, err)
+			return
+		}
+		users = append(users, u)
+	}
+	if err := rows.Close(); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	deleted := map[string]int64{}
+	tableExists := map[string]bool{}
+	hasTable := func(table string) bool {
+		if ok, cached := tableExists[table]; cached {
+			return ok
+		}
+		var exists bool
+		if err := tx.QueryRowContext(r.Context(), `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			writeError(w, err)
+			return false
+		}
+		tableExists[table] = exists
+		return exists
+	}
+	execSQL := func(label, query string, args ...any) bool {
+		res, err := tx.ExecContext(r.Context(), query, args...)
+		if err != nil {
+			writeError(w, err)
+			return false
+		}
+		n, _ := res.RowsAffected()
+		deleted[label] += n
+		return true
+	}
+	for _, u := range users {
+		if hasTable("operation_ids") && !execSQL("operation_ids", `DELETE FROM operation_ids WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("webhook_subscriptions") && !execSQL("webhook_subscriptions", `DELETE FROM webhook_subscriptions WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("swaps") && !execSQL("swaps", `DELETE FROM swaps WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("kyc_requests") && !execSQL("kyc_requests", `DELETE FROM kyc_requests WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("dca_strategies") && !execSQL("dca_strategies", `DELETE FROM dca_strategies WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("notifications") && !execSQL("notifications", `DELETE FROM notifications WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("devices") && !execSQL("devices", `DELETE FROM devices WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("settings") && !execSQL("settings", `DELETE FROM settings WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("orders") && !execSQL("orders_unlinked", `UPDATE orders SET user_id=NULL WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if hasTable("buy_orders") && !execSQL("buy_orders_unlinked", `UPDATE buy_orders SET user_id=NULL WHERE user_id=$1::uuid`, u.ID) {
+			return
+		}
+		if !execSQL("users", `DELETE FROM users WHERE id=$1::uuid AND lower(email) LIKE 'loadtest+%@chainfx.local'`, u.ID) {
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeError(w, err)
+		return
+	}
+	committed = true
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deletedUsers": len(users),
+		"deleted":      deleted,
+		"emails":       emails,
 	})
 }
 
