@@ -287,6 +287,53 @@ func TestSmartRateLimitRouteClasses(t *testing.T) {
 	}
 }
 
+func TestPenaltyBoxBlocksAfterRepeatedRateLimitViolations(t *testing.T) {
+	cfg := &config.Config{RateLimitMax: 1}
+	s := &Server{
+		cfg:           cfg,
+		globalLimiter: newRateLimiter(60000, 20),
+		penaltyBox:    newPenaltyBox(true, 2, time.Minute, 15*time.Minute, time.Hour, 24*time.Hour),
+	}
+	hits := 0
+	handler := s.withSmartRateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	limit := smartRateLimitMax("anonymous", "write", cfg.RateLimitMax)
+	for i := 0; i < limit+3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/order", nil)
+		req.RemoteAddr = "203.0.113.10:1234"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if i < limit && rec.Code != http.StatusNoContent {
+			t.Fatalf("request %d should pass before limit, got %d body=%s", i, rec.Code, rec.Body.String())
+		}
+		if i >= limit && rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("request %d should be limited/blocked, got %d body=%s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if hits != limit {
+		t.Fatalf("expected only requests before the limit to reach handler, got %d hits", hits)
+	}
+}
+
+func TestClientIPTrustsForwardedHeadersOnlyFromTrustedProxy(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/order", nil)
+	req.RemoteAddr = "203.0.113.10:1234"
+	req.Header.Set("X-Forwarded-For", "198.51.100.99")
+	if got := clientIP(req); got != "203.0.113.10" {
+		t.Fatalf("expected untrusted public remote to ignore X-Forwarded-For, got %s", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/order", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("X-Forwarded-For", "198.51.100.99")
+	if got := clientIP(req); got != "198.51.100.99" {
+		t.Fatalf("expected trusted private proxy to use X-Forwarded-For, got %s", got)
+	}
+}
+
 func TestNormalizeSellNetworkAliases(t *testing.T) {
 	cases := map[string]string{
 		"":        "BSC",
