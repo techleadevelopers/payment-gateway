@@ -50,6 +50,11 @@ type Server struct {
 	certReadySource  string
 	certReadyOK      bool
 	certReadyErr     string
+
+	readyMu      sync.Mutex
+	readyChecked time.Time
+	readyStatus  int
+	readyPayload map[string]any
 }
 
 type requestIDContextKey struct{}
