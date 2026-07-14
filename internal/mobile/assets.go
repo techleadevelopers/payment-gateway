@@ -7,6 +7,7 @@ package mobile
 //	GET  /api/mobile/assets/{symbol}/rate — live price in BRL/USD
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -20,6 +21,9 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	assets, err := mobileDB(s.db).ListAssets(r.Context(), true)
 	if err != nil {
 		slog.Warn("mobile_assets_fallback", "err", err)
+		assets = s.fallbackMobileAssets()
+	}
+	if len(assets) == 0 {
 		assets = s.fallbackMobileAssets()
 	}
 
@@ -46,9 +50,7 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 			MaxBRL:   a.MaxAmount,
 			FeeBPS:   a.FeeBPS,
 		}
-		if pw != nil {
-			row.PriceBRL = assetPriceInBRL(pw, a.Symbol)
-		}
+		row.PriceBRL = mobileAssetPriceBRL(pw, a.Symbol)
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"assets": out, "count": len(out)})
@@ -75,11 +77,28 @@ func stringPtrOrNil(value string) *string {
 	return &value
 }
 
+func (s *Server) mobileAssetBySymbol(ctx context.Context, symbol string) (*models.Asset, bool, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return nil, false, nil
+	}
+	asset, err := mobileDB(s.db).GetAsset(ctx, symbol)
+	if err == nil && asset != nil {
+		return asset, false, nil
+	}
+	for _, fallback := range s.fallbackMobileAssets() {
+		if fallback.Symbol == symbol {
+			return &fallback, true, nil
+		}
+	}
+	return asset, false, err
+}
+
 // handleGetAsset — GET /api/mobile/assets/{symbol}
 func (s *Server) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(r.PathValue("symbol"))
-	asset, err := mobileDB(s.db).GetAsset(r.Context(), symbol)
-	if err != nil {
+	asset, fallback, err := s.mobileAssetBySymbol(r.Context(), symbol)
+	if err != nil && asset == nil {
 		slog.Error("erro interno", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro interno"})
 		return
@@ -88,7 +107,7 @@ func (s *Server) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ativo não encontrado"})
 		return
 	}
-	writeJSON(w, http.StatusOK, asset)
+	writeJSON(w, http.StatusOK, map[string]any{"asset": asset, "fallback": fallback})
 }
 
 // handleGetAssetRate — GET /api/mobile/assets/{symbol}/rate
@@ -96,8 +115,8 @@ func (s *Server) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetAssetRate(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(r.PathValue("symbol"))
 
-	asset, err := mobileDB(s.db).GetAsset(r.Context(), symbol)
-	if err != nil {
+	asset, _, err := s.mobileAssetBySymbol(r.Context(), symbol)
+	if err != nil && asset == nil {
 		slog.Error("erro interno", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro interno"})
 		return
@@ -108,11 +127,8 @@ func (s *Server) handleGetAssetRate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pw := s.PriceCache()
-	var priceBRL, priceUSD float64
-	if pw != nil {
-		priceBRL = assetPriceInBRL(pw, symbol)
-		priceUSD = assetPriceInUSD(pw, symbol)
-	}
+	priceBRL := mobileAssetPriceBRL(pw, symbol)
+	priceUSD := mobileAssetPriceUSD(pw, symbol)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"symbol":     symbol,
@@ -130,6 +146,9 @@ func (s *Server) handleGetAssetRate(w http.ResponseWriter, r *http.Request) {
 // assetPriceInBRL returns the BRL price for a given asset symbol using the
 // PriceWorker's cached prices.
 func assetPriceInBRL(pw interface{ GetPrice(string) float64 }, symbol string) float64 {
+	if pw == nil {
+		return 0
+	}
 	switch strings.ToUpper(symbol) {
 	case "USDT", "USDC", "BUSD":
 		return pw.GetPrice("BRL") // USDT≈1 USD
@@ -153,6 +172,9 @@ func assetPriceInBRL(pw interface{ GetPrice(string) float64 }, symbol string) fl
 }
 
 func assetPriceInUSD(pw interface{ GetPrice(string) float64 }, symbol string) float64 {
+	if pw == nil {
+		return 0
+	}
 	switch strings.ToUpper(symbol) {
 	case "USDT", "USDC", "BUSD":
 		return 1
@@ -162,6 +184,35 @@ func assetPriceInUSD(pw interface{ GetPrice(string) float64 }, symbol string) fl
 		if usdtEUR := pw.GetPrice("USDTEUR"); usdtEUR > 0 {
 			return 1 / usdtEUR
 		}
+	}
+	return 0
+}
+
+func mobileAssetPriceBRL(pw interface{ GetPrice(string) float64 }, symbol string) float64 {
+	price := assetPriceInBRL(pw, symbol)
+	if price > 0 {
+		return price
+	}
+	switch strings.ToUpper(symbol) {
+	case "USDT", "USDC", "BUSD":
+		if pw != nil {
+			if brl := pw.GetPrice("BRL"); brl > 0 {
+				return brl
+			}
+		}
+		return 1
+	}
+	return 0
+}
+
+func mobileAssetPriceUSD(pw interface{ GetPrice(string) float64 }, symbol string) float64 {
+	price := assetPriceInUSD(pw, symbol)
+	if price > 0 {
+		return price
+	}
+	switch strings.ToUpper(symbol) {
+	case "USDT", "USDC", "BUSD":
+		return 1
 	}
 	return 0
 }
