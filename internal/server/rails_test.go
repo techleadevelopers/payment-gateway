@@ -144,7 +144,15 @@ func TestWebAvailabilityAliasesBypassAuthAndDB(t *testing.T) {
 
 func TestSmartRateLimitSkipsCriticalWebhooks(t *testing.T) {
 	s := &Server{cfg: &config.Config{}}
-	for _, path := range []string{"/api/pix/webhook", "/api/pix/webhook/buy", "/api/efi/charges/webhook/buy"} {
+	for _, path := range []string{
+		"/api/pix/webhook",
+		"/api/pix/webhook/buy",
+		"/api/efi/charges/webhook/buy",
+		"/api/rates",
+		"/mcp/initialize",
+		"/mcp/tools/list",
+		"/mcp/resources/list",
+	} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		if !s.shouldSkipSmartRateLimit(req) {
 			t.Fatalf("expected %s to bypass global smart rate limit", path)
@@ -259,6 +267,7 @@ func TestSmartRateLimitRouteClasses(t *testing.T) {
 		{http.MethodPost, "/mcp/tools/call", "mcp"},
 		{http.MethodPost, "/marketplace/purchase/mp_1/execute", "execution"},
 		{http.MethodPost, "/api/order", "write"},
+		{http.MethodPost, "/api/quote", "read"},
 		{http.MethodGet, "/api/price", "read"},
 	}
 	for _, tc := range cases {
