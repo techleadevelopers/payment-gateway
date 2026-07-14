@@ -12,7 +12,7 @@ O Gas Station/Paymaster integrado hoje roda majoritariamente off-chain:
 Os contratos deste diretorio continuam sendo a camada opcional de vault/delegates para governanca on-chain, limites e hardening. Nao sao requisito para publicar o MCP ou usar `/v1/gas/*` no corte atual.
 
 
-Contratos editaveis para operar custodia/payout em redes EVM com foco em seguranca operacional. BSC continua sendo o caminho principal do core atual; Polygon foi adicionada como rede opcional para deploy do mesmo vault em liquidaÃ§Ã£o/settlement de baixo custo.
+Contratos editaveis para operar custodia/payout em redes EVM com foco em seguranca operacional. BSC continua sendo o caminho principal do core atual; Polygon foi adicionada como rede opcional para deploy do mesmo vault em liquidação/settlement de baixo custo.
 
 ## Contratos
 
@@ -97,7 +97,7 @@ npm run deploy:bsc
 
 ## Deploy Polygon Amoy
 
-Polygon Amoy Ã© a testnet atual para Polygon PoS. Chain ID `80002`; mainnet Polygon PoS usa chain ID `137`. A Polygon mantÃ©m instruÃ§Ãµes oficiais para adicionar Polygon/Amoy via ChainList/MetaMask, e a pÃ¡gina de Amoy informa RPC `https://rpc-amoy.polygon.technology/` e chain ID `80002`.
+Polygon Amoy Ã© a testnet atual para Polygon PoS. Chain ID `80002`; mainnet Polygon PoS usa chain ID `137`. A Polygon mantÃ©m instruções oficiais para adicionar Polygon/Amoy via ChainList/MetaMask, e a página de Amoy informa RPC `https://rpc-amoy.polygon.technology/` e chain ID `80002`.
 
 ```powershell
 $env:DEPLOYER_PRIVATE_KEY="0x..."
@@ -113,7 +113,7 @@ npm run deploy:polygon-amoy
 
 ## Deploy Polygon Mainnet
 
-Use Polygon para capability settlement/payout quando fizer sentido reduzir custo de gas ou atender providers que jÃ¡ liquidam em Polygon. Nao mude o fluxo principal BSC sem antes adaptar signer/core para aceitar `POLYGON` ponta a ponta.
+Use Polygon para capability settlement/payout quando fizer sentido reduzir custo de gas ou atender providers que já liquidam em Polygon. Nao mude o fluxo principal BSC sem antes adaptar signer/core para aceitar `POLYGON` ponta a ponta.
 
 ```powershell
 $env:DEPLOYER_PRIVATE_KEY="0x..."
