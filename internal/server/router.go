@@ -141,5 +141,5 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	// Prometheus-compatible metrics endpoint — protected by admin bearer auth.
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
-	return securityHeaders(cors(s.cfg, withRequestID(s.withDeveloperRequestLog(s.withPublicSurfaceGuards(s.withSmartRateLimit(mux))))))
+	return securityHeaders(cors(s.cfg, withRequestID(s.withServerTiming(s.withDeveloperRequestLog(s.withPublicSurfaceGuards(s.withSmartRateLimit(mux)))))))
 }
