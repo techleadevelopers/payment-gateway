@@ -14,7 +14,7 @@ import (
 func (s *Server) legacyHandleInternalSweep(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	if !validHMAC(s.cfg.SignerHmacSecret, raw, r.Header.Get("x-internal-hmac")) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura invÃ¡lida"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura inválida"})
 		return
 	}
 	var req struct {
@@ -23,7 +23,7 @@ func (s *Server) legacyHandleInternalSweep(w http.ResponseWriter, r *http.Reques
 		Amount     float64 `json:"amount"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil || req.Amount <= 0 || req.ToAddr == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload invÃ¡lido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload inválido"})
 		return
 	}
 	sweep, err := s.db.CreateSweep(r.Context(), req.ChildIndex, s.cfg.TreasuryHot, req.ToAddr, req.Amount, nil)
@@ -47,7 +47,7 @@ func (s *Server) legacyHandleEmailTest(w http.ResponseWriter, r *http.Request) {
 		HTML    string `json:"html"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON invÃ¡lido"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON inválido"})
 		return
 	}
 	if req.Subject == "" {
