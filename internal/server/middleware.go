@@ -62,8 +62,22 @@ func (s *Server) withSmartRateLimit(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		key, tier := s.smartRateLimitKey(r)
 		routeClass := smartRateLimitRouteClass(r)
+		penaltyKey := penaltyKeyForRequest(r, routeClass)
+		if banned, bannedUntil := s.penaltyBox.banned(penaltyKey, time.Now()); banned {
+			retryAfter := int(time.Until(bannedUntil).Seconds())
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error":      "temporarily blocked after repeated rate limit violations",
+				"routeClass": routeClass,
+				"retryAfter": retryAfter,
+			})
+			return
+		}
+		key, tier := s.smartRateLimitKey(r)
 		limit := smartRateLimitMax(tier, routeClass, s.cfg.RateLimitMax)
 		allowed, resetAt, remaining := s.globalLimiter.AllowN(key+":"+routeClass, limit)
 		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
@@ -73,6 +87,11 @@ func (s *Server) withSmartRateLimit(next http.Handler) http.Handler {
 			retryAfter := int(time.Until(resetAt).Seconds())
 			if retryAfter < 1 {
 				retryAfter = 1
+			}
+			if banned, bannedUntil := s.penaltyBox.recordViolation(penaltyKey, time.Now()); banned {
+				if penaltyRetryAfter := int(time.Until(bannedUntil).Seconds()); penaltyRetryAfter > retryAfter {
+					retryAfter = penaltyRetryAfter
+				}
 			}
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			writeJSON(w, http.StatusTooManyRequests, map[string]any{
