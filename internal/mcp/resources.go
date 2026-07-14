@@ -36,7 +36,7 @@ func (s *Server) resources() []Resource {
 }
 
 func (s *Server) handleResourcesList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"resources": s.resources()})
+	writeCachedJSON(w, http.StatusOK, s.resourcesJSON)
 }
 
 type resourceReadRequest struct {
