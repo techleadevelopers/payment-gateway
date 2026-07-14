@@ -88,7 +88,7 @@ SIGNER_URL=http://signer.railway.internal:4010
 SIGNER_HMAC_SECRET=mesmo-valor-do-HMAC_SECRET
 ```
 
-## RelaÃ§Ã£o com Gas Station / Paymaster
+## Relação com Gas Station / Paymaster
 
 O Paymaster/Gas Station roda no core (`internal/paymaster`) e orquestra quote, relay, idempotencia, retry, batching e DLQ. Ele **nao guarda chave privada**.
 
