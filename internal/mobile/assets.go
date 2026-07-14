@@ -18,6 +18,10 @@ import (
 
 // handleListAssets — GET /api/mobile/assets
 func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
+	if cached, ok := s.getMobileCache("assets:list"); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
 	assets, err := mobileDB(s.db).ListAssets(r.Context(), true)
 	if err != nil {
 		slog.Warn("mobile_assets_fallback", "err", err)
@@ -53,7 +57,9 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 		row.PriceBRL = mobileAssetPriceBRL(pw, a.Symbol)
 		out = append(out, row)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"assets": out, "count": len(out)})
+	response := map[string]any{"assets": out, "count": len(out)}
+	s.setMobileCache("assets:list", response, mobileHotCacheTTL)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) fallbackMobileAssets() []models.Asset {
@@ -97,6 +103,11 @@ func (s *Server) mobileAssetBySymbol(ctx context.Context, symbol string) (*model
 // handleGetAsset — GET /api/mobile/assets/{symbol}
 func (s *Server) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(r.PathValue("symbol"))
+	cacheKey := "assets:get:" + symbol
+	if cached, ok := s.getMobileCache(cacheKey); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
 	asset, fallback, err := s.mobileAssetBySymbol(r.Context(), symbol)
 	if err != nil && asset == nil {
 		slog.Error("erro interno", "err", err)
@@ -107,13 +118,20 @@ func (s *Server) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "ativo não encontrado"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"asset": asset, "fallback": fallback})
+	response := map[string]any{"asset": asset, "fallback": fallback}
+	s.setMobileCache(cacheKey, response, mobileCatalogCacheTTL)
+	writeJSON(w, http.StatusOK, response)
 }
 
 // handleGetAssetRate — GET /api/mobile/assets/{symbol}/rate
 // Returns live BRL/USD price for the requested asset.
 func (s *Server) handleGetAssetRate(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(r.PathValue("symbol"))
+	cacheKey := "assets:rate:" + symbol
+	if cached, ok := s.getMobileCache(cacheKey); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
 
 	asset, _, err := s.mobileAssetBySymbol(r.Context(), symbol)
 	if err != nil && asset == nil {
@@ -130,7 +148,7 @@ func (s *Server) handleGetAssetRate(w http.ResponseWriter, r *http.Request) {
 	priceBRL := mobileAssetPriceBRL(pw, symbol)
 	priceUSD := mobileAssetPriceUSD(pw, symbol)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"symbol":     symbol,
 		"price_brl":  priceBRL,
 		"price_usd":  priceUSD,
@@ -138,7 +156,9 @@ func (s *Server) handleGetAssetRate(w http.ResponseWriter, r *http.Request) {
 		"min_amount": asset.MinAmount,
 		"max_amount": asset.MaxAmount,
 		"updated_at": time.Now().Unix(),
-	})
+	}
+	s.setMobileCache(cacheKey, response, mobileHotCacheTTL)
+	writeJSON(w, http.StatusOK, response)
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
