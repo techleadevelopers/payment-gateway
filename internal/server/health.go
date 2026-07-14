@@ -22,11 +22,30 @@ func (s *Server) handleWebAvailability(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
-	if err := s.db.Ping(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "db": false, "error": err.Error()})
+	if status, payload, ok := s.cachedReady(time.Now(), time.Second); ok {
+		writeJSON(w, status, payload)
 		return
+	}
+	status, payload := s.computeReady(r)
+	if status == http.StatusServiceUnavailable {
+		if staleStatus, stalePayload, ok := s.cachedReady(time.Now(), 10*time.Second); ok && staleStatus == http.StatusOK {
+			stalePayload["stale"] = true
+			writeJSON(w, staleStatus, stalePayload)
+			return
+		}
+	}
+	s.storeReady(time.Now(), status, payload)
+	writeJSON(w, status, payload)
+}
+
+func (s *Server) computeReady(r *http.Request) (int, map[string]any) {
+	ctx, cancel := context.WithTimeout(r.Context(), 300*time.Millisecond)
+	defer cancel()
+	if s == nil || s.db == nil {
+		return http.StatusServiceUnavailable, map[string]any{"ok": false, "db": false, "error": "database not configured"}
+	}
+	if err := s.db.Ping(ctx); err != nil {
+		return http.StatusServiceUnavailable, map[string]any{"ok": false, "db": false, "error": err.Error()}
 	}
 	certOK, certErr := s.efiCertificateReady()
 	gaps := s.operationalGapsWithCertificate(certOK)
@@ -34,7 +53,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.IsProduction() && (len(gaps) > 0 || !certOK) {
 		status = http.StatusServiceUnavailable
 	}
-	writeJSON(w, status, map[string]any{
+	return status, map[string]any{
 		"ok":              len(gaps) == 0 && certOK,
 		"db":              true,
 		"network":         s.deliveryNetwork(),
@@ -48,7 +67,38 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		"signer":          s.cfg.SignerUrl != "" && s.cfg.SignerHmacSecret != "",
 		"mode":            s.cfg.Environment,
 		"warnings":        gaps,
-	})
+	}
+}
+
+func (s *Server) cachedReady(now time.Time, maxAge time.Duration) (int, map[string]any, bool) {
+	if s == nil {
+		return 0, nil, false
+	}
+	s.readyMu.Lock()
+	defer s.readyMu.Unlock()
+	if s.readyPayload == nil || s.readyStatus == 0 || now.Sub(s.readyChecked) > maxAge {
+		return 0, nil, false
+	}
+	return s.readyStatus, cloneMap(s.readyPayload), true
+}
+
+func (s *Server) storeReady(now time.Time, status int, payload map[string]any) {
+	if s == nil {
+		return
+	}
+	s.readyMu.Lock()
+	s.readyChecked = now
+	s.readyStatus = status
+	s.readyPayload = cloneMap(payload)
+	s.readyMu.Unlock()
+}
+
+func cloneMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *Server) operationalGaps() []string {
