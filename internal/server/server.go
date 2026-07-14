@@ -34,6 +34,7 @@ type Server struct {
 	webhookDashboard *webhooks.Dashboard
 	agents           *agents.Client
 	paymaster        *paymaster.Service
+	eipProbes        *eipProbeRunner
 	requestLogQueue  chan database.APIRequestLogInput
 	requestLogDrops  atomic.Int64
 	discoveryCache   map[string]cachedDiscoveryDocument
@@ -84,6 +85,7 @@ func New(cfg *config.Config, db *database.DB, workerMgr *workers.WorkerManager, 
 		webhookLogs:      webhooks.NewLogs(db),
 		webhookDashboard: webhooks.NewDashboard(db),
 		agents:           agents.NewClient(cfg),
+		eipProbes:        newEIPProbeRunner(cfg, db),
 		requestLogQueue:  make(chan database.APIRequestLogInput, 4096),
 		discoveryCache:   make(map[string]cachedDiscoveryDocument),
 	}
