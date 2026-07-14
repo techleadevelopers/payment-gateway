@@ -82,7 +82,7 @@ k6 run tests/paymaster_stress.js -e BASE_URL=https://api.chainfx.store -e API_KE
 **Arquivos:** `internal/mobile/kyc_v2.go`, `notifications.go`, `assets.go`, `orders.go`, `swap.go`  
 **Risco:** `err.Error()` em respostas HTTP 500 vaza nomes de tabelas, colunas, queries SQL e stack de chamadas Go â€” fornece roadmap de ataque.
 
-**Correção aplicada:** substituÃ­do por `"erro interno"` genÃ©rico em todas as respostas + log real via `slog.Error("erro interno", "err", err)` server-side.
+**Correção aplicada:** substituÃ­do por `"erro interno"` genérico em todas as respostas + log real via `slog.Error("erro interno", "err", err)` server-side.
 
 ---
 
@@ -143,7 +143,7 @@ Depois filtrar `ListWebhookSubscriptions` por `agent_api_key_hash = shortMCPSecr
 **Arquivo:** `internal/mcp/tools.go` (~linha 1329)  
 **Risco:** `amountBRL / usdtRate` usa `float64` â€” rounding errors acumulam em volumes altos e podem causar underpayment/overpayment sistemático de frações de centavo.
 
-**Status:** âš ï¸ Para corrigir completamente, migrar para `github.com/shopspring/decimal`. Impacto de mÃ©dio prazo; nÃ£o causa perda imediata em valores baixos.
+**Status:** âš ï¸ Para corrigir completamente, migrar para `github.com/shopspring/decimal`. Impacto de médio prazo; nÃ£o causa perda imediata em valores baixos.
 
 **Mitigação:** o sistema já usa `round6MCP()` em alguns lugares â€” garantir que **todos** os valores BRL/USDT finais passem por `math.Round(x * 1e6) / 1e6` antes de persistir.
 
@@ -166,7 +166,7 @@ Ou usar um proxy de API key como Kong/Nginx rate limit.
 **Arquivo:** `internal/workers/onchain.go` (linha 318)  
 **Risco:** `overpayment_amount > 0.001` gera log mas nÃ£o cria alerta no dashboard ou Prometheus. Saldos excedentes ficam na hot wallet sem visibilidade operacional.
 
-**Recomendação:** emitir mÃ©trica Prometheus `chainfx_m2m_overpayment_usdt{intent_id}` e criar alerta para `overpayment_amount > 0` no Grafana/PagerDuty.
+**Recomendação:** emitir métrica Prometheus `chainfx_m2m_overpayment_usdt{intent_id}` e criar alerta para `overpayment_amount > 0` no Grafana/PagerDuty.
 
 ---
 
@@ -236,13 +236,13 @@ ALTER TABLE marketing_contacts
 
 ### M-7 Â· WebSocket `handleWSPrice` â€” sem proteção contra connection flooding  
 **Arquivo:** `internal/mobile/ws.go`  
-**Risco:** `ws/price` Ã© pÃºblico e sem auth. Um atacante pode abrir 100k conexÃµes simultÃ¢neas, exaurindo file descriptors e memÃ³ria do servidor.
+**Risco:** `ws/price` é pÃºblico e sem auth. Um atacante pode abrir 100k conexÃµes simultÃ¢neas, exaurindo file descriptors e memÃ³ria do servidor.
 
 **Recomendação:** limitar conexÃµes por IP via reverse proxy (Nginx: `limit_conn`) ou contador interno no `wsHub`.
 
 ### M-8 Â· Webhook MCP `toolCreateWebhookSubscription` â€” secret em texto claro no DB  
 **Arquivo:** `internal/database/webhooks.go`  
-**Status:** O campo `Secret` já tem `json:"-"` (nÃ£o exposto em respostas JSON) âœ…. Mas Ã© armazenado em claro no PostgreSQL. Recomendação: hash com HMAC-SHA256 ou criptografia AES-GCM (similar ao `order_private`).
+**Status:** O campo `Secret` já tem `json:"-"` (nÃ£o exposto em respostas JSON) âœ…. Mas é armazenado em claro no PostgreSQL. Recomendação: hash com HMAC-SHA256 ou criptografia AES-GCM (similar ao `order_private`).
 
 ### M-9 Â· Logs de email podem conter PII  
 **Arquivo:** `internal/email/service.go` (linha 37)  
@@ -258,11 +258,11 @@ slog.Info("email enviado", "to_domain", strings.Split(to, "@")[1])
 ## ðŸ”µ BAIXOS / Observações
 
 ### B-1 Â· `require_auth` nÃ£o valida `claims.Type == "access"` em todos os paths  
-Em `handleRefresh`, a verificação `claims.Type != "refresh"` existe âœ…. Em `requireAuth`, a verificação `claims.Type != "access"` tambÃ©m existe âœ…. Correto.
+Em `handleRefresh`, a verificação `claims.Type != "refresh"` existe âœ…. Em `requireAuth`, a verificação `claims.Type != "access"` também existe âœ…. Correto.
 
 ### B-2 Â· `anonymous` como fallback de API key no MCP  
 **Arquivo:** `internal/mcp/tools.go` (linha 261)  
-Se `mcpAPIKey(r)` retorna vazio, o log de tool registra `APIKeyHash: ""`. NÃ£o Ã© vulnerabilidade de auth (o guard já rejeitou), mas prejudica auditoria.
+Se `mcpAPIKey(r)` retorna vazio, o log de tool registra `APIKeyHash: ""`. NÃ£o é vulnerabilidade de auth (o guard já rejeitou), mas prejudica auditoria.
 
 ### B-3 Â· `decodeJSON` ignorado em `handleMarkNotificationsRead`  
 **Arquivo:** `internal/mobile/notifications.go`  
@@ -318,7 +318,7 @@ ALTER TABLE assets ADD CONSTRAINT chk_symbol_upper CHECK (symbol = UPPER(symbol)
 | C-2 | `internal/mobile/server.go` + `ws.go` | Auth obrigatÃ³ria em WS /orders e /notifications; broadcast scoped por uid |
 | C-3 | `internal/mobile/server.go` | `requireAuth` em `/kyc/limits` |
 | C-4 | `internal/mobile/helpers_phase5.go` | SSRF DNS fail-closed (era fail-open) |
-| C-5 | `kyc_v2.go`, `notifications.go`, `assets.go`, `orders.go`, `swap.go` | Mensagens de erro genÃ©ricas + slog interno |
+| C-5 | `kyc_v2.go`, `notifications.go`, `assets.go`, `orders.go`, `swap.go` | Mensagens de erro genéricas + slog interno |
 | C-6 | `internal/workers/onchain.go` + `payout.go` | `defer recover()` em todas as goroutines anÃ´nimas |
 | A-1 | `internal/mobile/ws.go` | `wsCheckOrigin` valida `ALLOWED_ORIGINS` |
 | C-7p | `internal/mcp/tools.go` | Mascaramento de `targetUrl` + helper `maskURL` |
