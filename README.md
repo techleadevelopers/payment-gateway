@@ -8,7 +8,7 @@
 
 ##  ChainFx - Instant PIX to Stablecoin Payments
 
-**ChainFx** Ã© uma plataforma Web3 que permite comprar e vender stablecoins como USDT (Tether.io) e EURUSD (Digital Euro Dollar) de forma instantÃ¢nea e segura. Com integração via PIX, vocÃª pode realizar transações em segundos com total confiabilidade.
+**ChainFx** é uma plataforma Web3 que permite comprar e vender stablecoins como USDT (Tether.io) e EURUSD (Digital Euro Dollar) de forma instantÃ¢nea e segura. Com integração via PIX, vocÃª pode realizar transações em segundos com total confiabilidade.
 
 ###  Diferenciais da Plataforma
 
@@ -39,7 +39,7 @@
 
 ##  Fluxo de Pagamento - Step 2
 
-### Insira sua wallet e escolha o mÃ©todo de pagamento
+### Insira sua wallet e escolha o método de pagamento
 
 <div align="center">
   <img src="https://res.cloudinary.com/limpeja/image/upload/v1783064002/image-removebg-preview_6_ete3hd.png" alt="ChainFx - Tela de Pagamento" width="680" />
@@ -48,10 +48,10 @@
 **Como funciona:**
 
 1. **Informe sua Wallet** - Cole o endereÃ§o da sua carteira (ETH, BTC, USDT)
-2. **Escolha o mÃ©todo de pagamento**:
+2. **Escolha o método de pagamento**:
    - ðŸ’° **PIX** - InstantÃ¢neo e sem taxas extras
-   -  **VISA** - CartÃ£o de crÃ©dito internacional
-   -  **Mastercard** - CartÃ£o de crÃ©dito internacional
+   -  **VISA** - CartÃ£o de crédito internacional
+   -  **Mastercard** - CartÃ£o de crédito internacional
 3. **Confirme a transação** e receba suas criptos em segundos
 
 ---
@@ -73,7 +73,7 @@
 
 ---
 
-##  Fluxo de Pagamento - Step 3 (CartÃ£o de CrÃ©dito - Efí)
+##  Fluxo de Pagamento - Step 3 (CartÃ£o de Crédito - Efí)
 
 ### Integração consolidada via EfÃ­ Bank
 
@@ -83,8 +83,8 @@
 
 O frontend gera `payment_token` com o SDK JavaScript oficial da Efí. O backend nunca recebe dados brutos do cartão; ele recebe o token, cria a cobrança Efí e libera cripto somente quando o webhook/consulta retorna status `paid`.
 
--  **VISA** - CartÃ£o de crÃ©dito internacional
--  **Mastercard** - CartÃ£o de crÃ©dito internacional
+-  **VISA** - CartÃ£o de crédito internacional
+-  **Mastercard** - CartÃ£o de crédito internacional
 
 Estados Efí `approved` e `waiting` ficam pendentes; não liberam cripto automaticamente.
 
@@ -95,7 +95,7 @@ Estados Efí `approved` e `waiting` ficam pendentes; não liberam cripto automat
 
 1. Selecione a criptomoeda que deseja vender
 2. Informe a quantidade
-3. Escolha o mÃ©todo de recebimento (PIX)
+3. Escolha o método de recebimento (PIX)
 4. Confirme a transação e receba em sua conta
 
 ---
@@ -915,9 +915,9 @@ Fase 5 sera integrada futuramente com foco em expansao operacional:
 
 ## SeguranÃ§a de CustÃ³dia com EIP-7702
 
-O signer Go inclui uma camada opcional de proteção de custÃ³dia baseada em EIP-7702. O objetivo nÃ£o Ã© executar arbitragem nem alterar o fluxo PIX, mas proteger a hot wallet contra delegações inesperadas de conta EOA.
+O signer Go inclui uma camada opcional de proteção de custÃ³dia baseada em EIP-7702. O objetivo nÃ£o é executar arbitragem nem alterar o fluxo PIX, mas proteger a hot wallet contra delegações inesperadas de conta EOA.
 
-O EIP-7702 introduz transações `SET_CODE` (`type 0x04`) com `authorizationList`, permitindo que uma EOA autorize temporariamente/de forma controlada a execução de cÃ³digo delegado. Isso Ã© poderoso para account abstraction, batching e session keys, mas tambÃ©m cria um novo risco operacional: se a hot wallet autorizar um delegate desconhecido ou comprometido, a custÃ³dia pode ser afetada.
+O EIP-7702 introduz transações `SET_CODE` (`type 0x04`) com `authorizationList`, permitindo que uma EOA autorize temporariamente/de forma controlada a execução de cÃ³digo delegado. Isso é poderoso para account abstraction, batching e session keys, mas também cria um novo risco operacional: se a hot wallet autorizar um delegate desconhecido ou comprometido, a custÃ³dia pode ser afetada.
 
 Por isso o signer tem um `CustodyGuard`:
 
@@ -941,7 +941,7 @@ CUSTODY_ALLOWED_SELECTORS=
 CUSTODY_PROTECTED_WALLETS=
 ```
 
-A hot wallet derivada de `EVM_PRIVATE_KEY` entra automaticamente na lista protegida. `CUSTODY_PROTECTED_WALLETS` serve para adicionar outras carteiras. `CUSTODY_TRUSTED_DELEGATES` deve conter somente contratos auditados e esperados. Se o bytecode de um delegate confiável mudar ou surgir delegate desconhecido, o signer bloqueia a assinatura atÃ© intervenção operacional.
+A hot wallet derivada de `EVM_PRIVATE_KEY` entra automaticamente na lista protegida. `CUSTODY_PROTECTED_WALLETS` serve para adicionar outras carteiras. `CUSTODY_TRUSTED_DELEGATES` deve conter somente contratos auditados e esperados. Se o bytecode de um delegate confiável mudar ou surgir delegate desconhecido, o signer bloqueia a assinatura até intervenção operacional.
 
 ## Custodia Operacional em Producao
 
