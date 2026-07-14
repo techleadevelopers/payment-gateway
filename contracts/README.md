@@ -97,7 +97,7 @@ npm run deploy:bsc
 
 ## Deploy Polygon Amoy
 
-Polygon Amoy Ã© a testnet atual para Polygon PoS. Chain ID `80002`; mainnet Polygon PoS usa chain ID `137`. A Polygon mantÃ©m instruções oficiais para adicionar Polygon/Amoy via ChainList/MetaMask, e a página de Amoy informa RPC `https://rpc-amoy.polygon.technology/` e chain ID `80002`.
+Polygon Amoy é a testnet atual para Polygon PoS. Chain ID `80002`; mainnet Polygon PoS usa chain ID `137`. A Polygon mantém instruções oficiais para adicionar Polygon/Amoy via ChainList/MetaMask, e a página de Amoy informa RPC `https://rpc-amoy.polygon.technology/` e chain ID `80002`.
 
 ```powershell
 $env:DEPLOYER_PRIVATE_KEY="0x..."
