@@ -143,6 +143,19 @@ type Config struct {
 	EIP712DomainVersion     string
 	EIP712ChainID           int64
 	EIP712VerifyingContract string
+	EIPProbeEnabled         bool
+	EIPProbeRealRun         bool
+	EIPProbeNetwork         string
+	EIPProbeRPCUrls         string
+	EIPProbeRelayerPrivKey  string
+	EIPProbeWalletPrivKeys  string
+	EIPProbeUSDCContract    string
+	EIPProbeUSDTContract    string
+	EIPProbeUSDCName        string
+	EIPProbeUSDCVersion     string
+	EIPProbeAmountRaw       string
+	EIPProbeConfirmTimeout  int
+	EIPProbeExpectedGas3009 uint64
 
 	// On-chain reorg protection — minimum block confirmations before accepting a deposit.
 	// BSC is finalistic with low reorg depth; Polygon can have deep reorgs.
@@ -292,6 +305,19 @@ func LoadConfig() *Config {
 		EIP712DomainVersion:     getEnv("EIP712_DOMAIN_VERSION", "1"),
 		EIP712ChainID:           int64(getEnvAsInt("EIP712_CHAIN_ID", 56)),
 		EIP712VerifyingContract: getEnv("EIP712_VERIFYING_CONTRACT", firstNonEmptyConfig(getEnv("TREASURY_HOT", ""), getEnv("SELL_WALLET_ADDRESS", "0x7e3BF3FDfeF16040CE3ec60A663381766d3dB375"))),
+		EIPProbeEnabled:         getEnvAsBool("EIP_PROBE_ENABLED", true),
+		EIPProbeRealRun:         getEnvAsBool("EIP_PROBE_REAL_RUN", false),
+		EIPProbeNetwork:         strings.ToLower(getEnv("EIP_PROBE_NETWORK", getEnv("SIGNER_NETWORK", "bsc"))),
+		EIPProbeRPCUrls:         getEnv("EIP_PROBE_RPC_URLS", firstNonEmptyConfig(getEnv("POLYGON_AMOY_RPC_URLS", ""), getEnv("BNB_TESTNET_RPC_URLS", ""), getBscRpcUrls(), getPolygonRpcUrls())),
+		EIPProbeRelayerPrivKey:  getEnv("EIP_PROBE_RELAYER_PRIVATE_KEY", getEnv("PAYMASTER_PRIV_KEY", "")),
+		EIPProbeWalletPrivKeys:  getEnv("EIP_PROBE_WALLET_PRIVATE_KEYS", ""),
+		EIPProbeUSDCContract:    getEnv("EIP_PROBE_USDC_CONTRACT", getEnv("USDC_TESTNET_CONTRACT", "")),
+		EIPProbeUSDTContract:    getEnv("EIP_PROBE_USDT_CONTRACT", getEnv("USDT_TESTNET_CONTRACT", "")),
+		EIPProbeUSDCName:        getEnv("EIP_PROBE_USDC_NAME", "USD Coin"),
+		EIPProbeUSDCVersion:     getEnv("EIP_PROBE_USDC_VERSION", "2"),
+		EIPProbeAmountRaw:       getEnv("EIP_PROBE_AMOUNT_RAW", "10000"),
+		EIPProbeConfirmTimeout:  getEnvAsInt("EIP_PROBE_CONFIRM_TIMEOUT_SEC", 45),
+		EIPProbeExpectedGas3009: uint64(getEnvAsInt("EIP_PROBE_EXPECTED_GAS_EIP3009", 90000)),
 		BSCMinConfirmations:     getEnvAsUint64("BSC_MIN_CONFIRMATIONS", 6),
 		PolygonMinConfirmations: getEnvAsUint64("POLYGON_MIN_CONFIRMATIONS", 128),
 
@@ -415,29 +441,48 @@ func firstNonEmptyConfig(values ...string) string {
 }
 
 func getBscRpcUrls() string {
-	if raw := strings.TrimSpace(getEnv("BSC_RPC_URLS", getEnv("RPC_URLS", getEnv("RPC_URL", "")))); raw != "" {
-		return raw
-	}
 	var urls []string
-	for _, key := range []string{"ALCHEMY_BSC_RPC_URL_1", "ALCHEMY_BSC_RPC_URL_2", "ALCHEMY_BSC_RPC_URL", "ALCHEMY_BSC_FALLBACK_RPC_URL"} {
-		if url := strings.TrimSpace(getEnv(key, "")); url != "" {
-			urls = append(urls, url)
+	seen := map[string]bool{}
+	for _, key := range []string{
+		"BSC_RPC_URLS", "RPC_URLS", "RPC_URL",
+		"RPC1", "RPC2", "RPC3", "RPC4", "RPCN",
+		"ALCHEMY_BSC_RPC_URL_1", "ALCHEMY_BSC_RPC_URL_2", "ALCHEMY_BSC_RPC_URL", "ALCHEMY_BSC_FALLBACK_RPC_URL",
+	} {
+		for _, url := range splitConfigCSV(getEnv(key, "")) {
+			if !seen[url] {
+				urls = append(urls, url)
+				seen[url] = true
+			}
 		}
 	}
 	return strings.Join(urls, ",")
 }
 
 func getPolygonRpcUrls() string {
-	if raw := strings.TrimSpace(getEnv("POLYGON_RPC_URLS", getEnv("POLYGON_RPC_URL", ""))); raw != "" {
-		return raw
-	}
 	var urls []string
-	for _, key := range []string{"ALCHEMY_POLYGON_RPC_URL_1", "ALCHEMY_POLYGON_RPC_URL_2", "ALCHEMY_POLYGON_RPC_URL", "ALCHEMY_POLYGON_FALLBACK_RPC_URL"} {
-		if url := strings.TrimSpace(getEnv(key, "")); url != "" {
-			urls = append(urls, url)
+	seen := map[string]bool{}
+	for _, key := range []string{"POLYGON_RPC_URLS", "POLYGON_RPC_URL", "ALCHEMY_POLYGON_RPC_URL_1", "ALCHEMY_POLYGON_RPC_URL_2", "ALCHEMY_POLYGON_RPC_URL", "ALCHEMY_POLYGON_FALLBACK_RPC_URL"} {
+		for _, url := range splitConfigCSV(getEnv(key, "")) {
+			if !seen[url] {
+				urls = append(urls, url)
+				seen[url] = true
+			}
 		}
 	}
 	return strings.Join(urls, ",")
+}
+
+func splitConfigCSV(raw string) []string {
+	var out []string
+	for _, value := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	}) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func getEnvAsInt(key string, defaultValue int) int {
