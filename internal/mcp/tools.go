@@ -707,7 +707,10 @@ func (s *Server) toolListCapabilities(ctx context.Context, args map[string]any) 
 	if query != "" {
 		filter.Capability = query
 	}
-	return s.db.ListMarketplaceCapabilities(ctx, filter)
+	cacheKey := "tool:listCapabilities:" + strings.ToLower(strings.TrimSpace(filter.Category)) + ":" + strings.ToUpper(strings.TrimSpace(filter.PaymentAsset)) + ":" + strings.ToLower(query)
+	return s.cachedValue(cacheKey, 30*time.Second, func() (any, error) {
+		return s.db.ListMarketplaceCapabilities(ctx, filter)
+	})
 }
 
 func (s *Server) toolGetCapability(ctx context.Context, args map[string]any) (any, error) {
@@ -715,10 +718,14 @@ func (s *Server) toolGetCapability(ctx context.Context, args map[string]any) (an
 	if id == "" {
 		return nil, fmt.Errorf("capability e obrigatoria")
 	}
-	capability, err := s.db.GetMarketplaceCapability(ctx, id)
+	cacheKey := "tool:getCapability:" + strings.ToLower(strings.TrimSpace(id))
+	value, err := s.cachedValue(cacheKey, 30*time.Second, func() (any, error) {
+		return s.db.GetMarketplaceCapability(ctx, id)
+	})
 	if err != nil {
 		return nil, err
 	}
+	capability, _ := value.(*database.MarketplaceCapability)
 	if capability == nil {
 		return nil, fmt.Errorf("capability nao encontrada: %s", id)
 	}
@@ -730,10 +737,15 @@ func (s *Server) toolGetCapabilityContract(ctx context.Context, args map[string]
 	if id == "" {
 		return nil, fmt.Errorf("capability e obrigatoria")
 	}
-	contract, err := s.db.GetMarketplaceCapabilityContract(ctx, id, stringArg(args, "version"))
+	version := stringArg(args, "version")
+	cacheKey := "tool:getCapabilityContract:" + strings.ToLower(strings.TrimSpace(id)) + ":" + strings.ToLower(strings.TrimSpace(firstNonEmptyMCP(version, "v1")))
+	value, err := s.cachedValue(cacheKey, 30*time.Second, func() (any, error) {
+		return s.db.GetMarketplaceCapabilityContract(ctx, id, version)
+	})
 	if err != nil {
 		return nil, err
 	}
+	contract, _ := value.(*database.MarketplaceCapabilityContract)
 	if contract == nil {
 		return nil, fmt.Errorf("contrato de capability nao encontrado: %s", id)
 	}
