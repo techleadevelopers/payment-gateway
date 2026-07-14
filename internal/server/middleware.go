@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -152,7 +153,7 @@ func shortSecretHash(value string) string {
 func smartRateLimitRouteClass(r *http.Request) string {
 	path := r.URL.Path
 	method := r.Method
-	if method == http.MethodGet && (path == "/mcp/capabilities.json" || path == "/agent/v1/capabilities" || path == "/agent/v1/assets" || strings.HasPrefix(path, "/.well-known/")) {
+	if method == http.MethodGet && (path == "/mcp/capabilities.json" || path == "/agent/v1/capabilities" || path == "/agent/v1/assets" || strings.HasPrefix(path, "/agent/v1/pricing/") || path == "/marketplace/capabilities" || path == "/marketplace/products" || strings.HasPrefix(path, "/.well-known/")) {
 		return "public_discovery"
 	}
 	if path == "/api/rates" || path == "/rates" || path == "/api/price" || path == "/price" || path == "/api/quote" || path == "/quote" {
@@ -228,7 +229,7 @@ func cors(cfg *config.Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		w.Header().Add("Vary", "Origin")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After, Server-Timing, X-Route-Class, X-MCP-Tool-Class")
 		for _, item := range allowed {
 			item = strings.TrimSpace(item)
 			if item == "" {
@@ -261,6 +262,44 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
+	})
+}
+
+type serverTimingWriter struct {
+	http.ResponseWriter
+	start time.Time
+	wrote bool
+}
+
+func (w *serverTimingWriter) WriteHeader(status int) {
+	if !w.wrote {
+		durationMS := float64(time.Since(w.start).Microseconds()) / 1000
+		w.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.2f, total;dur=%.2f", durationMS, durationMS))
+		w.wrote = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *serverTimingWriter) Write(body []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *serverTimingWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *serverTimingWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (s *Server) withServerTiming(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&serverTimingWriter{ResponseWriter: w, start: time.Now()}, r)
 	})
 }
 
