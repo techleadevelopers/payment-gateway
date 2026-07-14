@@ -197,15 +197,17 @@ func (q *mobileQueries) ListKYCByUser(ctx context.Context, userID string, limit 
 
 func (q *mobileQueries) CreateSwap(ctx context.Context, userID, fromAsset, toAsset string,
 	fromAmount, slippage float64, feeBPS int) (*models.Swap, error) {
-	var id string
+	s := &models.Swap{}
 	err := q.sql.QueryRowContext(ctx, `
 		INSERT INTO swaps (user_id, from_asset, to_asset, from_amount, fee_bps, slippage_tolerance)
-		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		userID, fromAsset, toAsset, fromAmount, feeBPS, slippage).Scan(&id)
-	if err != nil {
-		return nil, err
-	}
-	return q.GetSwap(ctx, id)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		RETURNING id,user_id,from_asset,to_asset,from_amount,to_amount,rate,
+		          fee_bps,slippage_tolerance,status,tx_hash,error,created_at,updated_at`,
+		userID, fromAsset, toAsset, fromAmount, feeBPS, slippage).Scan(
+		&s.ID, &s.UserID, &s.FromAsset, &s.ToAsset, &s.FromAmount, &s.ToAmount,
+		&s.Rate, &s.FeeBPS, &s.SlippageTolerance, &s.Status, &s.TxHash, &s.Error,
+		&s.CreatedAt, &s.UpdatedAt)
+	return s, err
 }
 
 func (q *mobileQueries) GetSwap(ctx context.Context, id string) (*models.Swap, error) {
