@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +25,11 @@ func (s *Server) writeCachedDiscoveryJSON(w http.ResponseWriter, r *http.Request
 	if !ok {
 		payload, err := build()
 		if err != nil {
+			var statusErr httpStatusError
+			if errors.As(err, &statusErr) {
+				writeAPIError(w, r, statusErr.status, statusErr.code, statusErr.message)
+				return
+			}
 			writeError(w, err)
 			return
 		}
@@ -76,4 +82,18 @@ func (s *Server) storeDiscoveryDocument(key string, doc cachedDiscoveryDocument)
 		s.discoveryCache = make(map[string]cachedDiscoveryDocument)
 	}
 	s.discoveryCache[key] = doc
+}
+
+type httpStatusError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e httpStatusError) Error() string {
+	return e.message
+}
+
+func notFoundError(message string) error {
+	return httpStatusError{status: http.StatusNotFound, code: "NOT_FOUND", message: message}
 }
