@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -152,7 +153,13 @@ func (s *Service) SubmitRelay(ctx context.Context, req *RelayRequest) (*RelayRes
 		return nil, fmt.Errorf("gas station is disabled")
 	}
 
-	// 1. Derive sig hash for idempotency.
+	if err := validateRelaySignature(req.SigR, req.SigS, req.SigV); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNonRetryable, err)
+	}
+
+	// 1. Derive replay hash from the signature components. This is an
+	// anti-replay/idempotency guard for the custodial relay path; it is not an
+	// EIP-2612 permit validation.
 	sigHash, err := PermitSigHash(req.SigR, req.SigS)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid sig components: %v", ErrNonRetryable, err)
@@ -225,6 +232,27 @@ func (s *Service) SubmitRelay(ctx context.Context, req *RelayRequest) (*RelayRes
 		Status:  "pending",
 		FeeUSDT: est.FeeUSDTFloat(),
 	}, nil
+}
+
+func validateRelaySignature(r, s, v string) error {
+	if !isRelaySigHex(r, 32) || !isRelaySigHex(s, 32) {
+		return fmt.Errorf("sig_r and sig_s must be 32-byte hex values")
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "1", "27", "28", "0x0", "0x1", "0x1b", "0x1c":
+		return nil
+	default:
+		return fmt.Errorf("sig_v must be 0, 1, 27, or 28")
+	}
+}
+
+func isRelaySigHex(value string, wantBytes int) bool {
+	raw := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(value), "0x"), "0X")
+	if len(raw) != wantBytes*2 {
+		return false
+	}
+	_, err := hexDecodeOptional(raw)
+	return err == nil
 }
 
 // GetRelay returns the current state of a relay request.
