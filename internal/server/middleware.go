@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"payment-gateway/internal/config"
@@ -59,7 +60,9 @@ func (s *Server) rejectUnsafeInternalRequest(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) withSmartRateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limiterStart := time.Now()
 		if s.shouldSkipSmartRateLimit(r) {
+			addServerTiming(r.Context(), "limiter", time.Since(limiterStart))
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -67,6 +70,7 @@ func (s *Server) withSmartRateLimit(next http.Handler) http.Handler {
 		w.Header().Set("X-Route-Class", routeClass)
 		penaltyKey := penaltyKeyForRequest(r, routeClass)
 		if banned, bannedUntil := s.penaltyBox.banned(penaltyKey, time.Now()); banned {
+			addServerTiming(r.Context(), "limiter", time.Since(limiterStart))
 			retryAfter := int(time.Until(bannedUntil).Seconds())
 			if retryAfter < 1 {
 				retryAfter = 1
@@ -86,6 +90,7 @@ func (s *Server) withSmartRateLimit(next http.Handler) http.Handler {
 		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetAt.Unix(), 10))
 		if !allowed {
+			addServerTiming(r.Context(), "limiter", time.Since(limiterStart))
 			retryAfter := int(time.Until(resetAt).Seconds())
 			if retryAfter < 1 {
 				retryAfter = 1
@@ -104,6 +109,7 @@ func (s *Server) withSmartRateLimit(next http.Handler) http.Handler {
 			})
 			return
 		}
+		addServerTiming(r.Context(), "limiter", time.Since(limiterStart))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -267,14 +273,15 @@ func securityHeaders(next http.Handler) http.Handler {
 
 type serverTimingWriter struct {
 	http.ResponseWriter
-	start time.Time
-	wrote bool
+	start   time.Time
+	timings *requestTimings
+	wrote   bool
 }
 
 func (w *serverTimingWriter) WriteHeader(status int) {
 	if !w.wrote {
-		durationMS := float64(time.Since(w.start).Microseconds()) / 1000
-		w.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.2f, total;dur=%.2f", durationMS, durationMS))
+		total := time.Since(w.start)
+		w.Header().Set("Server-Timing", serverTimingHeader(w.timings, total))
 		w.wrote = true
 	}
 	w.ResponseWriter.WriteHeader(status)
@@ -299,8 +306,50 @@ func (w *serverTimingWriter) Unwrap() http.ResponseWriter {
 
 func (s *Server) withServerTiming(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(&serverTimingWriter{ResponseWriter: w, start: time.Now()}, r)
+		timings := &requestTimings{stages: make(map[string]time.Duration)}
+		ctx := context.WithValue(r.Context(), serverTimingContextKey{}, timings)
+		next.ServeHTTP(&serverTimingWriter{ResponseWriter: w, start: time.Now(), timings: timings}, r.WithContext(ctx))
 	})
+}
+
+type serverTimingContextKey struct{}
+
+type requestTimings struct {
+	mu     sync.Mutex
+	stages map[string]time.Duration
+}
+
+func addServerTiming(ctx context.Context, name string, duration time.Duration) {
+	timings, ok := ctx.Value(serverTimingContextKey{}).(*requestTimings)
+	if !ok || timings == nil || name == "" {
+		return
+	}
+	timings.mu.Lock()
+	timings.stages[name] += duration
+	timings.mu.Unlock()
+}
+
+func serverTimingHeader(timings *requestTimings, total time.Duration) string {
+	stages := map[string]time.Duration{}
+	if timings != nil {
+		timings.mu.Lock()
+		for k, v := range timings.stages {
+			stages[k] = v
+		}
+		timings.mu.Unlock()
+	}
+	parts := make([]string, 0, 6)
+	for _, name := range []string{"limiter", "auth", "db_wait", "queue", "response_write"} {
+		if duration, ok := stages[name]; ok {
+			parts = append(parts, fmt.Sprintf("%s;dur=%.2f", name, duration.Seconds()*1000))
+		}
+	}
+	totalMS := total.Seconds() * 1000
+	if _, ok := stages["handler"]; !ok {
+		parts = append(parts, fmt.Sprintf("handler;dur=%.2f", totalMS))
+	}
+	parts = append(parts, fmt.Sprintf("server_total;dur=%.2f", totalMS))
+	return strings.Join(parts, ", ")
 }
 
 type statusCaptureWriter struct {
@@ -339,9 +388,10 @@ func (s *Server) withDeveloperRequestLog(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		rec.Flush()
 		duration := time.Since(start)
-		slog.Info("http_request", "request_id", requestID(r), "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds())
+		if shouldEmitHTTPLog(status, duration) {
+			slog.Warn("http_request_slow_or_error", "request_id", requestID(r), "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds())
+		}
 		if s == nil || s.db == nil || s.shouldSkipDeveloperRequestLog(r) || status == http.StatusTooManyRequests {
 			return
 		}
@@ -390,6 +440,16 @@ func (s *Server) withDeveloperRequestLog(next http.Handler) http.Handler {
 			UserAgent:   r.UserAgent(),
 		})
 	})
+}
+
+func shouldEmitHTTPLog(status int, duration time.Duration) bool {
+	if status >= http.StatusInternalServerError {
+		return true
+	}
+	if status >= http.StatusBadRequest && status != http.StatusTooManyRequests {
+		return true
+	}
+	return duration >= 1500*time.Millisecond
 }
 
 func (s *Server) shouldSkipDeveloperRequestLog(r *http.Request) bool {
