@@ -247,15 +247,13 @@ func (s *Server) handleToolsCallWithAuthorize(authorize Authorize) http.HandlerF
 		var req toolCallRequest
 		if err := decodeJSON(r, &req); err != nil {
 			s.recordMCPToolLog(r, "", "error", "invalid_json", time.Since(start))
-			writeMCPError(w, http.StatusBadRequest, "JSON invÃ¡lido")
+			writeMCPError(w, http.StatusBadRequest, "JSON invalido")
 			return
 		}
 
-		// ── Per-API-key rate limiting ─────────────────────────────────────────────
 		apiKey := mcpAPIKey(r)
 		keyHash := shortMCPSecretHash(apiKey)
 		if keyHash == "" {
-			// Anonymous: bucket by client IP
 			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 				parts := strings.SplitN(xff, ",", 2)
 				keyHash = "anon:" + strings.TrimSpace(parts[0])
@@ -267,6 +265,7 @@ func (s *Server) handleToolsCallWithAuthorize(authorize Authorize) http.HandlerF
 				keyHash = "anon:" + addr
 			}
 		}
+
 		toolClass := mcpToolRateClass(req.Name)
 		limit := tierLimit(apiKey, toolClass)
 		allowed, remaining, resetAt := s.rl.allow(keyHash+":"+toolClass, limit)
@@ -290,18 +289,9 @@ func (s *Server) handleToolsCallWithAuthorize(authorize Authorize) http.HandlerF
 			return
 		}
 
-		// ── Dispatch ──────────────────────────────────────────────────────────────
-		// Inject the raw API key into the context so tool implementations can
-		// read it via mcpAPIKeyFromCtx (used for IDOR-safe webhook listing).
 		ctx := context.WithValue(r.Context(), mcpAPIKeyCtxKey{}, apiKey)
 		r = r.WithContext(ctx)
 
-		var req toolCallRequest
-		if err := decodeJSON(r, &req); err != nil {
-			s.recordMCPToolLog(r, "", "error", "invalid_json", time.Since(start))
-			writeMCPError(w, http.StatusBadRequest, "JSON inválido")
-			return
-		}
 		if !isPublicMCPTool(req.Name) && authorize != nil {
 			if !authorize(w, r) {
 				s.recordMCPToolLog(r, req.Name, "error", "unauthorized", time.Since(start))
@@ -326,7 +316,6 @@ func (s *Server) handleToolsCallWithAuthorize(authorize Authorize) http.HandlerF
 		})
 	}
 }
-
 func isPublicMCPTool(name string) bool {
 	switch name {
 	case "get_rates",
@@ -341,6 +330,47 @@ func isPublicMCPTool(name string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func mcpToolRateClass(name string) string {
+	switch name {
+	case "get_rates",
+		"searchCapabilities",
+		"listCapabilities",
+		"getCapability",
+		"getCapabilityContract",
+		"chooseRoute",
+		"listAssets",
+		"quote",
+		"getPurchase",
+		"getUsage",
+		"settlementStatus",
+		"get_order_status",
+		"list_webhook_events",
+		"list_webhook_subscriptions",
+		"listAgentGrants",
+		"getAgentPolicy",
+		"dryRunCapability",
+		"listAgentPaymentIntents",
+		"getPaymentIntent":
+		return "mcp_tool_read"
+	case "market_analysis",
+		"trade_recommendation",
+		"price_prediction",
+		"detect_anomalies",
+		"summarize_transactions":
+		return "mcp_ai_expensive"
+	case "purchaseCapability",
+		"executeCapability",
+		"trade",
+		"createPaymentIntent":
+		return "mcp_financial"
+	case "create_webhook_subscription",
+		"trigger_test_webhook":
+		return "mcp_tool_write"
+	default:
+		return "mcp_abuse"
 	}
 }
 
