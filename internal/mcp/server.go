@@ -177,19 +177,11 @@ type Authorize func(w http.ResponseWriter, r *http.Request) bool
 // MCP tools can read order data and create/trigger webhook automations, so
 // this must never be exposed unauthenticated.
 func (s *Server) RegisterRoutes(mux *http.ServeMux, authorize Authorize) {
-	guard := func(h http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if !authorize(w, r) {
-				return
-			}
-			h(w, r)
-		}
-	}
 	mux.HandleFunc("POST /mcp/initialize", s.handleInitialize)
 	mux.HandleFunc("POST /mcp/tools/list", s.handleToolsList)
 	mux.HandleFunc("POST /mcp/tools/call", s.handleToolsCallWithAuthorize(authorize))
 	mux.HandleFunc("POST /mcp/resources/list", s.handleResourcesList)
-	mux.HandleFunc("POST /mcp/resources/read", guard(s.handleResourcesRead))
+	mux.HandleFunc("POST /mcp/resources/read", s.handleResourcesReadWithAuthorize(authorize))
 	mux.HandleFunc("POST /mcp/prompts/list", s.handlePromptsList)
 }
 
