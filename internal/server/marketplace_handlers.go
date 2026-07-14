@@ -63,44 +63,52 @@ func (s *Server) handleMarketplaceCapabilities(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleMarketplaceCapability(w http.ResponseWriter, r *http.Request) {
-	capability, err := s.db.GetMarketplaceCapability(r.Context(), strings.TrimSpace(r.PathValue("id")))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if capability == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "capability nao encontrada"})
-		return
-	}
-	writeJSON(w, http.StatusOK, capability)
+	id := strings.TrimSpace(r.PathValue("id"))
+	cacheKey := "marketplace-capability:" + strings.ToLower(id)
+	s.writeCachedDiscoveryJSON(w, r, cacheKey, time.Minute, func() (any, error) {
+		capability, err := s.db.GetMarketplaceCapability(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		if capability == nil {
+			return nil, notFoundError("capability nao encontrada")
+		}
+		return capability, nil
+	})
 }
 
 func (s *Server) handleMarketplaceCapabilityContract(w http.ResponseWriter, r *http.Request) {
-	contract, err := s.db.GetMarketplaceCapabilityContract(r.Context(), strings.TrimSpace(r.PathValue("id")), r.URL.Query().Get("version"))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if contract == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "contrato de capability nao encontrado"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"contract": contract})
+	id := strings.TrimSpace(r.PathValue("id"))
+	version := r.URL.Query().Get("version")
+	cacheKey := "marketplace-capability-contract:" + strings.ToLower(id) + ":" + strings.ToLower(firstNonEmpty(version, "v1"))
+	s.writeCachedDiscoveryJSON(w, r, cacheKey, time.Minute, func() (any, error) {
+		contract, err := s.db.GetMarketplaceCapabilityContract(r.Context(), id, version)
+		if err != nil {
+			return nil, err
+		}
+		if contract == nil {
+			return nil, notFoundError("contrato de capability nao encontrado")
+		}
+		return map[string]any{"contract": contract}, nil
+	})
 }
 
 func (s *Server) handleAgentCapabilityContract(w http.ResponseWriter, r *http.Request) {
-	contract, err := s.db.GetMarketplaceCapabilityContract(r.Context(), strings.TrimSpace(r.PathValue("capability")), r.URL.Query().Get("version"))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if contract == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "contrato de capability nao encontrado"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"network":  "chainfx_capability_network",
-		"contract": contract,
+	capability := strings.TrimSpace(r.PathValue("capability"))
+	version := r.URL.Query().Get("version")
+	cacheKey := "agent-capability-contract:" + strings.ToLower(capability) + ":" + strings.ToLower(firstNonEmpty(version, "v1"))
+	s.writeCachedDiscoveryJSON(w, r, cacheKey, time.Minute, func() (any, error) {
+		contract, err := s.db.GetMarketplaceCapabilityContract(r.Context(), capability, version)
+		if err != nil {
+			return nil, err
+		}
+		if contract == nil {
+			return nil, notFoundError("contrato de capability nao encontrado")
+		}
+		return map[string]any{
+			"network":  "chainfx_capability_network",
+			"contract": contract,
+		}, nil
 	})
 }
 
