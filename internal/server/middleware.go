@@ -110,6 +110,9 @@ func (s *Server) shouldSkipSmartRateLimit(r *http.Request) bool {
 	if r.Method == http.MethodOptions {
 		return true
 	}
+	if strings.HasPrefix(r.URL.Path, "/internal/") {
+		return true
+	}
 	switch r.URL.Path {
 	case "/healthz", "/readyz", "/api/mobile/health",
 		"/api/rates", "/rates", "/api/price", "/price",
