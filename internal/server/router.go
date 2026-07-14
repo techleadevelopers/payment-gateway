@@ -80,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /agent/v1/eips", s.handleAgentEIPCapabilities)
 	mux.HandleFunc("POST /agent/v1/eips/prepare", s.handleAgentEIPPrepare)
 	mux.HandleFunc("POST /agent/v1/eips/verify", s.handleAgentEIPVerify)
+	mux.HandleFunc("GET /agent/v1/eips/test-suite", s.handleAgentEIPTestSuiteStatus)
+	mux.HandleFunc("POST /agent/v1/eips/test-suite", s.handleAgentEIPTestSuiteRun)
 	mux.HandleFunc("POST /agent/connect", s.handleAgentConnect)
 	mux.HandleFunc("GET /agent/{id}/policy", s.handleGetAgentPolicy)
 	mux.HandleFunc("PATCH /agent/{id}/policy", s.handleUpdateAgentPolicy)
