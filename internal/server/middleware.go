@@ -129,6 +129,9 @@ func smartRateLimitRouteClass(r *http.Request) string {
 	if method == http.MethodGet && (path == "/openapi.json" || path == "/llms.txt" || path == "/robots.txt" || path == "/sitemap.xml" || strings.HasPrefix(path, "/.well-known/")) {
 		return "discovery"
 	}
+	if method == http.MethodPost && (path == "/mcp/initialize" || path == "/mcp/tools/list" || path == "/mcp/resources/list" || path == "/mcp/prompts/list") {
+		return "discovery"
+	}
 	if strings.HasPrefix(path, "/mcp/") {
 		return "mcp"
 	}
@@ -146,11 +149,11 @@ func smartRateLimitMax(tier, routeClass string, configuredMax int) int {
 		configuredMax = 100
 	}
 	limits := map[string]map[string]int{
-		"anonymous":   {"discovery": 180, "read": configuredMax, "write": 20, "mcp": 10, "execution": 10},
+		"anonymous":   {"discovery": 600, "read": 600, "write": 20, "mcp": 60, "execution": 10},
 		"invalid_key": {"discovery": 60, "read": 30, "write": 10, "mcp": 5, "execution": 5},
-		"test":        {"discovery": 600, "read": 400, "write": 120, "mcp": 180, "execution": 90},
-		"live":        {"discovery": 2000, "read": 1200, "write": 400, "mcp": 800, "execution": 300},
-		"api":         {"discovery": 600, "read": 400, "write": 100, "mcp": 120, "execution": 80},
+		"test":        {"discovery": 1200, "read": 800, "write": 240, "mcp": 600, "execution": 180},
+		"live":        {"discovery": 3000, "read": 1200, "write": 400, "mcp": 2000, "execution": 300},
+		"api":         {"discovery": 1200, "read": 800, "write": 200, "mcp": 600, "execution": 120},
 	}
 	if byClass, ok := limits[tier]; ok {
 		if limit, ok := byClass[routeClass]; ok {
