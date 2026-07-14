@@ -7,10 +7,17 @@ import (
 )
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	if trustedForwardedHeaders(r) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if ip := strings.TrimSpace(strings.Split(xff, ",")[0]); ip != "" {
+				return ip
+			}
+		}
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			return realIP
+		}
 	}
-	return r.RemoteAddr
+	return remoteIP(r)
 }
 
 func remoteIP(r *http.Request) string {
@@ -44,6 +51,23 @@ func ipAllowedByCIDRList(rawIP, csv string) bool {
 		if err == nil && network.Contains(ip) {
 			return true
 		}
+	}
+	return false
+}
+
+func trustedForwardedHeaders(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	ip := net.ParseIP(remoteIP(r))
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() {
+		return true
+	}
+	if ipAllowedByCIDRList(ip.String(), "100.64.0.0/10,169.254.0.0/16,::1/128,fc00::/7,fe80::/10") {
+		return true
 	}
 	return false
 }
