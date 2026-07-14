@@ -27,6 +27,7 @@ type Server struct {
 	email            *email.Service
 	limiter          rateLimitStore
 	globalLimiter    rateLimitStore
+	penaltyBox       *penaltyBox
 	webhookRegistry  *webhooks.Registry
 	webhooks         *webhooks.Dispatcher
 	webhookLogs      *webhooks.Logs
@@ -70,6 +71,7 @@ func New(cfg *config.Config, db *database.DB, workerMgr *workers.WorkerManager, 
 		email:            mailer,
 		limiter:          newConfiguredRateLimiter(cfg, cfg.OrderRateLimitWindowMs, cfg.OrderRateLimitMax),
 		globalLimiter:    newConfiguredRateLimiter(cfg, cfg.RateLimitWindowMs, cfg.RateLimitMax),
+		penaltyBox:       newPenaltyBoxFromConfig(cfg),
 		webhookRegistry:  webhooks.NewRegistry(db),
 		webhooks:         webhookDispatcher,
 		webhookLogs:      webhooks.NewLogs(db),
