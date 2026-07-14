@@ -3,7 +3,8 @@
 .env.local
 secrets/
 .mcpregistry_*_token
-
+.gocache
+.gocache/
 # Binários compilados pelo Go (Executáveis)
 /dist/
 /bin/
