@@ -32,6 +32,7 @@ func (s *Server) handleWalletBalance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWalletTokens(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", mobileRateCacheControl)
 	price := mobileAssetPriceBRL(s.PriceCache(), "USDT")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tokens": []map[string]any{
