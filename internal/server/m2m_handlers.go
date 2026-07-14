@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"payment-gateway/internal/database"
+	"payment-gateway/internal/money"
 	"payment-gateway/internal/workers"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -114,8 +115,8 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	amountBRL, err := parsePositiveFloat(req.AmountBRL)
-	if err != nil || amountBRL <= 0 {
+	amountBRLMoney, err := money.ParseMoney(req.AmountBRL)
+	if err != nil || amountBRLMoney <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amount_brl must be a positive number"})
 		return
 	}
@@ -133,9 +134,15 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 	// grossUSDT = amountBRL / usdtRate   (base: how much the pix recipient costs in USDT)
 	// feeUSDT   = grossUSDT * (feeBps / 10_000)
 	// required  = grossUSDT + feeUSDT
-	grossUSDT := amountBRL / usdtRate
-	feeUSDT := grossUSDT * (float64(feeBps) / 10_000.0)
-	requiredUSDT := grossUSDT + feeUSDT
+	usdtRateDecimal := money.RateFromFloat(usdtRate)
+	grossUSDTTokens := money.TokensFromFiat(amountBRLMoney, usdtRateDecimal)
+	feeUSDTTokens := money.TokenFeeBps(grossUSDTTokens, feeBps)
+	requiredUSDTTokens := grossUSDTTokens + feeUSDTTokens
+
+	amountBRL := amountBRLMoney.Float64()
+	grossUSDT := grossUSDTTokens.Float64()
+	feeUSDT := feeUSDTTokens.Float64()
+	requiredUSDT := requiredUSDTTokens.Float64()
 
 	_, decision, policyErr := s.db.ValidateAgentPaymentPolicy(r.Context(), req.AgentWallet, "USDT", fmt.Sprintf("%.6f", requiredUSDT))
 	if policyErr != nil {
@@ -346,14 +353,4 @@ func splitAddressList(raw string) []string {
 	return strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
 	})
-}
-
-func parsePositiveFloat(s string) (float64, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty value")
-	}
-	var f float64
-	_, err := fmt.Sscanf(s, "%f", &f)
-	return f, err
 }
