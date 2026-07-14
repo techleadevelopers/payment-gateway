@@ -11,15 +11,16 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"payment-gateway/internal/models"
 )
 
 // handleListAssets — GET /api/mobile/assets
 func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	assets, err := mobileDB(s.db).ListAssets(r.Context(), true)
 	if err != nil {
-		slog.Error("erro interno", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro interno"})
-		return
+		slog.Warn("mobile_assets_fallback", "err", err)
+		assets = s.fallbackMobileAssets()
 	}
 
 	// Enrich with live price if PriceWorker available
@@ -51,6 +52,27 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"assets": out, "count": len(out)})
+}
+
+func (s *Server) fallbackMobileAssets() []models.Asset {
+	now := time.Now()
+	usdtContract := ""
+	if s != nil && s.cfg != nil {
+		usdtContract = strings.TrimSpace(s.cfg.BscUsdtContract)
+	}
+	return []models.Asset{
+		{Symbol: "USDT", Name: "Tether USD", Network: "BSC", ContractAddress: stringPtrOrNil(usdtContract), Decimals: 18, MinAmount: 10, MaxAmount: 50000, DailyLimit: 50000, MonthlyLimit: 500000, FeeBPS: 60, Active: true, CreatedAt: now},
+		{Symbol: "USDC", Name: "USD Coin", Network: "BSC", ContractAddress: stringPtrOrNil(bscUSDCContractMobile), Decimals: 18, MinAmount: 10, MaxAmount: 50000, DailyLimit: 50000, MonthlyLimit: 500000, FeeBPS: 60, Active: true, CreatedAt: now},
+		{Symbol: "BNB", Name: "BNB", Network: "BSC", Decimals: 18, MinAmount: 10, MaxAmount: 10000, DailyLimit: 10000, MonthlyLimit: 100000, FeeBPS: 60, Active: true, CreatedAt: now},
+	}
+}
+
+func stringPtrOrNil(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // handleGetAsset — GET /api/mobile/assets/{symbol}
