@@ -17,7 +17,7 @@ func TestMobileWrapHandlesCORSPreflight(t *testing.T) {
 	}))
 	req := httptest.NewRequest(http.MethodOptions, "/api/mobile/assets", nil)
 	req.Header.Set("Origin", "https://chatgpt.com")
-	req.Header.Set("Access-Control-Request-Headers", "Authorization, X-Request-Id, X-Idempotency-Key")
+	req.Header.Set("Access-Control-Request-Headers", "Authorization, X-Request-Id, Idempotency-Key")
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -29,9 +29,15 @@ func TestMobileWrapHandlesCORSPreflight(t *testing.T) {
 		t.Fatalf("expected reflected origin, got %q", got)
 	}
 	allowHeaders := rec.Header().Get("Access-Control-Allow-Headers")
-	for _, header := range []string{"Authorization", "X-Request-Id", "X-Idempotency-Key"} {
+	for _, header := range []string{"Authorization", "X-Request-Id", "Idempotency-Key", "X-Idempotency-Key"} {
 		if !strings.Contains(allowHeaders, header) {
 			t.Fatalf("expected %s in allow headers, got %q", header, allowHeaders)
+		}
+	}
+	exposeHeaders := rec.Header().Get("Access-Control-Expose-Headers")
+	for _, header := range []string{"X-Request-Id", "Idempotency-Key", "Idempotency-Key-Source", "Idempotent-Replayed"} {
+		if !strings.Contains(exposeHeaders, header) {
+			t.Fatalf("expected %s in expose headers, got %q", header, exposeHeaders)
 		}
 	}
 }
@@ -44,7 +50,7 @@ func TestMobileCORSAllowsProductionAdminOrigin(t *testing.T) {
 	}))
 	req := httptest.NewRequest(http.MethodOptions, "/api/mobile/assets", nil)
 	req.Header.Set("Origin", "https://www.chainfx.store")
-	req.Header.Set("Access-Control-Request-Headers", "Authorization, X-Request-Id, X-Idempotency-Key")
+	req.Header.Set("Access-Control-Request-Headers", "Authorization, X-Request-Id, Idempotency-Key")
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
