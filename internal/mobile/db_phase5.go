@@ -169,12 +169,15 @@ func (q *mobileQueries) GetApprovedKYCLevel(ctx context.Context, userID string) 
 	return models.KYCLevel(level), err
 }
 
-func (q *mobileQueries) ListKYCByUser(ctx context.Context, userID string) ([]models.KYCRequest, error) {
+func (q *mobileQueries) ListKYCByUser(ctx context.Context, userID string, limit int) ([]models.KYCRequest, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
 	rows, err := q.sql.QueryContext(ctx, `
 		SELECT id,user_id,level,status,document_type,document_url,selfie_url,
 		       proof_of_address_url,proof_of_income_url,reviewer_notes,
 		       submitted_at,reviewed_at,created_at,updated_at
-		FROM kyc_requests WHERE user_id=$1 ORDER BY created_at DESC`, userID)
+		FROM kyc_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
