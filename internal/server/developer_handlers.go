@@ -119,6 +119,7 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		"readiness":       ready,
 		"rates":           s.adminRates(),
 		"metrics":         summarizeAdminTransactions(transactions),
+		"observability":   s.adminObservability(),
 		"transactions":    transactions,
 		"events":          events,
 		"operationalGaps": gaps,
