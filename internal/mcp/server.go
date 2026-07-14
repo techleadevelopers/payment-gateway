@@ -154,10 +154,12 @@ func New(db *database.DB, cfg *config.Config, prices *workers.PriceWorker, agent
 	s := &Server{
 		db:       db,
 		cfg:      cfg,
-		prices:   prices,
 		agents:   agentsClient,
 		dispatch: dispatcher,
 		rl:       newMCPRateLimiter(),
+	}
+	if prices != nil {
+		s.prices = prices
 	}
 	s.initializeJSON = mustJSONBytes(initializePayload())
 	s.toolsListJSON = mustJSONBytes(map[string]any{"tools": s.tools()})
