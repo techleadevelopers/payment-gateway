@@ -19,42 +19,46 @@ import (
 const marketplacePurchaseTTL = 15 * time.Minute
 
 func (s *Server) handleMarketplaceProducts(w http.ResponseWriter, r *http.Request) {
-	products, err := s.db.ListMarketplaceProducts(r.Context(), database.MarketplaceProductFilters{
-		Category:     r.URL.Query().Get("category"),
-		Provider:     r.URL.Query().Get("provider"),
-		Capability:   r.URL.Query().Get("capability"),
-		PaymentAsset: r.URL.Query().Get("paymentAsset"),
-		Status:       r.URL.Query().Get("status"),
+	cacheKey := "marketplace-products:" + r.URL.RawQuery
+	s.writeCachedDiscoveryJSON(w, r, cacheKey, time.Minute, func() (any, error) {
+		products, err := s.db.ListMarketplaceProducts(r.Context(), database.MarketplaceProductFilters{
+			Category:     r.URL.Query().Get("category"),
+			Provider:     r.URL.Query().Get("provider"),
+			Capability:   r.URL.Query().Get("capability"),
+			PaymentAsset: r.URL.Query().Get("paymentAsset"),
+			Status:       r.URL.Query().Get("status"),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"products": marketplaceProductsResponse(products)}, nil
 	})
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"products": marketplaceProductsResponse(products)})
 }
 
 func (s *Server) handleMarketplaceCapabilities(w http.ResponseWriter, r *http.Request) {
-	capabilities, err := s.db.ListMarketplaceCapabilities(r.Context(), database.MarketplaceProductFilters{
-		Category:     r.URL.Query().Get("category"),
-		Capability:   r.URL.Query().Get("capability"),
-		PaymentAsset: r.URL.Query().Get("paymentAsset"),
-	})
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"capabilities": capabilities,
-		"model":        "capability_network",
-		"positioning":  "economic infrastructure for autonomous agents to discover, execute, meter, bill and settle digital capabilities",
-		"routing":      "providers are abstracted behind policy routing; execution is hybrid real provider when configured with provider fallback and mock/dev fallback",
-		"productionReadiness": map[string]any{
-			"catalog":                     true,
-			"meteringBillingSettlement":   true,
-			"mockDevFallback":             false,
-			"seedFixtures":                false,
-			"realProviderCredentialsNeed": []string{"OPENAI_API_KEY", "CAPABILITY_OCR_URL"},
-		},
+	cacheKey := "marketplace-capabilities:" + r.URL.RawQuery
+	s.writeCachedDiscoveryJSON(w, r, cacheKey, time.Minute, func() (any, error) {
+		capabilities, err := s.db.ListMarketplaceCapabilities(r.Context(), database.MarketplaceProductFilters{
+			Category:     r.URL.Query().Get("category"),
+			Capability:   r.URL.Query().Get("capability"),
+			PaymentAsset: r.URL.Query().Get("paymentAsset"),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"capabilities": capabilities,
+			"model":        "capability_network",
+			"positioning":  "economic infrastructure for autonomous agents to discover, execute, meter, bill and settle digital capabilities",
+			"routing":      "providers are abstracted behind policy routing; execution is hybrid real provider when configured with provider fallback and mock/dev fallback",
+			"productionReadiness": map[string]any{
+				"catalog":                     true,
+				"meteringBillingSettlement":   true,
+				"mockDevFallback":             false,
+				"seedFixtures":                false,
+				"realProviderCredentialsNeed": []string{"OPENAI_API_KEY", "CAPABILITY_OCR_URL"},
+			},
+		}, nil
 	})
 }
 
