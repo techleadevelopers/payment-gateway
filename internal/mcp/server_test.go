@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,6 +59,112 @@ func TestMCPResourceFallbacksDoNotFailWhenCatalogIsMissing(t *testing.T) {
 				t.Fatalf("expected fallback resource body")
 			}
 		})
+	}
+}
+
+func TestMCPResourceReadKeepsPublicResourcesAnonymous(t *testing.T) {
+	s := New(nil, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp/resources/read", strings.NewReader(`{"uri":"chainfx://marketplace/capabilities"}`))
+	rec := httptest.NewRecorder()
+	authorizeCalled := false
+
+	s.handleResourcesReadWithAuthorize(func(w http.ResponseWriter, r *http.Request) bool {
+		authorizeCalled = true
+		w.WriteHeader(http.StatusUnauthorized)
+		return false
+	})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected public resource read to return 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if authorizeCalled {
+		t.Fatal("public resource should not call authorizer")
+	}
+	if !strings.Contains(rec.Body.String(), `"chainfx://marketplace/capabilities"`) {
+		t.Fatalf("expected resource content, got %s", rec.Body.String())
+	}
+}
+
+func TestMCPPrivateResourceReadWithoutKeyReturnsSafeAuthRequiredContent(t *testing.T) {
+	s := New(nil, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp/resources/read", strings.NewReader(`{"uri":"chainfx://agent/policy/:wallet"}`))
+	rec := httptest.NewRecorder()
+	authorizeCalled := false
+
+	s.handleResourcesReadWithAuthorize(func(w http.ResponseWriter, r *http.Request) bool {
+		authorizeCalled = true
+		w.WriteHeader(http.StatusUnauthorized)
+		return false
+	})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected safe MCP content response, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if authorizeCalled {
+		t.Fatal("anonymous private resource should not call authorizer after it writes a transport error")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	contents := body["contents"].([]any)
+	entry := contents[0].(map[string]any)
+	content := entry["json"].(map[string]any)
+	if content["authRequired"] != true {
+		t.Fatalf("expected authRequired content, got %#v", content)
+	}
+}
+
+func TestMCPPrivateReadToolWithoutKeyReturnsSafeAuthRequiredContent(t *testing.T) {
+	s := New(nil, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tools/call", strings.NewReader(`{"name":"listAgentGrants","arguments":{"agentWallet":"0x0000000000000000000000000000000000000000"}}`))
+	rec := httptest.NewRecorder()
+	authorizeCalled := false
+
+	s.handleToolsCallWithAuthorize(func(w http.ResponseWriter, r *http.Request) bool {
+		authorizeCalled = true
+		w.WriteHeader(http.StatusUnauthorized)
+		return false
+	})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected safe MCP tool content response, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if authorizeCalled {
+		t.Fatal("anonymous read-only private tool should not call authorizer after it writes a transport error")
+	}
+	if !strings.Contains(rec.Body.String(), `"authRequired":true`) {
+		t.Fatalf("expected authRequired tool content, got %s", rec.Body.String())
+	}
+}
+
+func TestMCPFinancialToolWithoutKeyStillRequiresTransportAuth(t *testing.T) {
+	s := New(nil, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tools/call", strings.NewReader(`{"name":"purchaseCapability","arguments":{}}`))
+	rec := httptest.NewRecorder()
+
+	s.handleToolsCallWithAuthorize(func(w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusUnauthorized)
+		return false
+	})(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected financial tool to require auth, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMCPAIToolsReturnFallbackWhenProviderUnavailable(t *testing.T) {
+	s := New(nil, nil, nil, nil, nil)
+	got, err := s.callTool(context.Background(), "market_analysis", map[string]any{})
+	if err != nil {
+		t.Fatalf("expected AI fallback, got error: %v", err)
+	}
+	body, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map fallback, got %T", got)
+	}
+	if body["source"] != "fallback" {
+		t.Fatalf("expected fallback source, got %#v", body)
 	}
 }
 
