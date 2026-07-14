@@ -51,6 +51,14 @@ type Server struct {
 	toolsListJSON  []byte
 	resourcesJSON  []byte
 	promptsJSON    []byte
+
+	cacheMu sync.Mutex
+	cache   map[string]cachedMCPValue
+}
+
+type cachedMCPValue struct {
+	value     any
+	expiresAt time.Time
 }
 
 // ─── Per-API-key rate limiter (sliding window, stdlib only) ──────────────────
@@ -157,6 +165,7 @@ func New(db *database.DB, cfg *config.Config, prices *workers.PriceWorker, agent
 		agents:   agentsClient,
 		dispatch: dispatcher,
 		rl:       newMCPRateLimiter(),
+		cache:    make(map[string]cachedMCPValue),
 	}
 	if prices != nil {
 		s.prices = prices
@@ -240,4 +249,35 @@ func writeMCPError(w http.ResponseWriter, status int, message string) {
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(dest)
+}
+
+func (s *Server) cachedValue(key string, ttl time.Duration, build func() (any, error)) (any, error) {
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	now := time.Now()
+	if s != nil {
+		s.cacheMu.Lock()
+		if s.cache != nil {
+			if item, ok := s.cache[key]; ok && item.expiresAt.After(now) {
+				s.cacheMu.Unlock()
+				return item.value, nil
+			}
+		}
+		s.cacheMu.Unlock()
+	}
+
+	value, err := build()
+	if err != nil {
+		return nil, err
+	}
+	if s != nil {
+		s.cacheMu.Lock()
+		if s.cache == nil {
+			s.cache = make(map[string]cachedMCPValue)
+		}
+		s.cache[key] = cachedMCPValue{value: value, expiresAt: now.Add(ttl)}
+		s.cacheMu.Unlock()
+	}
+	return value, nil
 }
