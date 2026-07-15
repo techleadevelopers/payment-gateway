@@ -39,7 +39,8 @@ type eipProbeWallet struct {
 	Source           string `json:"source"`
 	Status           string `json:"status"`
 	NativeBalanceWei string `json:"nativeBalanceWei,omitempty"`
-	USDCBalanceRaw   string `json:"usdcBalanceRaw,omitempty"`
+	TokenBalanceRaw  string `json:"tokenBalanceRaw,omitempty"`
+	TokenSymbol      string `json:"tokenSymbol,omitempty"`
 }
 
 type eipProbeRunRequest struct {
@@ -129,7 +130,7 @@ func (r *eipProbeRunner) run(ctx context.Context, req eipProbeRunRequest, domain
 	if req.Concurrency > 10 {
 		req.Concurrency = 10
 	}
-	req.Asset = strings.ToUpper(strings.TrimSpace(firstNonEmpty(req.Asset, "USDC")))
+	req.Asset = strings.ToUpper(strings.TrimSpace(firstNonEmpty(req.Asset, r.cfg.EIPProbeAsset, "USDT")))
 	req.AmountRaw = strings.TrimSpace(firstNonEmpty(req.AmountRaw, r.cfg.EIPProbeAmountRaw, "10000"))
 	wallets, warnings := r.loadWallets()
 	r.enrichWalletBalances(ctx, wallets)
@@ -152,8 +153,13 @@ func (r *eipProbeRunner) run(ctx context.Context, req eipProbeRunRequest, domain
 			defer func() { <-sem }()
 			from := wallets[i%len(wallets)]
 			to := wallets[(i+1)%len(wallets)]
-			if realRun && req.Asset == "USDC" {
-				results[i] = r.runEIP3009Real(ctx, i, from, to, req, domain, assets)
+			if realRun {
+				switch r.probeRail(req.Asset) {
+				case "erc20_transfer":
+					results[i] = r.runERC20TransferReal(ctx, i, from, to, req, domain, assets)
+				default:
+					results[i] = r.runEIP3009Real(ctx, i, from, to, req, domain, assets)
+				}
 				return
 			}
 			results[i] = r.runDryProbe(ctx, i, from, to, req, domain, assets, mode)
@@ -259,7 +265,7 @@ func (r *eipProbeRunner) runEIP3009Real(ctx context.Context, index int, from, to
 		Mode:        "real_run",
 		Network:     r.network(),
 		Rail:        "eip3009_transfer_with_authorization",
-		Asset:       "tUSDC",
+		Asset:       req.Asset,
 		FromWallet:  from.Address,
 		ToWallet:    to.Address,
 		Nonce:       nonce,
@@ -268,10 +274,10 @@ func (r *eipProbeRunner) runEIP3009Real(ctx context.Context, index int, from, to
 		Logs: []map[string]any{{
 			"event":                       "probe_transaction_initiated",
 			"rail_selected":               "eip3009_transfer_with_authorization",
-			"asset":                       "tUSDC",
+			"asset":                       req.Asset,
 			"from_wallet":                 from.Address,
 			"to_wallet":                   to.Address,
-			"relayer_fee_paid_by_gateway": "native testnet gas",
+			"relayer_fee_paid_by_gateway": "native gas",
 		}},
 	}
 	client, err := dialProbeClient(ctx, r.cfg.EIPProbeRPCUrls)
@@ -283,7 +289,10 @@ func (r *eipProbeRunner) runEIP3009Real(ctx context.Context, index int, from, to
 	if err != nil {
 		return res.fail(started, err)
 	}
-	token := common.HexToAddress(r.cfg.EIPProbeUSDCContract)
+	if isProbeMainnetChain(chainID) && !r.cfg.EIPProbeAllowMainnet {
+		return res.fail(started, fmt.Errorf("mainnet probe blocked on chain %s; set EIP_PROBE_ALLOW_MAINNET=true to allow real value movement", chainID.String()))
+	}
+	token := common.HexToAddress(r.cfg.EIPProbeTokenContract)
 	value, ok := new(big.Int).SetString(req.AmountRaw, 10)
 	if !ok || value.Sign() <= 0 {
 		return res.fail(started, fmt.Errorf("amountRaw invalido"))
@@ -299,7 +308,7 @@ func (r *eipProbeRunner) runEIP3009Real(ctx context.Context, index int, from, to
 	relayer := crypto.PubkeyToAddress(relayerKey.PublicKey)
 	res.Relayer = strings.ToLower(relayer.Hex())
 	validBefore := uint64(time.Now().Add(10 * time.Minute).Unix())
-	sig, digest, err := signEIP3009Authorization(fromKey, r.cfg.EIPProbeUSDCName, r.cfg.EIPProbeUSDCVersion, chainID, token, common.HexToAddress(from.Address), common.HexToAddress(to.Address), value, 0, validBefore, nonce)
+	sig, digest, err := signEIP3009Authorization(fromKey, r.cfg.EIPProbeTokenName, r.cfg.EIPProbeTokenVersion, chainID, token, common.HexToAddress(from.Address), common.HexToAddress(to.Address), value, 0, validBefore, nonce)
 	if err != nil {
 		return res.fail(started, err)
 	}
@@ -326,7 +335,7 @@ func (r *eipProbeRunner) runEIP3009Real(ctx context.Context, index int, from, to
 		IntentType:     eip712.TypeM2MIntent,
 		Payer:          from.Address,
 		Recipient:      to.Address,
-		Asset:          "USDC",
+		Asset:          req.Asset,
 		Amount:         req.AmountRaw,
 		Nonce:          nonce,
 		Deadline:       validBefore,
@@ -334,6 +343,90 @@ func (r *eipProbeRunner) runEIP3009Real(ctx context.Context, index int, from, to
 	}, assets), assets)
 	if r.db != nil && prepared.Digest != "" {
 		if err := r.db.RecordEIP712Nonce(ctx, database.EIP712NonceInput{Signer: prepared.ExpectedSigner, IntentType: prepared.IntentType, Nonce: prepared.Nonce, Digest: prepared.Digest, ChainID: prepared.Domain.ChainID, ExpiresAt: time.Unix(int64(validBefore), 0).UTC()}); err == nil {
+			res.AntiReplayNonceStored = true
+		}
+	}
+	res.ExecutionLatencyMS = time.Since(started).Milliseconds()
+	res.Status = "ok"
+	res.Event = "probe_transaction_mined"
+	res.Logs = append(res.Logs, map[string]any{
+		"event":                    "probe_transaction_mined",
+		"tx_hash":                  res.TxHash,
+		"block_number":             res.BlockNumber,
+		"execution_latency_secs":   float64(res.ExecutionLatencyMS) / 1000,
+		"gas_used":                 res.GasUsed,
+		"anti_replay_nonce_stored": res.AntiReplayNonceStored,
+	})
+	return res
+}
+
+func (r *eipProbeRunner) runERC20TransferReal(ctx context.Context, index int, from, to eipProbeWallet, req eipProbeRunRequest, domain eip712.Domain, assets []eip712.AssetCapability) eipProbeResult {
+	started := time.Now()
+	nonce := probeNonce(index)
+	res := eipProbeResult{
+		At:         time.Now().UTC().Format(time.RFC3339Nano),
+		Event:      "probe_transaction_initiated",
+		Mode:       "real_run",
+		Network:    r.network(),
+		Rail:       "erc20_transfer",
+		Asset:      req.Asset,
+		FromWallet: from.Address,
+		ToWallet:   to.Address,
+		Nonce:      nonce,
+		Status:     "transmitting",
+		Logs: []map[string]any{{
+			"event":         "probe_transaction_initiated",
+			"rail_selected": "erc20_transfer",
+			"asset":         req.Asset,
+			"from_wallet":   from.Address,
+			"to_wallet":     to.Address,
+			"gas_paid_by":   from.Address,
+		}},
+	}
+	client, err := dialProbeClient(ctx, r.cfg.EIPProbeRPCUrls)
+	if err != nil {
+		return res.fail(started, err)
+	}
+	defer client.Close()
+	chainID, err := client.ChainID(ctx)
+	if err != nil {
+		return res.fail(started, err)
+	}
+	if isProbeMainnetChain(chainID) && !r.cfg.EIPProbeAllowMainnet {
+		return res.fail(started, fmt.Errorf("mainnet probe blocked on chain %s; set EIP_PROBE_ALLOW_MAINNET=true to allow real value movement", chainID.String()))
+	}
+	token := common.HexToAddress(r.cfg.EIPProbeTokenContract)
+	value, ok := new(big.Int).SetString(req.AmountRaw, 10)
+	if !ok || value.Sign() <= 0 {
+		return res.fail(started, fmt.Errorf("amountRaw invalido"))
+	}
+	fromKey, err := privateKeyForAddress(from.Address, r.cfg.EIPProbeWalletPrivKeys)
+	if err != nil {
+		return res.fail(started, err)
+	}
+	fromAddr := common.HexToAddress(from.Address)
+	data := buildERC20TransferCalldata(common.HexToAddress(to.Address), value)
+	txHash, receipt, err := sendContractCall(ctx, client, fromKey, fromAddr, token, data, chainID, time.Duration(r.cfg.EIPProbeConfirmTimeout)*time.Second)
+	if err != nil {
+		return res.fail(started, err)
+	}
+	res.TxHash = txHash.Hex()
+	if receipt != nil {
+		res.BlockNumber = receipt.BlockNumber.Uint64()
+		res.GasUsed = receipt.GasUsed
+	}
+	prepared, _ := eip712.Prepare(domain, resolveEIPIntentAsset(eip712.Intent{
+		IntentType:     eip712.TypeM2MIntent,
+		Payer:          from.Address,
+		Recipient:      to.Address,
+		Asset:          req.Asset,
+		Amount:         req.AmountRaw,
+		Nonce:          nonce,
+		Deadline:       uint64(time.Now().Add(10 * time.Minute).Unix()),
+		IdempotencyKey: nonce,
+	}, assets), assets)
+	if r.db != nil && prepared.Digest != "" {
+		if err := r.db.RecordEIP712Nonce(ctx, database.EIP712NonceInput{Signer: prepared.ExpectedSigner, IntentType: prepared.IntentType, Nonce: prepared.Nonce, Digest: prepared.Digest, ChainID: prepared.Domain.ChainID, ExpiresAt: time.Now().Add(10 * time.Minute).UTC()}); err == nil {
 			res.AntiReplayNonceStored = true
 		}
 	}
@@ -423,6 +516,13 @@ func sendContractCall(ctx context.Context, client *ethclient.Client, key *ecdsa.
 	return signed.Hash(), receipt, nil
 }
 
+func buildERC20TransferCalldata(to common.Address, value *big.Int) []byte {
+	data := append([]byte{}, crypto.Keccak256([]byte("transfer(address,uint256)"))[:4]...)
+	data = append(data, addressBytes(to)...)
+	data = append(data, uint256Bytes(value)...)
+	return data
+}
+
 func waitReceipt(ctx context.Context, client *ethclient.Client, hash common.Hash, timeout time.Duration) (*types.Receipt, error) {
 	if timeout <= 0 {
 		timeout = 45 * time.Second
@@ -475,30 +575,32 @@ func (r *eipProbeRunner) enrichWalletBalances(ctx context.Context, wallets []eip
 	}
 	defer client.Close()
 	var token *common.Address
-	if common.IsHexAddress(r.cfg.EIPProbeUSDCContract) {
-		addr := common.HexToAddress(r.cfg.EIPProbeUSDCContract)
+	if common.IsHexAddress(r.cfg.EIPProbeTokenContract) {
+		addr := common.HexToAddress(r.cfg.EIPProbeTokenContract)
 		token = &addr
 	}
 	for i := range wallets {
+		wallets[i].TokenSymbol = r.cfg.EIPProbeTokenSymbol
 		addr := common.HexToAddress(wallets[i].Address)
 		if balance, err := client.BalanceAt(ctx, addr, nil); err == nil && balance != nil {
 			wallets[i].NativeBalanceWei = balance.String()
 		}
 		if token != nil {
 			if balance, err := callERC20BalanceOf(ctx, client, *token, addr); err == nil && balance != nil {
-				wallets[i].USDCBalanceRaw = balance.String()
+				wallets[i].TokenBalanceRaw = balance.String()
 			}
 		}
 	}
 }
 
 func (r *eipProbeRunner) realRunAvailable(warnings []string) bool {
-	return r.cfg != nil &&
-		r.cfg.EIPProbeRealRun &&
-		len(warnings) == 0 &&
-		strings.TrimSpace(r.cfg.EIPProbeRPCUrls) != "" &&
-		strings.TrimSpace(r.cfg.EIPProbeRelayerPrivKey) != "" &&
-		common.IsHexAddress(r.cfg.EIPProbeUSDCContract)
+	if r.cfg == nil || !r.cfg.EIPProbeRealRun || len(warnings) > 0 || strings.TrimSpace(r.cfg.EIPProbeRPCUrls) == "" || !common.IsHexAddress(r.cfg.EIPProbeTokenContract) {
+		return false
+	}
+	if r.probeRail(r.cfg.EIPProbeAsset) == "eip3009_transfer_with_authorization" {
+		return strings.TrimSpace(r.cfg.EIPProbeRelayerPrivKey) != ""
+	}
+	return true
 }
 
 func callERC20BalanceOf(ctx context.Context, client *ethclient.Client, token, owner common.Address) (*big.Int, error) {
@@ -527,6 +629,34 @@ func (r *eipProbeRunner) network() string {
 		return "bsc"
 	}
 	return r.cfg.EIPProbeNetwork
+}
+
+func (r *eipProbeRunner) probeRail(asset string) string {
+	if r != nil && r.cfg != nil {
+		rail := strings.ToLower(strings.TrimSpace(r.cfg.EIPProbeRail))
+		switch rail {
+		case "erc20", "transfer", "erc20_transfer":
+			return "erc20_transfer"
+		case "eip3009", "transferwithauthorization", "transfer_with_authorization", "eip3009_transfer_with_authorization":
+			return "eip3009_transfer_with_authorization"
+		}
+	}
+	if strings.EqualFold(asset, "USDT") {
+		return "erc20_transfer"
+	}
+	return "eip3009_transfer_with_authorization"
+}
+
+func isProbeMainnetChain(chainID *big.Int) bool {
+	if chainID == nil {
+		return false
+	}
+	switch chainID.Int64() {
+	case 1, 56, 137:
+		return true
+	default:
+		return false
+	}
 }
 
 func summarizeProbeResults(results []eipProbeResult) map[string]any {
