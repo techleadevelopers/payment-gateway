@@ -44,7 +44,7 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if order.Status != models.StatusAguardandoDeposito {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status atual não permite depÃ³sito"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status atual não permite depósito"})
 		return
 	}
 	if err := s.db.UpdateOrderStatus(r.Context(), id, "pago", map[string]any{"requestId": requestID(r), "depositTx": req.TxHash, "depositAmount": req.Amount}); err != nil {
@@ -53,7 +53,7 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 	s.workers.Bus.Publish(workers.Event{Type: "onchain.detected", OrderID: id, Payload: map[string]any{"tx_hash": req.TxHash, "amount_usdt": req.Amount}})
 	s.workers.Bus.Publish(workers.Event{Type: "payout.requested", OrderID: id})
-	s.email.NotifyOps("Swappy: depÃ³sito detectado", fmt.Sprintf("Ordem %s recebeu depÃ³sito %s no valor %.8f USDT.", id, req.TxHash, req.Amount))
+	s.email.NotifyOps("ChainFx: depósito detectado", fmt.Sprintf("Ordem %s recebeu depósito %s no valor %.8f USDT.", id, req.TxHash, req.Amount))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
