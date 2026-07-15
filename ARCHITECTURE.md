@@ -1,4 +1,4 @@
-# Swappy Payment Gateway - Arquitetura Tecnica
+# ChainFX Payment Gateway - Arquitetura Tecnica
 
 ## Indice
 
@@ -21,7 +21,7 @@
 
 ## Visao Geral
 
-O Swappy Payment Gateway e um backend Go para orquestracao de pagamento fiat e entrega de USDT. O sistema separa o caminho de UX rapida do caminho financeiro critico:
+O ChainFX Payment Gateway e um backend Go para orquestracao de pagamento fiat e entrega de USDT. O sistema separa o caminho de UX rapida do caminho financeiro critico:
 
 - Quote e criacao de ordem respondem rapido para o frontend.
 - Confirmacao fiat entra por webhook assinado.
@@ -31,7 +31,7 @@ O Swappy Payment Gateway e um backend Go para orquestracao de pagamento fiat e e
 Fluxo critico:
 
 ```text
-Cliente paga Pix -> Webhook confirma -> BuySendWorker dispara da wallet Swappy -> USDT chega na wallet do cliente
+Cliente paga Pix -> Webhook confirma -> BuySendWorker dispara da wallet ChainFX -> USDT chega na wallet do cliente
 ```
 
 ## Requisitos
@@ -426,7 +426,7 @@ PORT=3000
 ALLOWED_ORIGINS=http://localhost:5173
 
 # Database
-DATABASE_URL=postgres://user:pass@localhost:5432/swappy?sslmode=disable
+DATABASE_URL=postgres://user:pass@localhost:5432/ChainFX?sslmode=disable
 
 # Security
 LGPD_SECRET=use-um-segredo-forte
@@ -475,7 +475,7 @@ SMTP_USER=user
 SMTP_PASS=pass
 SMTP_SECURE=false
 SMTP_FROM_EMAIL=ops@example.com
-SMTP_FROM_NAME=Swappy Ops
+SMTP_FROM_NAME=ChainFX Ops
 OPS_EMAIL=ops@example.com
 ```
 
@@ -527,8 +527,8 @@ TREASURY_HOT=...
 ### Docker local
 
 ```bash
-docker build -t swappy-payment-gateway .
-docker run --rm -p 3000:3000 --env-file .env swappy-payment-gateway
+docker build -t ChainFX-payment-gateway .
+docker run --rm -p 3000:3000 --env-file .env ChainFX-payment-gateway
 ```
 
 ### Migrations operacionais recentes
@@ -563,9 +563,9 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: swappy
-      POSTGRES_USER: swappy
-      POSTGRES_PASSWORD: swappy
+      POSTGRES_DB: ChainFX
+      POSTGRES_USER: ChainFX
+      POSTGRES_PASSWORD: ChainFX
     ports:
       - "5432:5432"
     volumes:
