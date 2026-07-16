@@ -389,7 +389,7 @@ func (s *Server) efiBillingRequest(ctx context.Context, client *http.Client, tok
 func buildEfiDebtor(customer paymentCustomerInput) map[string]any {
 	cpf := onlyDigits(customer.CPF)
 	name := strings.TrimSpace(customer.Name)
-	if cpf == "" || name == "" {
+	if cpf == "" || name == "" || !validCPF(cpf) {
 		return nil
 	}
 	return map[string]any{
