@@ -68,6 +68,50 @@ func onlyDigits(value string) string {
 	return builder.String()
 }
 
+func validCPF(value string) bool {
+	cpf := onlyDigits(value)
+	if len(cpf) != 11 {
+		return false
+	}
+	allEqual := true
+	for i := 1; i < len(cpf); i++ {
+		if cpf[i] != cpf[0] {
+			allEqual = false
+			break
+		}
+	}
+	if allEqual {
+		return false
+	}
+	digit := func(pos int) int {
+		sum := 0
+		weight := pos + 1
+		for i := 0; i < pos; i++ {
+			sum += int(cpf[i]-'0') * weight
+			weight--
+		}
+		rest := (sum * 10) % 11
+		if rest == 10 {
+			return 0
+		}
+		return rest
+	}
+	return digit(9) == int(cpf[9]-'0') && digit(10) == int(cpf[10]-'0')
+}
+
+func validateEfiPixCustomer(customer paymentCustomerInput) error {
+	if strings.TrimSpace(customer.Name) == "" {
+		return fmt.Errorf("nome do cliente e obrigatorio para PIX Efi")
+	}
+	if onlyDigits(customer.CPF) == "" {
+		return fmt.Errorf("cpf do cliente e obrigatorio para PIX Efi")
+	}
+	if !validCPF(customer.CPF) {
+		return fmt.Errorf("cpf do cliente invalido")
+	}
+	return nil
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
