@@ -136,6 +136,7 @@ Integracoes recentes refletidas no backend:
 - **A2A Agent Pay**: `/.well-known/agent-card.json`, `/a2a`, `/a2a/tasks`, `/a2a/tasks/{id}` e `/a2a/tasks/{id}/events` expõem discovery, skills e task lifecycle para agentes externos.
 - **Trust, Reputation, SLA e Episodes**: JWKS, assinatura do Agent Card, reputacao, SLA e episodios de execucao permitem que agentes verifiquem identidade, qualidade e rastreabilidade antes de operar.
 - **Policy Discovery + Agent Graph v2**: `/.well-known/agent-policy.json` e `/.well-known/capability-graph.json` ensinam pre-requisitos como policy ativa, wallet, quote, deposito e status antes de criar intents. O graph v2 adiciona contratos por skill com dependencias, produtos, falhas conhecidas, recovery actions, custo estimado, latencia esperada e requisitos de policy.
+- **Capability Composition + Planner API**: `/.well-known/capability-compositions.json`, `/agent/v1/capability-compositions` e `POST /agent/v1/plans` transformam objetivos em planos nao executados com steps, missing requirements, custo estimado e latencia estimada.
 - **x402 Capability Pay-per-call**: `/.well-known/x402.json` e `/x402/capabilities/{capability}/execute` permitem challenge HTTP 402 para compra e execucao de capabilities digitais.
 - **Multi Registry / AGNTCY-OASF**: `/.well-known/agntcy.json`, `/.well-known/oasf.json`, `/agent/v1/registries` e `/agent/v1/registry-records/agntcy-oasf` publicam registro assinavel para diretorios externos.
 - **Adversarial/Chaos Ops**: `schema_chaos.sql`, `internal/adversarial`, `/v1/admin/gas/chaos-run`, `/v1/admin/gas/chaos-history` e `/admin/chaos`.
@@ -191,7 +192,7 @@ schema_agent_pricing.sql
         +----------------------------+----------------------------+
         |        Trust / Policy / Capability Planning Layer       |
         | JWKS, Agent Card signature, reputation, SLA, episodes   |
-        | policy discovery, capability graph, registry records    |
+        | policy discovery, graph, compositions, planner, registry |
         +----------------------------+----------------------------+
                                      |
                                      v
@@ -215,7 +216,7 @@ schema_agent_pricing.sql
 - **A2A**: `/.well-known/agent-card.json`, `/a2a` e `/a2a/tasks` expõem skills, task lifecycle e streaming SSE para agentes independentes.
 - **Capabilities**: marketplace, contracts, route preview, purchase, grant, execution, usage metering e provider fallback.
 - **x402**: capabilities digitais podem responder `402 Payment Required`, receber `PAYMENT` e executar pay-per-call.
-- **Trust Layer**: JWKS, assinatura Ed25519 do Agent Card, reputation, SLA, episodes, policy discovery e Agent Graph v2.
+- **Trust Layer**: JWKS, assinatura Ed25519 do Agent Card, reputation, SLA, episodes, policy discovery, Agent Graph v2 e Planner API.
 - **Registries**: MCP Registry, A2A Agent Card, OpenAPI e AGNTCY/OASF-style record mantem discovery externo.
 - **Settlement**: USDT/USDC BSC, PIX/card via PSP, signer isolado, workers, idempotencia, receipts e ledger.
 
@@ -274,12 +275,15 @@ Endpoints de discovery:
 - `/.well-known/agent-sla.json`: SLOs, timeout, uptime e garantias publicas para agentes.
 - `/.well-known/agent-policy.json`: discovery de policy exigida antes de criar intents financeiros.
 - `/.well-known/capability-graph.json`: Agent Graph v2 com contratos por skill, dependencias, precondicoes, falhas, recovery actions, custo, latencia e policy requirements.
+- `/.well-known/capability-compositions.json`: pipelines compostos como OCR -> resumo -> memoria -> pagamento.
 - `/.well-known/agntcy.json`: manifesto AGNTCY/OASF-style para diretorios externos.
 - `/.well-known/oasf.json`: descriptor OASF-style para classificacao de skills e locators.
 - `/agent/v1/capabilities`: manifesto detalhado para agentes.
 - `/agent/v1/assets`: ativos habilitados, taxas, minimos e status.
 - `/agent/v1/policy-discovery`: versao API do policy discovery.
 - `/agent/v1/capability-graph`: versao API do Agent Graph v2.
+- `/agent/v1/capability-compositions`: versao API das compositions.
+- `POST /agent/v1/plans`: cria plano nao executado a partir de goal, wallet e constraints.
 - `/agent/v1/reputation`: reputacao consultavel por clientes autenticados ou internos.
 - `/agent/v1/sla`: SLA consultavel por clientes autenticados ou internos.
 - `/agent/v1/episodes`: episodios de execucao para observabilidade e QA.
@@ -317,6 +321,68 @@ Agent Graph v2 Report
 
 Critério de aceite: um agente consegue ler `/.well-known/capability-graph.json`, encontrar `pay_pix_with_usdt`, identificar que precisa de `agent_policy`, `quote_required_usdt` e `agent_wallet`, conhecer o proximo passo `get_payment_status` e recuperar de `AGENT_POLICY_REQUIRED` sem documentacao humana.
 
+### Fase 2: Capability Composition + Planner API
+
+Objetivo de integracao: permitir que um agente transforme entendimento em plano antes de executar qualquer skill.
+
+Endpoints:
+
+- `GET /.well-known/capability-compositions.json`
+- `GET /agent/v1/capability-compositions`
+- `POST /agent/v1/plans`
+
+Compositions publicadas:
+
+- `document_to_memory_payment`: `document_ocr.extract_text -> llm_chat.summarize -> semantic_memory.save_memory -> pay_pix_with_usdt`.
+- `pix_payment_with_quote`: `fetch_policy -> quote_required_usdt -> pay_pix_with_usdt -> get_payment_status`.
+- `x402_document_ocr`: `fetch_x402 -> request_without_payment -> pay_requirements -> replay_with_PAYMENT`.
+- `stablecoin_exchange_then_payment`: `stablecoin_exchange -> quote_required_usdt -> pay_pix_with_usdt`.
+
+Exemplo de planner:
+
+```json
+{
+  "goal": "Pay a PIX recipient using USDT after quoting the amount",
+  "agent_wallet": "0x830000000000000000000000000000000000019a",
+  "amount_brl": "10.00",
+  "pix_key": "+5511999999999",
+  "constraints": {
+    "max_cost_usdt": "10",
+    "network": "BSC",
+    "asset": "USDT"
+  }
+}
+```
+
+Resposta esperada:
+
+```json
+{
+  "status": "ready",
+  "executes_now": false,
+  "steps": ["fetch_policy", "quote_required_usdt", "pay_pix_with_usdt", "poll_get_payment_status"],
+  "missing_requirements": [],
+  "estimated_cost_usdt": "2.148438",
+  "estimated_latency_ms": 15000,
+  "execution_mode": "manual_or_agent_driven"
+}
+```
+
+Relatorio esperado:
+
+```text
+Planning Layer Report
+- compositions disponiveis
+- goals suportados
+- plano gerado por goal
+- missing requirements
+- custo estimado
+- latencia estimada
+- validacao via Agent QA
+```
+
+Criterio de aceite: um agente envia um objetivo em linguagem simples/estruturada e recebe um plano executavel sem chamar a skill ainda.
+
 ### A2A para agentes externos
 
 O fluxo A2A canonico evita acoplamento com REST/MCP interno:
@@ -328,6 +394,8 @@ Agent externo
   -> GET /.well-known/agent-card.signature
   -> GET /.well-known/agent-policy.json
   -> GET /.well-known/capability-graph.json
+  -> GET /.well-known/capability-compositions.json
+  -> POST /agent/v1/plans
   -> POST /a2a skill=list_supported_payment_methods
   -> POST /a2a skill=quote_required_usdt
   -> POST /a2a skill=pay_pix_with_usdt
@@ -361,6 +429,7 @@ O repositorio inclui um agente de QA externo em `tools/agent-qa/openai-agent-pay
 - descoberta do Agent Card;
 - verificacao JWKS, hash e assinatura;
 - reputacao, SLA, policy discovery e Agent Graph v2;
+- capability compositions e Planner API;
 - discovery AGNTCY/OASF e registry record;
 - chamada A2A de methods, quote, intent e status;
 - task lifecycle A2A com SSE;
