@@ -1,8 +1,17 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
+
+	"payment-gateway/internal/money"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func (s *Server) handleAgentPolicyDiscoveryWellKnown(w http.ResponseWriter, r *http.Request) {
@@ -25,6 +34,156 @@ func (s *Server) handleAgentCapabilityGraph(w http.ResponseWriter, r *http.Reque
 	s.writeCachedDiscoveryJSON(w, r, "agent-capability-graph:"+base, time.Minute, func() (any, error) {
 		return s.agentCapabilityGraphDocument(base), nil
 	})
+}
+
+func (s *Server) handleAgentCapabilityCompositionsWellKnown(w http.ResponseWriter, r *http.Request) {
+	s.handleAgentCapabilityCompositions(w, r)
+}
+
+func (s *Server) handleAgentCapabilityCompositions(w http.ResponseWriter, r *http.Request) {
+	base := publicBaseURL(r)
+	s.writeCachedDiscoveryJSON(w, r, "agent-capability-compositions:"+base, time.Minute, func() (any, error) {
+		return s.agentCapabilityCompositionsDocument(base), nil
+	})
+}
+
+func (s *Server) handleAgentPlanCreate(w http.ResponseWriter, r *http.Request) {
+	var req agentPlanRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "INVALID_JSON", "Invalid JSON body.")
+		return
+	}
+	plan := s.buildAgentPlan(r, req)
+	writeJSON(w, http.StatusOK, plan)
+}
+
+type agentPlanRequest struct {
+	Goal        string         `json:"goal"`
+	AgentWallet string         `json:"agent_wallet"`
+	AmountBRL   string         `json:"amount_brl"`
+	PixKey      string         `json:"pix_key"`
+	Capability  string         `json:"capability"`
+	Operation   string         `json:"operation"`
+	Constraints map[string]any `json:"constraints"`
+}
+
+func stringConstraint(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func missingPlanRequirements(required []string, agentWallet, amountBRL, pixKey, asset, network string, req agentPlanRequest) []string {
+	missing := make([]string, 0)
+	hasCapabilityInput := strings.TrimSpace(stringConstraint(req.Constraints, "document_url")) != "" ||
+		strings.TrimSpace(stringConstraint(req.Constraints, "document_payload")) != "" ||
+		strings.TrimSpace(req.Operation) != ""
+	for _, item := range required {
+		switch item {
+		case "agent_wallet", "payer_wallet":
+			if strings.TrimSpace(agentWallet) == "" {
+				missing = appendUnique(missing, item)
+			}
+		case "amount_brl":
+			if strings.TrimSpace(amountBRL) == "" {
+				missing = appendUnique(missing, item)
+			}
+		case "pix_key":
+			if strings.TrimSpace(pixKey) == "" {
+				missing = appendUnique(missing, item)
+			}
+		case "payment_asset_usdt":
+			if asset != "USDT" {
+				missing = appendUnique(missing, item)
+			}
+		case "allowed_assets":
+			if asset == "" {
+				missing = appendUnique(missing, item)
+			}
+		case "document_url_or_payload":
+			if !hasCapabilityInput {
+				missing = appendUnique(missing, item)
+			}
+		case "agent_policy", "capability_grant_or_x402_payment":
+			missing = appendUnique(missing, item+"_verification")
+		}
+	}
+	if network == "" {
+		missing = appendUnique(missing, "network")
+	}
+	return missing
+}
+
+func appendUnique(items []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return items
+	}
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
+}
+
+func newAgentPlanID(parts ...string) string {
+	seed := strings.Join(parts, "|")
+	if strings.Trim(seed, "| ") == "" {
+		seed = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	sum := sha256.Sum256([]byte(seed))
+	return "plan_" + hex.EncodeToString(sum[:])[:24]
+}
+
+func compareDecimalStrings(actual, max string) string {
+	actualFloat, actualErr := strconv.ParseFloat(strings.TrimSpace(actual), 64)
+	maxFloat, maxErr := strconv.ParseFloat(strings.TrimSpace(max), 64)
+	if actualErr != nil || maxErr != nil {
+		return "unknown"
+	}
+	if actualFloat <= maxFloat {
+		return "within_limit"
+	}
+	return "exceeds_limit"
+}
+
+func (s *Server) estimatePlanCostUSDT(amountBRL, asset, planKind string) map[string]any {
+	out := map[string]any{
+		"asset":               asset,
+		"estimated_cost_usdt": "dynamic",
+		"type":                "dynamic",
+	}
+	if planKind == "x402" {
+		out["source"] = "payment_requirements.amount"
+		out["estimated_cost_usdt"] = "80.000000"
+		out["note"] = "default document_ocr plan price; final x402 challenge is authoritative"
+		return out
+	}
+	amount, err := money.ParseMoney(strings.TrimSpace(amountBRL))
+	if err != nil || amount <= 0 || s == nil || s.workers == nil || s.workers.PriceWorker == nil {
+		out["source"] = "quote_required_usdt"
+		return out
+	}
+	rate := s.workers.PriceWorker.GetPrice("BRL")
+	if rate <= 0 {
+		out["source"] = "quote_required_usdt"
+		return out
+	}
+	feeBps := s.cfg.M2MPixFeeBps
+	gross := money.TokensFromFiat(amount, money.RateFromFloat(rate))
+	fee := money.TokenFeeBps(gross, feeBps)
+	required := gross + fee
+	out["estimated_cost_usdt"] = fmt.Sprintf("%.6f", required.Float64())
+	out["source"] = "local_price_worker_estimate"
+	out["rate_usdt_brl"] = fmt.Sprintf("%.4f", rate)
+	out["fee_bps"] = feeBps
+	return out
 }
 
 func (s *Server) agentPolicyDiscoveryDocument(base string) map[string]any {
@@ -102,6 +261,248 @@ func (s *Server) agentPolicyDiscoveryDocument(base string) map[string]any {
 				"next_action": "Lower the amount or update the policy limit.",
 			},
 		},
+	}
+}
+
+func (s *Server) agentCapabilityCompositionsDocument(base string) map[string]any {
+	compositions := []map[string]any{
+		{
+			"id":          "document_to_memory_payment",
+			"name":        "OCR, summarize, store and pay",
+			"description": "Extract a document, summarize it, save the summary to semantic memory and create a USDT-funded PIX payment intent.",
+			"pipeline": []map[string]any{
+				{"step": "extract_document_text", "skill": "document_ocr", "operation": "extract_text", "protocols": []string{"a2a", "mcp", "x402"}},
+				{"step": "summarize_text", "skill": "llm_chat", "operation": "summarize", "protocols": []string{"a2a", "mcp"}},
+				{"step": "save_summary", "skill": "semantic_memory", "operation": "save_memory", "protocols": []string{"a2a", "mcp"}},
+				{"step": "create_payment_intent", "skill": "pay_pix_with_usdt", "operation": "create_payment_intent", "protocols": []string{"a2a"}},
+			},
+			"requires": []string{
+				"agent_policy",
+				"capability_grant_or_x402_payment",
+				"payment_asset_usdt",
+				"agent_wallet",
+				"document_url_or_payload",
+				"amount_brl",
+				"pix_key",
+			},
+			"produces": []string{
+				"ocr_text",
+				"summary",
+				"memory_record",
+				"payment_intent",
+			},
+			"estimated_latency_ms": map[string]any{"p95": 45000},
+			"estimated_cost":       map[string]any{"type": "mixed", "sources": []string{"capability_plan_or_x402", "quote_required_usdt"}},
+			"execution_mode":       "manual_or_agent_driven",
+			"planner_goal_aliases": []string{"ocr summarize store pay", "read document and pay pix", "document to memory payment"},
+		},
+		{
+			"id":          "pix_payment_with_quote",
+			"name":        "Quote and create PIX payment intent",
+			"description": "Discover policy, quote required USDT and create a PIX intent without exposing REST internals to the agent.",
+			"pipeline": []map[string]any{
+				{"step": "fetch_policy", "skill": "agent_policy", "operation": "read_policy_discovery", "protocols": []string{"http"}},
+				{"step": "quote_payment", "skill": "quote_required_usdt", "operation": "quote", "protocols": []string{"a2a"}},
+				{"step": "create_payment_intent", "skill": "pay_pix_with_usdt", "operation": "create_payment_intent", "protocols": []string{"a2a"}},
+				{"step": "poll_status", "skill": "get_payment_status", "operation": "poll", "protocols": []string{"a2a"}},
+			},
+			"requires": []string{"agent_policy", "agent_wallet", "amount_brl", "pix_key", "payment_asset_usdt"},
+			"produces": []string{"quote", "required_usdt", "payment_intent", "payment_address", "status"},
+			"estimated_latency_ms": map[string]any{"p95": 15000},
+			"estimated_cost":       map[string]any{"type": "dynamic", "source": "quote_required_usdt"},
+			"execution_mode":       "manual_or_agent_driven",
+			"planner_goal_aliases": []string{"pay pix", "pix payment", "send brl using usdt", "pay a pix recipient using usdt"},
+		},
+		{
+			"id":          "x402_document_ocr",
+			"name":        "Pay-per-call OCR through x402",
+			"description": "Receive an HTTP 402 challenge for document OCR, pay on BSC and replay with PAYMENT proof.",
+			"pipeline": []map[string]any{
+				{"step": "discover_x402", "skill": "x402_capability_execution", "operation": "discover", "protocols": []string{"http"}},
+				{"step": "request_without_payment", "skill": "document_ocr", "operation": "extract_text", "protocols": []string{"x402"}},
+				{"step": "pay_requirements", "skill": "stablecoin_payment", "operation": "transfer_usdt", "protocols": []string{"bsc"}},
+				{"step": "replay_with_payment", "skill": "document_ocr", "operation": "extract_text", "protocols": []string{"x402"}},
+			},
+			"requires": []string{"agent_wallet", "payer_wallet", "payment_asset_usdt", "document_url_or_payload"},
+			"produces": []string{"payment_requirements", "purchase_id", "ocr_text", "payment_response"},
+			"estimated_latency_ms": map[string]any{"p95": 20000},
+			"estimated_cost":       map[string]any{"type": "exact", "source": "payment_requirements.amount"},
+			"execution_mode":       "manual_or_agent_driven",
+			"planner_goal_aliases": []string{"ocr with x402", "pay per call ocr", "extract text with http 402"},
+		},
+		{
+			"id":          "stablecoin_exchange_then_payment",
+			"name":        "Exchange stablecoin and pay",
+			"description": "Plan a USDT/USDC stablecoin exchange before creating a payment intent.",
+			"pipeline": []map[string]any{
+				{"step": "fetch_policy", "skill": "agent_policy", "operation": "read_policy_discovery", "protocols": []string{"http"}},
+				{"step": "quote_exchange", "skill": "stablecoin_exchange", "operation": "quote", "protocols": []string{"a2a"}},
+				{"step": "quote_payment", "skill": "quote_required_usdt", "operation": "quote", "protocols": []string{"a2a"}},
+				{"step": "create_payment_intent", "skill": "pay_pix_with_usdt", "operation": "create_payment_intent", "protocols": []string{"a2a"}},
+			},
+			"requires": []string{"agent_policy", "agent_wallet", "allowed_assets", "amount_brl", "pix_key"},
+			"produces": []string{"exchange_quote", "payment_quote", "payment_intent"},
+			"estimated_latency_ms": map[string]any{"p95": 25000},
+			"estimated_cost":       map[string]any{"type": "dynamic", "source": "stablecoin_exchange plus quote_required_usdt"},
+			"execution_mode":       "manual_or_agent_driven",
+			"planner_goal_aliases": []string{"swap then pay", "exchange stablecoin and pay pix", "convert usdc to usdt and pay"},
+		},
+	}
+	return map[string]any{
+		"agent":        "ChainFX Agent Pay",
+		"name":         "ChainFX Capability Compositions",
+		"product_name": "ChainFX Planning Layer for Agent Commerce",
+		"version":      "1.0.0",
+		"updated_at":   time.Now().UTC().Format(time.RFC3339),
+		"objective":    "Let agents compose existing skills into complete executable plans before calling any skill.",
+		"endpoints": map[string]string{
+			"well_known": base + "/.well-known/capability-compositions.json",
+			"api":        base + "/agent/v1/capability-compositions",
+			"planner":    base + "/agent/v1/plans",
+			"graph":      base + "/.well-known/capability-graph.json",
+		},
+		"compositions": compositions,
+		"phase_report": map[string]any{
+			"id":        "planning_layer_report",
+			"phase":     "2",
+			"objective": "Understanding becomes a plan: an agent can send a goal and receive executable steps without invoking the skill.",
+			"compositions_available": []string{
+				"document_to_memory_payment",
+				"pix_payment_with_quote",
+				"x402_document_ocr",
+				"stablecoin_exchange_then_payment",
+			},
+			"goals_supported": []string{
+				"pay a PIX recipient using USDT",
+				"OCR a document through x402",
+				"OCR, summarize, store and pay",
+				"exchange stablecoin then pay",
+			},
+			"acceptance_criteria": "An agent sends a goal and receives a non-executing plan with steps, missing requirements, cost and latency estimates.",
+			"qa": map[string]any{
+				"tool":           "tools/agent-qa/openai-agent-pay-test",
+				"expected_check": "planner_api_validated",
+			},
+		},
+	}
+}
+
+func (s *Server) buildAgentPlan(r *http.Request, req agentPlanRequest) map[string]any {
+	base := publicBaseURL(r)
+	goal := strings.ToLower(strings.TrimSpace(req.Goal))
+	agentWallet := strings.TrimSpace(req.AgentWallet)
+	amountBRL := strings.TrimSpace(req.AmountBRL)
+	pixKey := strings.TrimSpace(req.PixKey)
+	asset := strings.ToUpper(strings.TrimSpace(stringConstraint(req.Constraints, "asset")))
+	network := strings.ToUpper(strings.TrimSpace(stringConstraint(req.Constraints, "network")))
+	maxCostUSDT := strings.TrimSpace(stringConstraint(req.Constraints, "max_cost_usdt"))
+	if asset == "" {
+		asset = "USDT"
+	}
+	if network == "" {
+		network = "BSC"
+	}
+
+	compositionID := "pix_payment_with_quote"
+	steps := []string{"fetch_policy", "quote_required_usdt", "pay_pix_with_usdt", "poll_get_payment_status"}
+	required := []string{"agent_wallet", "amount_brl", "pix_key", "agent_policy", "payment_asset_usdt"}
+	produces := []string{"quote", "required_usdt", "payment_intent", "payment_address", "status"}
+	estimatedLatencyMS := 15000
+	planKind := "payment"
+
+	switch {
+	case strings.Contains(goal, "document") || strings.Contains(goal, "ocr"):
+		if strings.Contains(goal, "summar") || strings.Contains(goal, "memory") || strings.Contains(goal, "store") {
+			compositionID = "document_to_memory_payment"
+			steps = []string{"fetch_policy", "ensure_capability_grant_or_x402_payment", "document_ocr.extract_text", "llm_chat.summarize", "semantic_memory.save_memory", "quote_required_usdt", "pay_pix_with_usdt", "poll_get_payment_status"}
+			required = []string{"agent_wallet", "document_url_or_payload", "capability_grant_or_x402_payment", "amount_brl", "pix_key", "agent_policy", "payment_asset_usdt"}
+			produces = []string{"ocr_text", "summary", "memory_record", "quote", "payment_intent"}
+			estimatedLatencyMS = 45000
+			planKind = "composition"
+		} else {
+			compositionID = "x402_document_ocr"
+			steps = []string{"fetch_x402_discovery", "POST_x402_capability_without_PAYMENT", "pay_returned_payment_requirements", "replay_with_PAYMENT_header", "read_PAYMENT_RESPONSE"}
+			required = []string{"agent_wallet", "payer_wallet", "document_url_or_payload", "payment_asset_usdt"}
+			produces = []string{"payment_requirements", "purchase_id", "ocr_text", "payment_response"}
+			estimatedLatencyMS = 20000
+			planKind = "x402"
+		}
+	case strings.Contains(goal, "exchange") || strings.Contains(goal, "swap") || strings.Contains(goal, "convert"):
+		compositionID = "stablecoin_exchange_then_payment"
+		steps = []string{"fetch_policy", "stablecoin_exchange", "quote_required_usdt", "pay_pix_with_usdt", "poll_get_payment_status"}
+		required = []string{"agent_wallet", "allowed_assets", "amount_brl", "pix_key", "agent_policy"}
+		produces = []string{"exchange_quote", "payment_quote", "payment_intent"}
+		estimatedLatencyMS = 25000
+		planKind = "exchange_payment"
+	}
+
+	missing := missingPlanRequirements(required, agentWallet, amountBRL, pixKey, asset, network, req)
+	status := "ready"
+	if len(missing) > 0 {
+		status = "input_required"
+	}
+	if agentWallet != "" && !common.IsHexAddress(agentWallet) {
+		status = "invalid_request"
+		missing = appendUnique(missing, "valid_agent_wallet")
+	}
+	if asset != "USDT" && asset != "USDC" {
+		status = "invalid_request"
+		missing = appendUnique(missing, "supported_asset_usdt_or_usdc")
+	}
+	if network != "BSC" {
+		status = "invalid_request"
+		missing = appendUnique(missing, "supported_network_bsc")
+	}
+
+	estimatedCost := s.estimatePlanCostUSDT(amountBRL, asset, planKind)
+	if maxCostUSDT != "" && estimatedCost["estimated_cost_usdt"] != "dynamic" {
+		estimatedCost["max_cost_usdt"] = maxCostUSDT
+		estimatedCost["cost_constraint"] = compareDecimalStrings(estimatedCost["estimated_cost_usdt"].(string), maxCostUSDT)
+	}
+
+	planID := newAgentPlanID(goal, agentWallet, amountBRL, compositionID)
+	return map[string]any{
+		"plan_id":              planID,
+		"status":               status,
+		"goal":                 req.Goal,
+		"composition_id":       compositionID,
+		"execution_mode":       "manual_or_agent_driven",
+		"executes_now":         false,
+		"steps":                steps,
+		"missing_requirements": missing,
+		"requires":             required,
+		"produces":             produces,
+		"estimated_cost_usdt":  estimatedCost["estimated_cost_usdt"],
+		"estimated_cost":       estimatedCost,
+		"estimated_latency_ms": estimatedLatencyMS,
+		"constraints": map[string]any{
+			"asset":         asset,
+			"network":       network,
+			"max_cost_usdt": maxCostUSDT,
+		},
+		"endpoints": map[string]string{
+			"agent_card":   base + "/.well-known/agent-card.json",
+			"policy":       base + "/.well-known/agent-policy.json",
+			"graph":        base + "/.well-known/capability-graph.json",
+			"compositions": base + "/.well-known/capability-compositions.json",
+			"a2a":          base + "/a2a",
+			"x402":         base + "/.well-known/x402.json",
+		},
+		"recovery": map[string]any{
+			"if_missing_policy": "call_agent_connect_or_activate_policy",
+			"if_over_budget":    "lower_amount_or_update_constraints",
+			"if_auth_required":  "send_authorization_bearer_chainfx_api_key",
+		},
+		"phase_report": map[string]any{
+			"id":                     "planning_layer_report",
+			"phase":                  "2",
+			"plan_generated_by_goal":  req.Goal,
+			"missing_requirements":    missing,
+			"estimated_cost_usdt":     estimatedCost["estimated_cost_usdt"],
+			"estimated_latency_ms":    estimatedLatencyMS,
+			"agent_qa_expected_check": "planner_api_validated",
+		},
+		"created_at": time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
