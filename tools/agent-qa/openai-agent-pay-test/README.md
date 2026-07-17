@@ -19,6 +19,7 @@ Trust checks covered:
 - Multi-registry discovery documents for AGNTCY/OASF-style publication.
 - Agent policy discovery and capability graph planning documents.
 - Agent Graph v2 validation, including `pay_pix_with_usdt` dependencies, outputs, failure modes, recovery actions, cost source, latency target and phase report.
+- Capability compositions discovery and Planner API validation. The planner call is non-executing and must return steps, missing requirements, estimated cost and estimated latency.
 
 ## Run discovery without credentials
 
@@ -53,3 +54,14 @@ The QA report includes `capability_graph_v2` and these checks:
 - `graph_phase_report_detected`
 
 For Phase 1 to pass, `/.well-known/capability-graph.json` must expose version `2.0.0`, an `agent_graph_v2_report`, and a complete `pay_pix_with_usdt` contract with `requires`, `produces`, `next`, `preconditions`, `failure_modes`, `recovery_actions`, `estimated_cost`, `expected_latency_ms` and `policy_requirements`.
+
+## Planning Layer acceptance
+
+The QA report includes `capability_compositions`, `planner_api` and these checks:
+
+- `capability_compositions_fetched`
+- `capability_compositions_validated`
+- `planner_api_called`
+- `planner_api_validated`
+
+For Phase 2 to pass, `/.well-known/capability-compositions.json` must expose a `planning_layer_report`, and `POST /agent/v1/plans` must return a non-executing plan with `plan_id`, `steps`, `missing_requirements`, `estimated_cost_usdt`, `estimated_latency_ms`, and `executes_now: false`.
