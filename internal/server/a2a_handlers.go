@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,6 +98,22 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "list_supported_payment_methods":
 		result = s.a2aSupportedPaymentMethods(publicBaseURL(r))
+	case "capability_exchange":
+		result, status = s.a2aCapabilityExchange(r, args)
+	case "stablecoin_exchange":
+		var errPayload map[string]any
+		result, status, errPayload = s.a2aStablecoinExchange(r, args)
+		if errPayload != nil {
+			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
+			return
+		}
+	case "semantic_memory", "document_ocr", "llm_chat":
+		var errPayload map[string]any
+		result, status, errPayload = s.a2aCapabilityDetails(r, action)
+		if errPayload != nil {
+			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
+			return
+		}
 	case "quote_required_usdt":
 		quote, code, errPayload := s.a2aQuoteRequiredUSDT(r, args)
 		if errPayload != nil {
@@ -133,6 +151,11 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 				"get_payment_status",
 				"quote_required_usdt",
 				"list_supported_payment_methods",
+				"stablecoin_exchange",
+				"capability_exchange",
+				"semantic_memory",
+				"document_ocr",
+				"llm_chat",
 			},
 		}))
 		return
@@ -190,6 +213,36 @@ func (s *Server) a2aAgentCard(base string) map[string]any {
 				"description": "List supported fiat payment rails and stablecoin funding rails.",
 				"tags":        []string{"discovery", "payments"},
 			},
+			{
+				"id":          "stablecoin_exchange",
+				"name":        "Stablecoin exchange",
+				"description": "Quote BSC stablecoin exchanges such as USDT to USDC through ChainFX Agent Rail.",
+				"tags":        []string{"stablecoin", "exchange", "usdt", "usdc", "bsc"},
+			},
+			{
+				"id":          "capability_exchange",
+				"name":        "Capability exchange",
+				"description": "Discover purchasable and executable capabilities available to autonomous agents.",
+				"tags":        []string{"capabilities", "marketplace", "discovery"},
+			},
+			{
+				"id":          "semantic_memory",
+				"name":        "Semantic memory",
+				"description": "Discover persistent memory operations for agent context and knowledge lookup.",
+				"tags":        []string{"memory", "agent-state", "capability"},
+			},
+			{
+				"id":          "document_ocr",
+				"name":        "Document OCR",
+				"description": "Discover OCR operations for extracting and structuring document text.",
+				"tags":        []string{"ocr", "documents", "capability"},
+			},
+			{
+				"id":          "llm_chat",
+				"name":        "LLM chat",
+				"description": "Discover provider-routed text generation, chat, summarization and classification.",
+				"tags":        []string{"llm", "chat", "summarization", "capability"},
+			},
 		},
 		"capabilities": map[string]any{
 			"streaming":              false,
@@ -206,6 +259,79 @@ func (s *Server) a2aAgentCard(base string) map[string]any {
 			"ai_services": base + "/.well-known/ai-services.json",
 		},
 	}
+}
+
+func (s *Server) a2aCapabilityExchange(r *http.Request, args map[string]any) (map[string]any, int) {
+	query := make([]string, 0, 3)
+	if category := stringArg(args, "category"); category != "" {
+		query = append(query, "category="+url.QueryEscape(category))
+	}
+	if capability := stringArg(args, "capability"); capability != "" {
+		query = append(query, "capability="+url.QueryEscape(capability))
+	}
+	if paymentAsset := stringArg(args, "paymentAsset", "payment_asset"); paymentAsset != "" {
+		query = append(query, "paymentAsset="+url.QueryEscape(paymentAsset))
+	}
+	path := "/marketplace/capabilities"
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
+	}
+	status, out := s.dispatchJSONToHandler(r, http.MethodGet, path, nil, s.handleMarketplaceCapabilities)
+	return map[string]any{
+		"skill":        "capability_exchange",
+		"capabilities": out,
+		"instructions": "Choose a capability, inspect its contract, purchase a plan, then execute with an access grant.",
+	}, status
+}
+
+func (s *Server) a2aCapabilityDetails(r *http.Request, capability string) (map[string]any, int, map[string]any) {
+	status, out := s.dispatchJSONToHandler(r, http.MethodGet, "/marketplace/capabilities/"+capability, nil, func(w http.ResponseWriter, req *http.Request) {
+		req.SetPathValue("id", capability)
+		s.handleMarketplaceCapability(w, req)
+	})
+	if status < 200 || status >= 300 {
+		return nil, status, out
+	}
+	return map[string]any{
+		"skill":        capability,
+		"capability":   out,
+		"contract_url": "/marketplace/capabilities/" + capability + "/contract",
+		"next_step":    "Use capability_exchange to discover plans, then purchase and execute this capability.",
+	}, status, nil
+}
+
+func (s *Server) a2aStablecoinExchange(r *http.Request, args map[string]any) (map[string]any, int, map[string]any) {
+	payAsset := firstNonEmpty(stringArg(args, "payAsset", "pay_asset"), "USDT")
+	receiveAsset := firstNonEmpty(stringArg(args, "receiveAsset", "receive_asset"), "USDC")
+	amount := stringArg(args, "amount")
+	if amount == "" {
+		amount = "10"
+	}
+	amountFloat, err := strconv.ParseFloat(strings.ReplaceAll(amount, ",", "."), 64)
+	if err != nil || amountFloat <= 0 {
+		return nil, http.StatusBadRequest, map[string]any{"error": "amount must be a positive number"}
+	}
+	agentWallet := stringArg(args, "agentWallet", "agent_wallet", "wallet")
+	if agentWallet == "" {
+		return nil, http.StatusBadRequest, map[string]any{"error": "agent_wallet is required for stablecoin_exchange quote"}
+	}
+	payload := map[string]any{
+		"payAsset":          payAsset,
+		"receiveAsset":      receiveAsset,
+		"amount":            amountFloat,
+		"amountType":        firstNonEmpty(stringArg(args, "amountType", "amount_type"), "pay"),
+		"agentWallet":       agentWallet,
+		"destinationWallet": firstNonEmpty(stringArg(args, "destinationWallet", "destination_wallet"), agentWallet),
+	}
+	status, out := s.dispatchJSONToHandler(r, http.MethodPost, "/agent/v1/trade/quote", payload, s.handleAgentTradeQuote)
+	if status < 200 || status >= 300 {
+		return nil, status, out
+	}
+	return map[string]any{
+		"skill":        "stablecoin_exchange",
+		"quote":        out,
+		"instructions": "Fund the returned payment intent on-chain, then execute settlement through Agent Rail.",
+	}, status, nil
 }
 
 func (s *Server) a2aSupportedPaymentMethods(base string) map[string]any {
@@ -389,6 +515,10 @@ func normalizeA2AAction(value string) string {
 		return "quote_required_usdt"
 	case "methods", "payment_methods", "supported_methods":
 		return "list_supported_payment_methods"
+	case "stablecoin", "exchange", "stablecoin_quote", "stablecoin_trade":
+		return "stablecoin_exchange"
+	case "capabilities", "capability", "capability_marketplace", "capability_discovery":
+		return "capability_exchange"
 	default:
 		return value
 	}
