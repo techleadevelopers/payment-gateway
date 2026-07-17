@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.techleadevelopers/chainfx-mcp",
   "title": "ChainFX Capability Network",
-  "description": "Capability network for AI agents with stablecoin-funded real-world payments.",
+  "description": "ChainFX Agent Pay lets autonomous agents pay PIX recipients and card bills by funding intents with USDT on BSC.",
   "websiteUrl": "https://www.chainfx.store",
   "repository": {
     "url": "https://github.com/chainfx/payment-gateway",
     "source": "github"
   },
-  "version": "1.3.2",
+  "version": "1.3.3",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/mcp/initialize",
+      "url": "https://api-production-bc748.up.railway.app/mcp/initialize",
       "headers": [
         {
           "name": "Authorization",
@@ -26,7 +26,7 @@
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "tool": "mcp-publisher",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "build_info": {
         "service": "chainfx-mcp",
         "public_title": "ChainFX Capability Network MCP",
@@ -36,8 +36,8 @@
     },
     "store.chainfx/product": {
       "category": "capability-marketplace",
-      "positioning": "economic infrastructure for autonomous agents to buy capabilities, route execution and settle real-world payments with stablecoins",
-      "product_summary": "ChainFX Capability Network lets agents discover and buy digital capabilities, execute metered services, trade stablecoins and request real-world fiat payments funded by USDT.",
+      "positioning": "A2A payment agent and capability network for autonomous agents to settle real-world payments with stablecoins",
+      "product_summary": "ChainFX Agent Pay lets agents pay PIX recipients and card bills using USDT on BSC, while the broader Capability Network lets agents discover, buy and execute metered digital capabilities.",
       "primary_flow": [
         "discover_capability",
         "purchase_capability",
@@ -75,14 +75,29 @@
         "listAgentPaymentIntents"
       ],
       "featured_capabilities": [
+        "agent_payments",
         "semantic_memory",
         "llm_chat",
         "document_ocr",
         "payments_fx",
-        "agent_payments",
         "capability_discovery",
         "aml_screening"
       ],
+      "agent_pay": {
+        "status": "available",
+        "public_name": "ChainFX Agent Pay",
+        "positioning": "A2A payment agent that lets autonomous agents pay PIX recipients and card bills by funding intents with USDT on BSC.",
+        "agent_card": "https://api-production-bc748.up.railway.app/.well-known/agent-card.json",
+        "a2a": "https://api-production-bc748.up.railway.app/a2a",
+        "onboarding": "https://api-production-bc748.up.railway.app/agent-pay.json",
+        "skills": [
+          "pay_pix_with_usdt",
+          "pay_card_bill_with_usdt",
+          "get_payment_status",
+          "quote_required_usdt",
+          "list_supported_payment_methods"
+        ]
+      },
       "agent_payments": {
         "status": "available",
         "capability_id": "agent_payments",
@@ -105,8 +120,8 @@
         "funding_asset": "USDT",
         "funding_network": "BSC",
         "rest_endpoints": {
-          "create": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/agent/v1/pay",
-          "status": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/agent/v1/pay/{id}"
+          "create": "https://api-production-bc748.up.railway.app/agent/v1/pay",
+          "status": "https://api-production-bc748.up.railway.app/agent/v1/pay/{id}"
         },
         "mcp_tools": [
           "createPaymentIntent",
@@ -133,9 +148,9 @@
         "seed_fixtures": false
       },
       "docs": {
-        "openapi": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/openapi.json",
-        "agent_capabilities": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/agent/v1/capabilities",
-        "well_known": "https://stablecoin-payment-gateway-production-3ee2.up.railway.app/.well-known/ai-services.json"
+        "openapi": "https://api-production-bc748.up.railway.app/openapi.json",
+        "agent_capabilities": "https://api-production-bc748.up.railway.app/agent/v1/capabilities",
+        "well_known": "https://api-production-bc748.up.railway.app/.well-known/ai-services.json"
       }
     }
   }
