@@ -241,7 +241,7 @@ func LoadConfig() *Config {
 		ChainFXTestPublicKeys:     getEnv("CHAINFX_TEST_PUBLIC_KEYS", "pk_test_chainfx_local"),
 		ChainFXRequireAPIKey:      getEnvAsBool("CHAINFX_REQUIRE_API_KEY", false),
 		InternalAllowedCIDRs:      getEnv("INTERNAL_ALLOWED_CIDRS", "127.0.0.1/32,::1/128"),
-		AdminBootstrapEmail:       getEnv("ADMIN_BOOTSTRAP_EMAIL", ""),
+		AdminBootstrapEmail:       getEnv("ADMIN_BOOTSTRAP_EMAIL", "paulo@chainfx.com"),
 		AdminBootstrapPassword:    getEnv("ADMIN_BOOTSTRAP_PASSWORD", ""),
 		AdminConsoleKey:           getEnv("ADMIN_CONSOLE_KEY", ""),
 
