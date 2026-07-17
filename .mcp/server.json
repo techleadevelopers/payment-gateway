@@ -8,7 +8,7 @@
     "url": "https://github.com/chainfx/payment-gateway",
     "source": "github"
   },
-  "version": "1.3.8",
+  "version": "1.3.9",
   "remotes": [
     {
       "type": "streamable-http",
@@ -26,7 +26,7 @@
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "tool": "mcp-publisher",
-      "version": "1.3.8",
+      "version": "1.3.9",
       "build_info": {
         "service": "chainfx-mcp",
         "public_title": "ChainFX Capability Network MCP",
@@ -101,6 +101,8 @@
         "agntcy": "https://api-production-bc748.up.railway.app/.well-known/agntcy.json",
         "oasf": "https://api-production-bc748.up.railway.app/.well-known/oasf.json",
         "registry_record": "https://api-production-bc748.up.railway.app/agent/v1/registry-records/agntcy-oasf",
+        "policy_discovery": "https://api-production-bc748.up.railway.app/.well-known/agent-policy.json",
+        "capability_graph": "https://api-production-bc748.up.railway.app/.well-known/capability-graph.json",
         "onboarding": "https://api-production-bc748.up.railway.app/agent-pay.json",
         "trust_layer": {
           "identity": "Ed25519-signed Agent Card with public JWKS discovery",
@@ -110,7 +112,9 @@
           "task_lifecycle": "Asynchronous A2A tasks with submitted, working, input_required, completed, failed, canceled and rejected states plus SSE events"
           ,
           "x402": "HTTP 402 payment challenge for pay-per-call digital capability execution with BSC stablecoin settlement",
-          "multi_registry": "Publishable records for MCP, A2A, OpenAPI, x402 and AGNTCY/OASF-style agent directories"
+          "multi_registry": "Publishable records for MCP, A2A, OpenAPI, x402 and AGNTCY/OASF-style agent directories",
+          "policy_discovery": "Machine-readable policy requirements so agents avoid AGENT_POLICY_REQUIRED failures before execution",
+          "capability_graph": "Machine-readable dependency graph for autonomous planning across policy, quote, payment, x402, status and observability"
         },
         "skills": [
           "pay_pix_with_usdt",
@@ -180,6 +184,8 @@
         "agent_reputation": "https://api-production-bc748.up.railway.app/agent/v1/reputation",
         "agent_sla": "https://api-production-bc748.up.railway.app/agent/v1/sla",
         "agent_registries": "https://api-production-bc748.up.railway.app/agent/v1/registries",
+        "agent_policy": "https://api-production-bc748.up.railway.app/.well-known/agent-policy.json",
+        "capability_graph": "https://api-production-bc748.up.railway.app/.well-known/capability-graph.json",
         "agntcy": "https://api-production-bc748.up.railway.app/.well-known/agntcy.json",
         "oasf": "https://api-production-bc748.up.railway.app/.well-known/oasf.json",
         "well_known": "https://api-production-bc748.up.railway.app/.well-known/ai-services.json"
