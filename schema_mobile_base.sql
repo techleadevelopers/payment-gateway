@@ -18,11 +18,16 @@ CREATE TABLE IF NOT EXISTS users (
   two_factor_enabled   BOOLEAN       NOT NULL DEFAULT false,
   two_factor_secret    TEXT,
   refresh_token_hash   TEXT,
+  deleted_at           TIMESTAMPTZ,
   created_at           TIMESTAMPTZ   NOT NULL DEFAULT now(),
   updated_at           TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_active_email ON users(email) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address) WHERE wallet_address IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS devices (
