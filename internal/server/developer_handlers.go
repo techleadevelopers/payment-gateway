@@ -54,6 +54,14 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeAdminConsoleKey(w, r) {
 		return
 	}
+	s.handlePasswordLogin(w, r, "admin")
+}
+
+func (s *Server) handleDeveloperLogin(w http.ResponseWriter, r *http.Request) {
+	s.handlePasswordLogin(w, r, "developer")
+}
+
+func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request, surface string) {
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -70,6 +78,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":            token,
 		"user":             user,
+		"surface":          surface,
 		"expiresInSeconds": 43200,
 	})
 }
@@ -568,6 +577,7 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
 			"/order/{id}":                                  map[string]any{"get": map[string]any{"summary": "Read an order by ID"}},
 			"/webhooks/test":                               map[string]any{"post": map[string]any{"summary": "Generate a simulated webhook payload", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
 			"/webhooks/retry":                              map[string]any{"post": map[string]any{"summary": "Retry a webhook for an existing order", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
+			"/api/developer/login":                         map[string]any{"post": map[string]any{"summary": "Developer console password login using bootstrap/admin credentials"}},
 			"/developers/api-keys":                         map[string]any{"get": map[string]any{"summary": "List configured API keys masked", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
 			"/developers/logs":                             map[string]any{"get": map[string]any{"summary": "List recent developer logs", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
 			"/mcp/initialize":                              map[string]any{"post": map[string]any{"summary": "Initialize MCP HTTP session for autonomous agents", "security": []map[string][]string{{"bearerAuth": []string{}}}}},
