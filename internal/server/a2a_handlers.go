@@ -75,6 +75,11 @@ func (s *Server) handleAgentPayOnboarding(w http.ResponseWriter, r *http.Request
 			"status":          base + "/agent/v1/pay/{id}",
 			"mcp":             base + "/mcp/initialize",
 			"a2a":             base + "/a2a",
+			"a2a_tasks":       base + "/a2a/tasks",
+			"a2a_task_status": base + "/a2a/tasks/{id}",
+			"a2a_task_events": base + "/a2a/tasks/{id}/events",
+			"x402_execute":    base + "/x402/capabilities/{capability}/execute",
+			"task_states":     []string{"submitted", "working", "input_required", "completed", "failed", "canceled", "rejected"},
 			"agent_card":      base + "/.well-known/agent-card.json",
 			"openapi":         base + "/openapi.json",
 		}, nil
@@ -90,78 +95,73 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 
 	action := normalizeA2AAction(firstNonEmpty(req.Skill, req.Action, req.Name, req.Method))
 	args := firstMap(req.Arguments, req.Params, req.Input)
+	started := time.Now()
+	inputHash := hashAny(map[string]any{"skill": action, "arguments": args})
+	episodeStatus := "completed"
+	episodeStatusCode := http.StatusOK
+	var episodeError map[string]any
+	var episodeResult any
+	defer func() {
+		s.recordAgentEpisode(agentEpisode{
+			AgentID:          "chainfx-agent-pay",
+			Protocol:         "a2a",
+			Skill:            action,
+			InputHash:        inputHash,
+			PaymentIntentID:  paymentIntentIDFromAny(episodeResult),
+			SettlementStatus: settlementStatusFromAny(episodeResult),
+			LatencyMS:        time.Since(started).Milliseconds(),
+			ResultHash:       hashAny(episodeResult),
+			ErrorTree:        episodeError,
+			Status:           episodeStatus,
+			StatusCode:       episodeStatusCode,
+			CreatedAt:        started.UTC(),
+		})
+	}()
 
 	var (
-		result any
-		status = http.StatusOK
+		result     any
+		status     int
+		errPayload map[string]any
 	)
-	switch action {
-	case "list_supported_payment_methods":
-		result = s.a2aSupportedPaymentMethods(publicBaseURL(r))
-	case "capability_exchange":
-		result, status = s.a2aCapabilityExchange(r, args)
-	case "stablecoin_exchange":
-		var errPayload map[string]any
-		result, status, errPayload = s.a2aStablecoinExchange(r, args)
-		if errPayload != nil {
-			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
-			return
-		}
-	case "semantic_memory", "document_ocr", "llm_chat":
-		var errPayload map[string]any
-		result, status, errPayload = s.a2aCapabilityDetails(r, action)
-		if errPayload != nil {
-			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
-			return
-		}
-	case "quote_required_usdt":
-		quote, code, errPayload := s.a2aQuoteRequiredUSDT(r, args)
-		if errPayload != nil {
-			writeJSON(w, code, a2aErrorEnvelope(req, code, errPayload))
-			return
-		}
-		result = quote
-	case "pay_pix_with_usdt":
-		var errPayload map[string]any
-		result, status, errPayload = s.a2aCreatePaymentIntent(r, "pix", args)
-		if errPayload != nil {
-			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
-			return
-		}
-	case "pay_card_bill_with_usdt":
-		var errPayload map[string]any
-		result, status, errPayload = s.a2aCreatePaymentIntent(r, "credit_card", args)
-		if errPayload != nil {
-			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
-			return
-		}
-	case "get_payment_status":
-		var errPayload map[string]any
-		result, status, errPayload = s.a2aGetPaymentStatus(r, args)
-		if errPayload != nil {
-			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
-			return
-		}
-	default:
-		writeJSON(w, http.StatusBadRequest, a2aErrorEnvelope(req, http.StatusBadRequest, map[string]any{
-			"error": "unsupported A2A skill",
-			"supported_skills": []string{
-				"pay_pix_with_usdt",
-				"pay_card_bill_with_usdt",
-				"get_payment_status",
-				"quote_required_usdt",
-				"list_supported_payment_methods",
-				"stablecoin_exchange",
-				"capability_exchange",
-				"semantic_memory",
-				"document_ocr",
-				"llm_chat",
-			},
-		}))
+	result, status, errPayload = s.executeA2AAction(r, action, args)
+	if errPayload != nil {
+		episodeStatus = "failed"
+		episodeStatusCode = status
+		episodeError = errPayload
+		writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
 		return
 	}
 
+	episodeStatusCode = status
+	episodeResult = result
 	writeJSON(w, status, a2aSuccessEnvelope(req, action, result))
+}
+
+func (s *Server) executeA2AAction(r *http.Request, action string, args map[string]any) (any, int, map[string]any) {
+	switch action {
+	case "list_supported_payment_methods":
+		return s.a2aSupportedPaymentMethods(publicBaseURL(r)), http.StatusOK, nil
+	case "capability_exchange":
+		result, status := s.a2aCapabilityExchange(r, args)
+		return result, status, nil
+	case "stablecoin_exchange":
+		return s.a2aStablecoinExchange(r, args)
+	case "semantic_memory", "document_ocr", "llm_chat":
+		return s.a2aCapabilityDetails(r, action)
+	case "quote_required_usdt":
+		return s.a2aQuoteRequiredUSDT(r, args)
+	case "pay_pix_with_usdt":
+		return s.a2aCreatePaymentIntent(r, "pix", args)
+	case "pay_card_bill_with_usdt":
+		return s.a2aCreatePaymentIntent(r, "credit_card", args)
+	case "get_payment_status":
+		return s.a2aGetPaymentStatus(r, args)
+	default:
+		return nil, http.StatusBadRequest, map[string]any{
+			"error":            "unsupported A2A skill",
+			"supported_skills": supportedA2ASkills(),
+		}
+	}
 }
 
 func (s *Server) a2aAgentCard(base string) map[string]any {
@@ -181,6 +181,14 @@ func (s *Server) a2aAgentCard(base string) map[string]any {
 		"authentication": map[string]any{
 			"type":        "bearer",
 			"description": "Send Authorization: Bearer <ChainFX API key> for payment creation, quotes and private status.",
+		},
+		"agent_identity": s.agentIdentityMetadata(base),
+		"registry": map[string]any{
+			"index":        base + "/agent/v1/registries",
+			"agntcy":       base + "/.well-known/agntcy.json",
+			"oasf":         base + "/.well-known/oasf.json",
+			"signedRecord": base + "/agent/v1/registry-records/agntcy-oasf",
+			"protocols":    []string{"mcp", "a2a", "openapi", "x402", "oasf"},
 		},
 		"decision_metadata": map[string]any{
 			"supported_networks":   []string{"BSC"},
@@ -329,18 +337,28 @@ func (s *Server) a2aAgentCard(base string) map[string]any {
 			},
 		},
 		"capabilities": map[string]any{
-			"streaming":              false,
+			"streaming":              true,
 			"pushNotifications":      false,
 			"stateTransitionHistory": true,
+			"taskLifecycle":          true,
+			"taskStates":             []string{"submitted", "working", "input_required", "completed", "failed", "canceled", "rejected"},
 		},
 		"endpoints": map[string]any{
-			"a2a":         base + "/a2a",
-			"agent_pay":   base + "/agent/v1/pay",
-			"status":      base + "/agent/v1/pay/{id}",
-			"mcp":         base + "/mcp/initialize",
-			"openapi":     base + "/openapi.json",
-			"onboarding":  base + "/agent-pay.json",
-			"ai_services": base + "/.well-known/ai-services.json",
+			"a2a":          base + "/a2a",
+			"a2a_tasks":    base + "/a2a/tasks",
+			"a2a_task":     base + "/a2a/tasks/{id}",
+			"a2a_events":   base + "/a2a/tasks/{id}/events",
+			"x402":         base + "/.well-known/x402.json",
+			"x402_execute": base + "/x402/capabilities/{capability}/execute",
+			"agent_pay":    base + "/agent/v1/pay",
+			"status":       base + "/agent/v1/pay/{id}",
+			"mcp":          base + "/mcp/initialize",
+			"openapi":      base + "/openapi.json",
+			"registries":   base + "/agent/v1/registries",
+			"agntcy":       base + "/.well-known/agntcy.json",
+			"oasf":         base + "/.well-known/oasf.json",
+			"onboarding":   base + "/agent-pay.json",
+			"ai_services":  base + "/.well-known/ai-services.json",
 		},
 	}
 }
