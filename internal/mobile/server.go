@@ -12,6 +12,7 @@ import (
 
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
+	"payment-gateway/internal/models"
 	"payment-gateway/internal/workers"
 )
 
@@ -300,4 +301,11 @@ func (s *Server) GetConfig() *config.Config {
 // GetMobileConfig returns the mobile config
 func (s *Server) GetMobileConfig() *MobileConfig {
 	return s.mcfg
+}
+
+func (s *Server) sanitizeUser(u *models.User) map[string]any {
+	if s == nil || s.cfg == nil {
+		return sanitizeUser(u)
+	}
+	return sanitizeUserForMobile(u, s.cfg.AdminBootstrapEmail)
 }
