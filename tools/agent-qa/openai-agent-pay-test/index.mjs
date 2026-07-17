@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { writeFile } from 'node:fs/promises';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 
 const DEFAULT_CARD_URL = 'https://api-production-bc748.up.railway.app/.well-known/agent-card.json';
 const DEFAULT_AGENT_WALLET = '0x830000000000000000000000000000000000019a';
@@ -49,6 +50,21 @@ const report = {
     auth_handled: false,
     intent_created: false,
     status_checked: false,
+    jwks_fetched: false,
+    signature_fetched: false,
+    card_hash_verified: false,
+    card_signature_verified: false,
+    reputation_fetched: false,
+    sla_fetched: false,
+    task_created: false,
+    task_status_checked: false,
+    task_events_url_detected: false,
+    x402_discovered: false,
+    x402_challenge_received: false,
+    registries_fetched: false,
+    agntcy_fetched: false,
+    oasf_fetched: false,
+    registry_record_fetched: false,
   },
   selected_skills: {},
   steps: [],
@@ -109,6 +125,7 @@ async function requestJSON(url, options = {}) {
     ok: response.ok,
     status: response.status,
     latency_ms: latencyMs,
+    text,
     body,
   };
 }
@@ -138,6 +155,48 @@ function extractA2AUrl(card) {
   return '';
 }
 
+function extractA2ATasksUrl(card, a2aUrl) {
+  if (typeof card?.endpoints?.a2a_tasks === 'string' && card.endpoints.a2a_tasks) return card.endpoints.a2a_tasks;
+  try {
+    return new URL('/a2a/tasks', a2aUrl).toString();
+  } catch {
+    return '';
+  }
+}
+
+function extractX402ExecuteUrl(card, cardUrlValue) {
+  const raw = card?.endpoints?.x402_execute || '/x402/capabilities/{capability}/execute';
+  return absoluteFromCard(cardUrlValue, String(raw).replace('{capability}', 'document_ocr'));
+}
+
+function absoluteFromCard(cardUrlValue, pathOrUrl) {
+  if (!pathOrUrl) return '';
+  try {
+    return new URL(pathOrUrl, cardUrlValue).toString();
+  } catch {
+    return '';
+  }
+}
+
+function findJWK(jwks, kid) {
+  const keys = Array.isArray(jwks?.keys) ? jwks.keys : [];
+  return keys.find((key) => key?.kid === kid) || keys.find((key) => key?.crv === 'Ed25519') || null;
+}
+
+function verifyAgentCardSignature(cardText, signatureBody, jwksBody) {
+  const canonicalCard = cardText.trim();
+  const expectedHash = signatureBody?.card_hash;
+  const actualHash = createHash('sha256').update(canonicalCard).digest('hex');
+  const hashOk = Boolean(expectedHash && expectedHash === actualHash);
+  const jwk = findJWK(jwksBody, signatureBody?.public_key_id);
+  let signatureOk = false;
+  if (jwk?.x && signatureBody?.signature) {
+    const key = createPublicKey({ key: { ...jwk, key_ops: ['verify'], ext: true }, format: 'jwk' });
+    signatureOk = verify(null, Buffer.from(canonicalCard), key, Buffer.from(signatureBody.signature, 'base64url'));
+  }
+  return { hashOk, signatureOk, actualHash, expectedHash, publicKeyId: jwk?.kid || null };
+}
+
 async function callA2A(a2aUrl, skill, payload, authMode = 'optional') {
   const headers = {};
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
@@ -159,6 +218,36 @@ async function callA2A(a2aUrl, skill, payload, authMode = 'optional') {
   addStep(`a2a:${skill}`, {
     request: {
       url: a2aUrl,
+      method: 'POST',
+      headers: redactHeaders(headers),
+      body: requestBody,
+    },
+    response: {
+      status: response.status,
+      latency_ms: response.latency_ms,
+      body: compactBody(response.body),
+    },
+  });
+  return response;
+}
+
+async function createA2ATask(tasksUrl, skill, payload) {
+  const headers = {};
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+  const requestBody = {
+    jsonrpc: '2.0',
+    id: `agentqa-task-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    skill,
+    arguments: payload,
+  };
+  const response = await requestJSON(tasksUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(requestBody),
+  });
+  addStep(`a2a-task:create:${skill}`, {
+    request: {
+      url: tasksUrl,
       method: 'POST',
       headers: redactHeaders(headers),
       body: requestBody,
@@ -213,6 +302,60 @@ async function main() {
     }
     report.a2a_url = a2aUrl;
     report.checks.a2a_url_detected = true;
+    const a2aTasksUrl = extractA2ATasksUrl(card, a2aUrl);
+    report.a2a_tasks_url = a2aTasksUrl || null;
+
+    const identity = card.agent_identity || {};
+    const jwksUrl = absoluteFromCard(cardUrl, identity.jwks_url || '/.well-known/jwks.json');
+    const signatureUrl = absoluteFromCard(cardUrl, identity.signature_url || '/.well-known/agent-card.signature');
+    const reputationUrl = absoluteFromCard(cardUrl, identity.reputation || '/.well-known/agent-reputation.json');
+    const slaUrl = absoluteFromCard(cardUrl, identity.sla || '/.well-known/agent-sla.json');
+    const x402DiscoveryUrl = absoluteFromCard(cardUrl, '/.well-known/x402.json');
+    const registriesUrl = absoluteFromCard(cardUrl, card.registry?.index || '/agent/v1/registries');
+    const agntcyUrl = absoluteFromCard(cardUrl, card.registry?.agntcy || '/.well-known/agntcy.json');
+    const oasfUrl = absoluteFromCard(cardUrl, card.registry?.oasf || '/.well-known/oasf.json');
+    const registryRecordUrl = absoluteFromCard(cardUrl, card.registry?.signedRecord || '/agent/v1/registry-records/agntcy-oasf');
+
+    const [jwksResponse, signatureResponse, reputationResponse, slaResponse, x402DiscoveryResponse, registriesResponse, agntcyResponse, oasfResponse, registryRecordResponse] = await Promise.all([
+      requestJSON(jwksUrl),
+      requestJSON(signatureUrl),
+      requestJSON(reputationUrl),
+      requestJSON(slaUrl),
+      requestJSON(x402DiscoveryUrl),
+      requestJSON(registriesUrl),
+      requestJSON(agntcyUrl),
+      requestJSON(oasfUrl),
+      requestJSON(registryRecordUrl),
+    ]);
+    addStep('fetch_agent_trust_documents', {
+      requests: { jwks_url: jwksUrl, signature_url: signatureUrl, reputation_url: reputationUrl, sla_url: slaUrl },
+      responses: {
+        jwks: { status: jwksResponse.status, latency_ms: jwksResponse.latency_ms, body: compactBody(jwksResponse.body) },
+        signature: { status: signatureResponse.status, latency_ms: signatureResponse.latency_ms, body: compactBody(signatureResponse.body) },
+        reputation: { status: reputationResponse.status, latency_ms: reputationResponse.latency_ms, body: compactBody(reputationResponse.body) },
+        sla: { status: slaResponse.status, latency_ms: slaResponse.latency_ms, body: compactBody(slaResponse.body) },
+        x402: { status: x402DiscoveryResponse.status, latency_ms: x402DiscoveryResponse.latency_ms, body: compactBody(x402DiscoveryResponse.body) },
+        registries: { status: registriesResponse.status, latency_ms: registriesResponse.latency_ms, body: compactBody(registriesResponse.body) },
+        agntcy: { status: agntcyResponse.status, latency_ms: agntcyResponse.latency_ms, body: compactBody(agntcyResponse.body) },
+        oasf: { status: oasfResponse.status, latency_ms: oasfResponse.latency_ms, body: compactBody(oasfResponse.body) },
+        registry_record: { status: registryRecordResponse.status, latency_ms: registryRecordResponse.latency_ms, body: compactBody(registryRecordResponse.body) },
+      },
+    });
+    report.checks.jwks_fetched = jwksResponse.ok;
+    report.checks.signature_fetched = signatureResponse.ok;
+    report.checks.reputation_fetched = reputationResponse.ok;
+    report.checks.sla_fetched = slaResponse.ok;
+    report.checks.x402_discovered = x402DiscoveryResponse.ok;
+    report.checks.registries_fetched = registriesResponse.ok;
+    report.checks.agntcy_fetched = agntcyResponse.ok;
+    report.checks.oasf_fetched = oasfResponse.ok;
+    report.checks.registry_record_fetched = registryRecordResponse.ok;
+    if (jwksResponse.ok && signatureResponse.ok) {
+      const verification = verifyAgentCardSignature(cardResponse.text, signatureResponse.body, jwksResponse.body);
+      report.agent_card_verification = verification;
+      report.checks.card_hash_verified = verification.hashOk;
+      report.checks.card_signature_verified = verification.signatureOk;
+    }
 
     const skills = Array.isArray(card.skills) ? card.skills : [];
     report.discovered_skill_count = skills.length;
@@ -246,6 +389,55 @@ async function main() {
     }
 
     await callA2A(a2aUrl, skillMap.methods, {}, 'optional');
+
+    if (a2aTasksUrl) {
+      const taskCreateResponse = await createA2ATask(a2aTasksUrl, skillMap.methods, {});
+      report.checks.task_created = taskCreateResponse.ok;
+      const taskId = taskCreateResponse.body?.id || taskCreateResponse.body?.task?.id || '';
+      const taskStatusUrl = taskCreateResponse.body?.status_url || (taskId ? `${a2aTasksUrl.replace(/\/$/, '')}/${encodeURIComponent(taskId)}` : '');
+      const taskEventsUrl = taskCreateResponse.body?.events_url || '';
+      report.a2a_task_id = taskId || null;
+      report.checks.task_events_url_detected = Boolean(taskEventsUrl);
+      if (taskStatusUrl) {
+        const taskStatusResponse = await requestJSON(taskStatusUrl);
+        addStep('a2a-task:status', {
+          request: { url: taskStatusUrl, method: 'GET' },
+          response: {
+            status: taskStatusResponse.status,
+            latency_ms: taskStatusResponse.latency_ms,
+            body: compactBody(taskStatusResponse.body),
+          },
+        });
+        report.checks.task_status_checked = taskStatusResponse.ok;
+      }
+    }
+
+    const x402ExecuteUrl = extractX402ExecuteUrl(card, cardUrl);
+    if (x402ExecuteUrl) {
+      const x402Challenge = await requestJSON(x402ExecuteUrl, {
+        method: 'POST',
+        body: JSON.stringify({
+          agentWallet,
+          payerWallet: agentWallet,
+          paymentAsset: 'USDT',
+          idempotencyKey: `agentqa-x402-${Date.now()}`,
+          nonce: `agentqa-x402-${Date.now()}`,
+          operation: 'extract_text',
+          requestId: `agentqa-x402-req-${Date.now()}`,
+          units: 1,
+          input: { documentUrl: 'https://example.com/test.pdf' },
+        }),
+      });
+      addStep('x402:capability_challenge', {
+        request: { url: x402ExecuteUrl, method: 'POST' },
+        response: {
+          status: x402Challenge.status,
+          latency_ms: x402Challenge.latency_ms,
+          body: compactBody(x402Challenge.body),
+        },
+      });
+      report.checks.x402_challenge_received = x402Challenge.status === 402 && Boolean(x402Challenge.body?.payment_requirements);
+    }
 
     const quoteResponse = await callA2A(a2aUrl, skillMap.quote, {
       type: 'pix',
