@@ -137,6 +137,7 @@ Integracoes recentes refletidas no backend:
 - **Trust, Reputation, SLA e Episodes**: JWKS, assinatura do Agent Card, reputacao, SLA e episodios de execucao permitem que agentes verifiquem identidade, qualidade e rastreabilidade antes de operar.
 - **Policy Discovery + Agent Graph v2**: `/.well-known/agent-policy.json` e `/.well-known/capability-graph.json` ensinam pre-requisitos como policy ativa, wallet, quote, deposito e status antes de criar intents. O graph v2 adiciona contratos por skill com dependencias, produtos, falhas conhecidas, recovery actions, custo estimado, latencia esperada e requisitos de policy.
 - **Capability Composition + Planner API**: `/.well-known/capability-compositions.json`, `/agent/v1/capability-compositions` e `POST /agent/v1/plans` transformam objetivos em planos nao executados com steps, missing requirements, custo estimado e latencia estimada.
+- **Episode-Derived Reputation + Graph Registry**: `/.well-known/agent-reputation.json`, `/agent/v1/reputation`, `/.well-known/capability-graph-registry.json` e `/agent/v1/graph-registry` fecham o ciclo entre execucao real, reputacao por skill e descoberta relacional.
 - **x402 Capability Pay-per-call**: `/.well-known/x402.json` e `/x402/capabilities/{capability}/execute` permitem challenge HTTP 402 para compra e execucao de capabilities digitais.
 - **Multi Registry / AGNTCY-OASF**: `/.well-known/agntcy.json`, `/.well-known/oasf.json`, `/agent/v1/registries` e `/agent/v1/registry-records/agntcy-oasf` publicam registro assinavel para diretorios externos.
 - **Adversarial/Chaos Ops**: `schema_chaos.sql`, `internal/adversarial`, `/v1/admin/gas/chaos-run`, `/v1/admin/gas/chaos-history` e `/admin/chaos`.
@@ -276,6 +277,7 @@ Endpoints de discovery:
 - `/.well-known/agent-policy.json`: discovery de policy exigida antes de criar intents financeiros.
 - `/.well-known/capability-graph.json`: Agent Graph v2 com contratos por skill, dependencias, precondicoes, falhas, recovery actions, custo, latencia e policy requirements.
 - `/.well-known/capability-compositions.json`: pipelines compostos como OCR -> resumo -> memoria -> pagamento.
+- `/.well-known/capability-graph-registry.json`: registro relacional que conecta payment, marketplace, stablecoin, trust, planning e observability.
 - `/.well-known/agntcy.json`: manifesto AGNTCY/OASF-style para diretorios externos.
 - `/.well-known/oasf.json`: descriptor OASF-style para classificacao de skills e locators.
 - `/agent/v1/capabilities`: manifesto detalhado para agentes.
@@ -284,6 +286,7 @@ Endpoints de discovery:
 - `/agent/v1/capability-graph`: versao API do Agent Graph v2.
 - `/agent/v1/capability-compositions`: versao API das compositions.
 - `POST /agent/v1/plans`: cria plano nao executado a partir de goal, wallet e constraints.
+- `/agent/v1/graph-registry`: versao API do Capability Graph Registry para comparacao de providers.
 - `/agent/v1/reputation`: reputacao consultavel por clientes autenticados ou internos.
 - `/agent/v1/sla`: SLA consultavel por clientes autenticados ou internos.
 - `/agent/v1/episodes`: episodios de execucao para observabilidade e QA.
@@ -383,6 +386,54 @@ Planning Layer Report
 
 Criterio de aceite: um agente envia um objetivo em linguagem simples/estruturada e recebe um plano executavel sem chamar a skill ainda.
 
+### Fase 3: Episode-Derived Reputation + Graph Registry
+
+Objetivo de integracao: transformar execucoes reais em reputacao mensuravel e publicar um registro relacional das capacidades.
+
+Endpoints:
+
+- `GET /.well-known/agent-reputation.json`
+- `GET /agent/v1/reputation`
+- `GET /.well-known/capability-graph-registry.json`
+- `GET /agent/v1/graph-registry`
+
+A reputacao publica agora inclui o bloco `reputation` derivado dos episodios recentes:
+
+- `score`: nota calculada pelo success rate.
+- `total_episodes`, `successful_episodes`, `failed_episodes`.
+- `success_rate` em percentual.
+- `latency_ms` com p50, p95 e p99.
+- `by_skill` com success rate, policy failure rate, settlement success rate, x402 challenge success rate, latencia media, custo medio e falhas por tipo.
+- `failures_by_type` agregado.
+
+O Graph Registry publica relacoes:
+
+```json
+{
+  "graph": {
+    "payment": ["quote_required_usdt", "pay_pix_with_usdt", "pay_card_bill_with_usdt", "get_payment_status"],
+    "marketplace": ["capability_exchange", "document_ocr", "llm_chat", "semantic_memory"],
+    "stablecoin": ["USDT", "USDC", "BSC", "stablecoin_exchange"],
+    "trust": ["jwks", "agent_card_signature", "agent_policy", "agent_sla", "agent_reputation"]
+  }
+}
+```
+
+Relatorio esperado:
+
+```text
+Reputation + Graph Registry Report
+- metricas por skill
+- episodios agregados
+- falhas por tipo
+- latencia p50/p95/p99
+- score calculado
+- graph registry publicado
+- validacao via Agent QA
+```
+
+Criterio de aceite: outro agente consegue comparar ChainFX como provider usando reputacao real e entender como payment, marketplace, stablecoin, trust, planning e observability se conectam.
+
 ### A2A para agentes externos
 
 O fluxo A2A canonico evita acoplamento com REST/MCP interno:
@@ -395,6 +446,7 @@ Agent externo
   -> GET /.well-known/agent-policy.json
   -> GET /.well-known/capability-graph.json
   -> GET /.well-known/capability-compositions.json
+  -> GET /.well-known/capability-graph-registry.json
   -> POST /agent/v1/plans
   -> POST /a2a skill=list_supported_payment_methods
   -> POST /a2a skill=quote_required_usdt
@@ -430,6 +482,7 @@ O repositorio inclui um agente de QA externo em `tools/agent-qa/openai-agent-pay
 - verificacao JWKS, hash e assinatura;
 - reputacao, SLA, policy discovery e Agent Graph v2;
 - capability compositions e Planner API;
+- reputacao derivada de episodios e Capability Graph Registry;
 - discovery AGNTCY/OASF e registry record;
 - chamada A2A de methods, quote, intent e status;
 - task lifecycle A2A com SSE;
