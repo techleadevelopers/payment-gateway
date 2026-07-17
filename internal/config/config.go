@@ -434,9 +434,21 @@ func validateEVMAddressList(name, raw string) error {
 // Auxiliares para leitura e conversão de tipos
 func getEnv(key, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
-		return value
+		return cleanEnvValue(value)
 	}
 	return defaultValue
+}
+
+func cleanEnvValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		first := value[0]
+		last := value[len(value)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			return strings.TrimSpace(value[1 : len(value)-1])
+		}
+	}
+	return value
 }
 
 func firstNonEmptyConfig(values ...string) string {
