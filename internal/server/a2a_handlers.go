@@ -1,0 +1,426 @@
+package server
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"payment-gateway/internal/money"
+
+	"github.com/ethereum/go-ethereum/common"
+)
+
+const chainFXAgentPayDescription = "A2A payment agent that lets autonomous agents pay PIX recipients and card bills by funding intents with USDT on BSC."
+
+type a2aRequest struct {
+	ID        any            `json:"id,omitempty"`
+	JSONRPC   string         `json:"jsonrpc,omitempty"`
+	Method    string         `json:"method,omitempty"`
+	Skill     string         `json:"skill,omitempty"`
+	Action    string         `json:"action,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Arguments map[string]any `json:"arguments,omitempty"`
+	Params    map[string]any `json:"params,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
+}
+
+type captureResponseWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func (w *captureResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *captureResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *captureResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(p)
+}
+
+func (s *Server) handleA2AAgentCard(w http.ResponseWriter, r *http.Request) {
+	base := publicBaseURL(r)
+	s.writeCachedDiscoveryJSON(w, r, "a2a-agent-card:"+base, time.Minute, func() (any, error) {
+		return s.a2aAgentCard(base), nil
+	})
+}
+
+func (s *Server) handleAgentPayOnboarding(w http.ResponseWriter, r *http.Request) {
+	base := publicBaseURL(r)
+	s.writeCachedDiscoveryJSON(w, r, "agent-pay:"+base, time.Minute, func() (any, error) {
+		return map[string]any{
+			"product":         "ChainFX Agent Pay",
+			"what_it_does":    "Pays PIX recipients and card bills using USDT funded by autonomous agents.",
+			"positioning":     chainFXAgentPayDescription,
+			"funding":         "USDT on BSC",
+			"payment_methods": []string{"pix", "credit_card"},
+			"create_intent":   base + "/agent/v1/pay",
+			"status":          base + "/agent/v1/pay/{id}",
+			"mcp":             base + "/mcp/initialize",
+			"a2a":             base + "/a2a",
+			"agent_card":      base + "/.well-known/agent-card.json",
+			"openapi":         base + "/openapi.json",
+		}, nil
+	})
+}
+
+func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
+	var req a2aRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON payload"})
+		return
+	}
+
+	action := normalizeA2AAction(firstNonEmpty(req.Skill, req.Action, req.Name, req.Method))
+	args := firstMap(req.Arguments, req.Params, req.Input)
+
+	var (
+		result any
+		status = http.StatusOK
+	)
+	switch action {
+	case "list_supported_payment_methods":
+		result = s.a2aSupportedPaymentMethods(publicBaseURL(r))
+	case "quote_required_usdt":
+		quote, code, errPayload := s.a2aQuoteRequiredUSDT(r, args)
+		if errPayload != nil {
+			writeJSON(w, code, a2aErrorEnvelope(req, code, errPayload))
+			return
+		}
+		result = quote
+	case "pay_pix_with_usdt":
+		var errPayload map[string]any
+		result, status, errPayload = s.a2aCreatePaymentIntent(r, "pix", args)
+		if errPayload != nil {
+			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
+			return
+		}
+	case "pay_card_bill_with_usdt":
+		var errPayload map[string]any
+		result, status, errPayload = s.a2aCreatePaymentIntent(r, "credit_card", args)
+		if errPayload != nil {
+			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
+			return
+		}
+	case "get_payment_status":
+		var errPayload map[string]any
+		result, status, errPayload = s.a2aGetPaymentStatus(r, args)
+		if errPayload != nil {
+			writeJSON(w, status, a2aErrorEnvelope(req, status, errPayload))
+			return
+		}
+	default:
+		writeJSON(w, http.StatusBadRequest, a2aErrorEnvelope(req, http.StatusBadRequest, map[string]any{
+			"error": "unsupported A2A skill",
+			"supported_skills": []string{
+				"pay_pix_with_usdt",
+				"pay_card_bill_with_usdt",
+				"get_payment_status",
+				"quote_required_usdt",
+				"list_supported_payment_methods",
+			},
+		}))
+		return
+	}
+
+	writeJSON(w, status, a2aSuccessEnvelope(req, action, result))
+}
+
+func (s *Server) a2aAgentCard(base string) map[string]any {
+	return map[string]any{
+		"name":        "ChainFX Agent Pay",
+		"description": "Stablecoin-funded real-world payments for autonomous agents.",
+		"url":         base + "/a2a",
+		"version":     "1.0.0",
+		"protocol":    "a2a",
+		"status":      "available",
+		"provider": map[string]any{
+			"organization": "ChainFX",
+			"url":          "https://www.chainfx.store",
+		},
+		"defaultInputModes":  []string{"application/json"},
+		"defaultOutputModes": []string{"application/json"},
+		"authentication": map[string]any{
+			"type":        "bearer",
+			"description": "Send Authorization: Bearer <ChainFX API key> for payment creation, quotes and private status.",
+		},
+		"skills": []map[string]any{
+			{
+				"id":          "pay_pix_with_usdt",
+				"name":        "Pay PIX with USDT",
+				"description": "Create a PIX payment intent funded by an autonomous agent with USDT on BSC.",
+				"tags":        []string{"payments", "pix", "usdt", "bsc", "a2a"},
+			},
+			{
+				"id":          "pay_card_bill_with_usdt",
+				"name":        "Pay card bill with USDT",
+				"description": "Create a card bill or payment-link intent funded by USDT on BSC.",
+				"tags":        []string{"payments", "credit_card", "usdt", "bsc", "a2a"},
+			},
+			{
+				"id":          "get_payment_status",
+				"name":        "Get payment status",
+				"description": "Read an agent payment intent lifecycle status, deposit data and settlement receipt.",
+				"tags":        []string{"payments", "status", "settlement"},
+			},
+			{
+				"id":          "quote_required_usdt",
+				"name":        "Quote required USDT",
+				"description": "Estimate gross USDT, fee and required USDT for a BRL payment amount.",
+				"tags":        []string{"quote", "pricing", "usdt"},
+			},
+			{
+				"id":          "list_supported_payment_methods",
+				"name":        "List supported payment methods",
+				"description": "List supported fiat payment rails and stablecoin funding rails.",
+				"tags":        []string{"discovery", "payments"},
+			},
+		},
+		"capabilities": map[string]any{
+			"streaming":              false,
+			"pushNotifications":      false,
+			"stateTransitionHistory": true,
+		},
+		"endpoints": map[string]any{
+			"a2a":         base + "/a2a",
+			"agent_pay":   base + "/agent/v1/pay",
+			"status":      base + "/agent/v1/pay/{id}",
+			"mcp":         base + "/mcp/initialize",
+			"openapi":     base + "/openapi.json",
+			"onboarding":  base + "/agent-pay.json",
+			"ai_services": base + "/.well-known/ai-services.json",
+		},
+	}
+}
+
+func (s *Server) a2aSupportedPaymentMethods(base string) map[string]any {
+	return map[string]any{
+		"payment_methods": []map[string]any{
+			{"type": "pix", "funding_asset": "USDT", "funding_network": "BSC", "create_skill": "pay_pix_with_usdt", "fee_bps": s.cfg.M2MPixFeeBps},
+			{"type": "credit_card", "funding_asset": "USDT", "funding_network": "BSC", "create_skill": "pay_card_bill_with_usdt", "fee_bps": s.cfg.M2MCreditFeeBps},
+		},
+		"status_skill": "get_payment_status",
+		"quote_skill":  "quote_required_usdt",
+		"rest": map[string]any{
+			"create": base + "/agent/v1/pay",
+			"status": base + "/agent/v1/pay/{id}",
+		},
+	}
+}
+
+func (s *Server) a2aCreatePaymentIntent(r *http.Request, paymentType string, args map[string]any) (map[string]any, int, map[string]any) {
+	payload := map[string]any{
+		"type":             paymentType,
+		"amount_brl":       stringArg(args, "amount_brl", "amountBRL", "amount"),
+		"pix_key":          stringArg(args, "pix_key", "pixKey"),
+		"payment_link":     stringArg(args, "payment_link", "paymentLink"),
+		"barcode":          stringArg(args, "barcode"),
+		"beneficiary_name": stringArg(args, "beneficiary_name", "beneficiaryName"),
+		"due_date":         stringArg(args, "due_date", "dueDate"),
+		"idempotency_key":  stringArg(args, "idempotency_key", "idempotencyKey", "request_id", "requestId"),
+		"agent_wallet":     stringArg(args, "agent_wallet", "agentWallet", "wallet"),
+	}
+	status, out := s.dispatchJSONToHandler(r, http.MethodPost, "/agent/v1/pay", payload, s.handleM2MCreateIntent)
+	if status < 200 || status >= 300 {
+		return nil, status, out
+	}
+	return map[string]any{
+		"skill":        normalizeA2AAction(map[string]string{"pix": "pay_pix_with_usdt", "credit_card": "pay_card_bill_with_usdt"}[paymentType]),
+		"status":       "completed",
+		"payment":      out,
+		"instructions": "Deposit required_usdt in USDT on BSC to payment_address, then call get_payment_status.",
+	}, status, nil
+}
+
+func (s *Server) a2aGetPaymentStatus(r *http.Request, args map[string]any) (map[string]any, int, map[string]any) {
+	id := stringArg(args, "intent_id", "intentId", "payment_id", "paymentId", "id")
+	if id == "" {
+		return nil, http.StatusBadRequest, map[string]any{"error": "intent_id is required"}
+	}
+	status, out := s.dispatchJSONToHandler(r, http.MethodGet, "/agent/v1/pay/"+id, nil, func(w http.ResponseWriter, req *http.Request) {
+		req.SetPathValue("id", id)
+		s.handleM2MGetIntent(w, req)
+	})
+	if status < 200 || status >= 300 {
+		return nil, status, out
+	}
+	return map[string]any{"skill": "get_payment_status", "payment": out}, status, nil
+}
+
+func (s *Server) a2aQuoteRequiredUSDT(r *http.Request, args map[string]any) (map[string]any, int, map[string]any) {
+	if _, ok := s.authorizeChainFX(noopResponseWriter{}, r); !ok {
+		return nil, http.StatusUnauthorized, map[string]any{"error": "Authorization Bearer ChainFX API key is required"}
+	}
+	paymentType := strings.ToLower(firstNonEmpty(stringArg(args, "type", "payment_type", "paymentType"), "pix"))
+	if paymentType != "pix" && paymentType != "credit_card" {
+		return nil, http.StatusBadRequest, map[string]any{"error": "type must be 'pix' or 'credit_card'"}
+	}
+	amountRaw := stringArg(args, "amount_brl", "amountBRL", "amount")
+	amountBRL, err := money.ParseMoney(amountRaw)
+	if err != nil || amountBRL <= 0 {
+		return nil, http.StatusBadRequest, map[string]any{"error": "amount_brl must be a positive number"}
+	}
+	usdtRate := s.workers.PriceWorker.GetPrice("BRL")
+	if usdtRate <= 0 {
+		return nil, http.StatusServiceUnavailable, map[string]any{"error": "USDT/BRL rate unavailable; retry in a few seconds"}
+	}
+	feeBps := s.cfg.M2MPixFeeBps
+	if paymentType == "credit_card" {
+		feeBps = s.cfg.M2MCreditFeeBps
+	}
+	agentWallet := strings.ToLower(strings.TrimSpace(stringArg(args, "agent_wallet", "agentWallet", "wallet")))
+	if agentWallet != "" {
+		if !common.IsHexAddress(agentWallet) {
+			return nil, http.StatusBadRequest, map[string]any{"error": "agent_wallet must be a valid EVM address"}
+		}
+		env := "sandbox"
+		if strings.EqualFold(s.cfg.Environment, "production") {
+			env = "production"
+		}
+		if resolved, err := s.db.ResolveM2MFeeBps(r.Context(), agentWallet, paymentType, env, s.cfg.M2MPixFeeBps, s.cfg.M2MCreditFeeBps); err == nil {
+			feeBps = resolved
+		}
+	}
+	rateDecimal := money.RateFromFloat(usdtRate)
+	gross := money.TokensFromFiat(amountBRL, rateDecimal)
+	fee := money.TokenFeeBps(gross, feeBps)
+	required := gross + fee
+	return map[string]any{
+		"payment_type":    paymentType,
+		"amount_brl":      fmt.Sprintf("%.2f", amountBRL.Float64()),
+		"gross_usdt":      fmt.Sprintf("%.6f", gross.Float64()),
+		"fee_usdt":        fmt.Sprintf("%.6f", fee.Float64()),
+		"required_usdt":   fmt.Sprintf("%.6f", required.Float64()),
+		"fee_bps":         feeBps,
+		"usdt_rate":       fmt.Sprintf("%.4f", usdtRate),
+		"funding_asset":   "USDT",
+		"funding_network": "BSC",
+	}, http.StatusOK, nil
+}
+
+func (s *Server) dispatchJSONToHandler(r *http.Request, method, path string, payload any, handler http.HandlerFunc) (int, map[string]any) {
+	var body bytes.Buffer
+	if payload != nil {
+		_ = json.NewEncoder(&body).Encode(payload)
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), method, path, &body)
+	req.Host = r.Host
+	req.RemoteAddr = r.RemoteAddr
+	req.Header = r.Header.Clone()
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := &captureResponseWriter{}
+	handler(rec, req)
+	status := rec.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.body.Bytes(), &out); err != nil {
+		out = map[string]any{"raw": strings.TrimSpace(rec.body.String())}
+	}
+	return status, out
+}
+
+type noopResponseWriter struct{}
+
+func (noopResponseWriter) Header() http.Header       { return make(http.Header) }
+func (noopResponseWriter) Write([]byte) (int, error) { return 0, nil }
+func (noopResponseWriter) WriteHeader(int)           {}
+
+func a2aSuccessEnvelope(req a2aRequest, action string, result any) map[string]any {
+	out := map[string]any{
+		"status": "completed",
+		"skill":  action,
+		"result": result,
+	}
+	if req.ID != nil {
+		out["id"] = req.ID
+	}
+	if req.JSONRPC != "" {
+		out["jsonrpc"] = req.JSONRPC
+	}
+	return out
+}
+
+func a2aErrorEnvelope(req a2aRequest, status int, payload map[string]any) map[string]any {
+	out := map[string]any{
+		"status":      "failed",
+		"status_code": status,
+		"error":       payload,
+	}
+	if req.ID != nil {
+		out["id"] = req.ID
+	}
+	if req.JSONRPC != "" {
+		out["jsonrpc"] = req.JSONRPC
+	}
+	return out
+}
+
+func normalizeA2AAction(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.TrimPrefix(value, "chainfx.")
+	value = strings.TrimPrefix(value, "agent_pay.")
+	switch value {
+	case "paypix", "pay_pix", "pix", "pix_payment":
+		return "pay_pix_with_usdt"
+	case "paycard", "pay_card", "credit_card", "card_bill", "card_bill_payment":
+		return "pay_card_bill_with_usdt"
+	case "status", "payment_status", "get_status":
+		return "get_payment_status"
+	case "quote", "quote_usdt", "quote_payment":
+		return "quote_required_usdt"
+	case "methods", "payment_methods", "supported_methods":
+		return "list_supported_payment_methods"
+	default:
+		return value
+	}
+}
+
+func firstMap(values ...map[string]any) map[string]any {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return map[string]any{}
+}
+
+func stringArg(args map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := args[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				return strings.TrimSpace(typed)
+			case float64:
+				return fmt.Sprintf("%.2f", typed)
+			case int:
+				return fmt.Sprintf("%d", typed)
+			case json.Number:
+				return typed.String()
+			default:
+				if typed != nil {
+					return strings.TrimSpace(fmt.Sprint(typed))
+				}
+			}
+		}
+	}
+	return ""
+}
