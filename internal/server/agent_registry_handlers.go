@@ -29,6 +29,17 @@ func (s *Server) handleOASFWellKnown(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleCapabilityGraphRegistryWellKnown(w http.ResponseWriter, r *http.Request) {
+	s.handleAgentGraphRegistry(w, r)
+}
+
+func (s *Server) handleAgentGraphRegistry(w http.ResponseWriter, r *http.Request) {
+	base := publicBaseURL(r)
+	s.writeCachedDiscoveryJSON(w, r, "agent-graph-registry:"+base, time.Minute, func() (any, error) {
+		return s.capabilityGraphRegistryDocument(base), nil
+	})
+}
+
 func (s *Server) handleAgentRegistryRecord(w http.ResponseWriter, r *http.Request) {
 	base := publicBaseURL(r)
 	id := strings.ToLower(strings.TrimSpace(r.PathValue("id")))
@@ -85,12 +96,109 @@ func (s *Server) agentRegistryIndex(base string) map[string]any {
 				"manifest": base + "/.well-known/x402.json",
 				"protocol": "x402",
 			},
+			{
+				"id":       "capability-graph-registry",
+				"name":     "ChainFX Agent Capability Graph Registry",
+				"status":   "available",
+				"manifest": base + "/.well-known/capability-graph-registry.json",
+				"api":      base + "/agent/v1/graph-registry",
+				"protocol": "chainfx-capability-graph",
+			},
 		},
 		"trust": map[string]any{
 			"jwks":           base + "/.well-known/jwks.json",
 			"agent_card_sig": base + "/.well-known/agent-card.signature",
 			"reputation":     base + "/.well-known/agent-reputation.json",
 			"sla":            base + "/.well-known/agent-sla.json",
+		},
+		"planning": map[string]any{
+			"capability_graph":          base + "/.well-known/capability-graph.json",
+			"capability_compositions":   base + "/.well-known/capability-compositions.json",
+			"planner_api":               base + "/agent/v1/plans",
+			"capability_graph_registry": base + "/.well-known/capability-graph-registry.json",
+		},
+	}
+}
+
+func (s *Server) capabilityGraphRegistryDocument(base string) map[string]any {
+	now := time.Now().UTC().Format(time.RFC3339)
+	return map[string]any{
+		"agent":       "ChainFX",
+		"name":        "ChainFX Agent Capability Graph Registry",
+		"description": "Relational registry that exposes how ChainFX trust, planning, payment, settlement and marketplace capabilities connect.",
+		"version":     "1.0.0",
+		"updated_at":  now,
+		"agent_card":  base + "/.well-known/agent-card.json",
+		"graph": map[string][]string{
+			"payment":           {"quote_required_usdt", "pay_pix_with_usdt", "pay_card_bill_with_usdt", "get_payment_status"},
+			"marketplace":       {"capability_exchange", "document_ocr", "llm_chat", "semantic_memory"},
+			"stablecoin":        {"USDT", "USDC", "BSC", "stablecoin_exchange"},
+			"trust":             {"jwks", "agent_card_signature", "agent_policy", "agent_sla", "agent_reputation"},
+			"planning":          {"capability_graph_v2", "capability_compositions", "planner_api"},
+			"observability":     {"agent_episodes", "episode_derived_reputation", "phase_reports"},
+			"payment_protocols": {"a2a", "mcp", "x402"},
+		},
+		"relations": []map[string]any{
+			{"from": "agent_card", "relation": "announces", "to": []string{"skills", "identity", "planning", "registries"}},
+			{"from": "agent_card_signature", "relation": "verifies", "to": "agent_card"},
+			{"from": "agent_policy", "relation": "gates", "to": []string{"pay_pix_with_usdt", "pay_card_bill_with_usdt", "stablecoin_exchange", "capability_purchase"}},
+			{"from": "quote_required_usdt", "relation": "precedes", "to": []string{"pay_pix_with_usdt", "pay_card_bill_with_usdt"}},
+			{"from": "pay_pix_with_usdt", "relation": "produces", "to": []string{"payment_intent", "payment_address", "required_usdt"}},
+			{"from": "payment_intent", "relation": "observed_by", "to": "get_payment_status"},
+			{"from": "document_ocr", "relation": "can_feed", "to": []string{"llm_chat", "semantic_memory"}},
+			{"from": "llm_chat", "relation": "can_feed", "to": "semantic_memory"},
+			{"from": "x402", "relation": "funds", "to": []string{"document_ocr", "llm_chat", "semantic_memory"}},
+			{"from": "episodes", "relation": "derive", "to": []string{"agent_reputation", "skill_success_rate", "latency_percentiles", "failure_modes"}},
+			{"from": "planner_api", "relation": "uses", "to": []string{"agent_policy", "capability_graph_v2", "capability_compositions", "agent_reputation"}},
+		},
+		"locators": map[string]string{
+			"agent_card":              base + "/.well-known/agent-card.json",
+			"jwks":                    base + "/.well-known/jwks.json",
+			"signature":               base + "/.well-known/agent-card.signature",
+			"reputation":              base + "/.well-known/agent-reputation.json",
+			"sla":                     base + "/.well-known/agent-sla.json",
+			"policy":                  base + "/.well-known/agent-policy.json",
+			"capability_graph":        base + "/.well-known/capability-graph.json",
+			"capability_compositions": base + "/.well-known/capability-compositions.json",
+			"planner_api":             base + "/agent/v1/plans",
+			"episodes":                base + "/agent/v1/episodes",
+			"registries":              base + "/agent/v1/registries",
+			"x402":                    base + "/.well-known/x402.json",
+			"mcp":                     base + "/mcp/initialize",
+			"a2a":                     base + "/a2a",
+		},
+		"provider_comparison": map[string]any{
+			"identity":    base + "/.well-known/jwks.json",
+			"reputation":  base + "/.well-known/agent-reputation.json",
+			"sla":         base + "/.well-known/agent-sla.json",
+			"graph":       base + "/.well-known/capability-graph.json",
+			"graph_index": base + "/.well-known/capability-graph-registry.json",
+			"decision_fields": []string{
+				"reputation.score",
+				"reputation.success_rate",
+				"reputation.latency_ms.p95",
+				"reputation.by_skill",
+				"graph.payment",
+				"graph.marketplace",
+				"graph.trust",
+			},
+		},
+		"phase_report": map[string]any{
+			"id":                       "reputation_graph_registry_report",
+			"phase":                    "3",
+			"metrics_source":           "agent_episodes",
+			"metrics_by_skill":         base + "/.well-known/agent-reputation.json",
+			"episodes_aggregated":      base + "/agent/v1/episodes",
+			"failures_by_type":         "reputation.failures_by_type",
+			"latency_percentiles":      "reputation.latency_ms",
+			"score_calculated":         "reputation.score",
+			"graph_registry_published": true,
+			"agent_qa_validation": []string{
+				"episode_reputation_validated",
+				"graph_registry_fetched",
+				"graph_registry_validated",
+			},
+			"acceptance": "Another agent can compare ChainFX as a provider using episode-derived reputation and understand how payment, marketplace, stablecoin, trust and planning capabilities connect.",
 		},
 	}
 }
@@ -147,19 +255,20 @@ func (s *Server) oasfRecordPayload(base string) map[string]any {
 			"url":  "https://www.chainfx.store",
 		},
 		"locators": map[string]any{
-			"a2a":          base + "/a2a",
-			"a2a_tasks":    base + "/a2a/tasks",
-			"mcp":          base + "/mcp/initialize",
-			"openapi":      base + "/openapi.json",
-			"x402":         base + "/.well-known/x402.json",
-			"agent_card":   base + "/.well-known/agent-card.json",
-			"registry":     base + "/agent/v1/registries",
-			"agent_pay":    base + "/agent-pay.json",
-			"capabilities": base + "/marketplace/capabilities",
-			"policy":       base + "/.well-known/agent-policy.json",
-			"graph":        base + "/.well-known/capability-graph.json",
-			"compositions": base + "/.well-known/capability-compositions.json",
-			"planner":      base + "/agent/v1/plans",
+			"a2a":            base + "/a2a",
+			"a2a_tasks":      base + "/a2a/tasks",
+			"mcp":            base + "/mcp/initialize",
+			"openapi":        base + "/openapi.json",
+			"x402":           base + "/.well-known/x402.json",
+			"agent_card":     base + "/.well-known/agent-card.json",
+			"registry":       base + "/agent/v1/registries",
+			"agent_pay":      base + "/agent-pay.json",
+			"capabilities":   base + "/marketplace/capabilities",
+			"policy":         base + "/.well-known/agent-policy.json",
+			"graph":          base + "/.well-known/capability-graph.json",
+			"compositions":   base + "/.well-known/capability-compositions.json",
+			"graph_registry": base + "/.well-known/capability-graph-registry.json",
+			"planner":        base + "/agent/v1/plans",
 		},
 		"skills": []map[string]any{
 			{"id": "pay_pix_with_usdt", "category": "payments", "protocols": []string{"a2a"}, "assets": []string{"USDT"}, "networks": []string{"BSC"}, "countries": []string{"BR"}},
@@ -189,6 +298,7 @@ func (s *Server) oasfRecordPayload(base string) map[string]any {
 			"policy_discovery": base + "/.well-known/agent-policy.json",
 			"capability_graph": base + "/.well-known/capability-graph.json",
 			"compositions":     base + "/.well-known/capability-compositions.json",
+			"graph_registry":   base + "/.well-known/capability-graph-registry.json",
 			"planner_api":      base + "/agent/v1/plans",
 			"semantic_aliases": []string{"pay pix", "quote usdt", "stablecoin swap", "ocr", "llm chat", "semantic memory", "pay-per-call api"},
 		},
