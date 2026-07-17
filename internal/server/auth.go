@@ -15,17 +15,26 @@ func (s *Server) chainFXAuthContext(r *http.Request) chainFXAuth {
 		return chainFXAuth{}
 	}
 	validated, err := s.db.ValidateDeveloperAPIKey(r.Context(), key)
-	if err != nil || validated == nil {
+	if err == nil && validated != nil {
+		return chainFXAuth{
+			Valid:         true,
+			Sandbox:       validated.Environment != "production",
+			Mode:          validated.Environment,
+			ProjectID:     validated.ProjectID,
+			APIKeyID:      validated.KeyID,
+			APIKeyLogHash: validated.LogHash,
+			Scopes:        validated.Scopes,
+		}
+	}
+	admin, err := s.db.ValidateAdminSession(r.Context(), key)
+	if err != nil || admin == nil {
 		return chainFXAuth{}
 	}
 	return chainFXAuth{
-		Valid:         true,
-		Sandbox:       validated.Environment != "production",
-		Mode:          validated.Environment,
-		ProjectID:     validated.ProjectID,
-		APIKeyID:      validated.KeyID,
-		APIKeyLogHash: validated.LogHash,
-		Scopes:        validated.Scopes,
+		Valid:   true,
+		Sandbox: false,
+		Mode:    "developer-login",
+		Scopes:  []string{"developer:read", "developer:buy_sell", "webhooks:read"},
 	}
 }
 
