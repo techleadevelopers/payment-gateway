@@ -190,6 +190,18 @@ func (s *Server) a2aAgentCard(base string) map[string]any {
 			"signedRecord": base + "/agent/v1/registry-records/agntcy-oasf",
 			"protocols":    []string{"mcp", "a2a", "openapi", "x402", "oasf"},
 		},
+		"planning": map[string]any{
+			"policy_discovery": base + "/.well-known/agent-policy.json",
+			"capability_graph": base + "/.well-known/capability-graph.json",
+			"policy_required_for": []string{
+				"pay_pix_with_usdt",
+				"pay_card_bill_with_usdt",
+				"stablecoin_exchange",
+				"capability_purchase",
+				"capability_execution",
+				"x402_capability_execution",
+			},
+		},
 		"decision_metadata": map[string]any{
 			"supported_networks":   []string{"BSC"},
 			"supported_assets":     []string{"USDT", "USDC"},
@@ -357,6 +369,8 @@ func (s *Server) a2aAgentCard(base string) map[string]any {
 			"registries":   base + "/agent/v1/registries",
 			"agntcy":       base + "/.well-known/agntcy.json",
 			"oasf":         base + "/.well-known/oasf.json",
+			"policy":       base + "/.well-known/agent-policy.json",
+			"graph":        base + "/.well-known/capability-graph.json",
 			"onboarding":   base + "/agent-pay.json",
 			"ai_services":  base + "/.well-known/ai-services.json",
 		},
@@ -588,6 +602,7 @@ func a2aSuccessEnvelope(req a2aRequest, action string, result any) map[string]an
 }
 
 func a2aErrorEnvelope(req a2aRequest, status int, payload map[string]any) map[string]any {
+	payload = enrichA2AErrorPayload(payload)
 	out := map[string]any{
 		"status":      "failed",
 		"status_code": status,
@@ -600,6 +615,25 @@ func a2aErrorEnvelope(req a2aRequest, status int, payload map[string]any) map[st
 		out["jsonrpc"] = req.JSONRPC
 	}
 	return out
+}
+
+func enrichA2AErrorPayload(payload map[string]any) map[string]any {
+	if payload == nil {
+		return payload
+	}
+	code := strings.TrimSpace(fmt.Sprint(payload["code"]))
+	if code == "" && payload["error"] != nil {
+		if nested, ok := payload["error"].(map[string]any); ok {
+			code = strings.TrimSpace(fmt.Sprint(nested["code"]))
+		}
+	}
+	switch code {
+	case "AGENT_POLICY_REQUIRED", "AGENT_POLICY_INACTIVE", "MAX_TRANSACTION_EXCEEDED", "DAILY_LIMIT_EXCEEDED", "MONTHLY_LIMIT_EXCEEDED", "AGENT_PERMISSION_DENIED":
+		payload["policy_discovery"] = "/.well-known/agent-policy.json"
+		payload["capability_graph"] = "/.well-known/capability-graph.json"
+		payload["next_action"] = "Fetch policy_discovery, ensure the agent wallet has an active policy, then retry the same A2A skill."
+	}
+	return payload
 }
 
 func normalizeA2AAction(value string) string {
