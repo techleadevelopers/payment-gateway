@@ -46,6 +46,11 @@ func (s *Server) handleAgentConsoleSummary(w http.ResponseWriter, r *http.Reques
 		writeError(w, err)
 		return
 	}
+	agentFunnel, err := s.db.AgentDiscoveryAnalytics(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	policies := any(defaultAgentPolicies())
 	if len(agents) > 0 {
 		if policy, err := s.db.GetAgentPolicy(r.Context(), agents[0].AgentID); err == nil && policy != nil {
@@ -65,6 +70,7 @@ func (s *Server) handleAgentConsoleSummary(w http.ResponseWriter, r *http.Reques
 		"capabilities": capabilities,
 		"purchases":    purchases,
 		"executions":   executions,
+		"agentFunnel":  agentFunnel,
 		"spendSeries":  spendSeries,
 		"settlements":  settlements,
 		"policies":     policies,
