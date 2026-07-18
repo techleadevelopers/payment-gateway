@@ -853,7 +853,8 @@ func (s *Server) toolPurchaseCapability(ctx context.Context, args map[string]any
 	if capability == nil {
 		return nil, fmt.Errorf("capability nao encontrada")
 	}
-	_, plan, err := s.db.ResolveMarketplaceCapabilityPlan(ctx, capability.ID, stringArg(args, "planId"), stringArg(args, "paymentAsset"))
+	paymentNetwork := normalizeMCPPaymentNetwork(stringArg(args, "network"))
+	_, plan, err := s.db.ResolveMarketplaceCapabilityPlan(ctx, capability.ID, stringArg(args, "planId"), stringArg(args, "paymentAsset"), paymentNetwork)
 	if err != nil {
 		return nil, err
 	}
@@ -861,7 +862,7 @@ func (s *Server) toolPurchaseCapability(ctx context.Context, args map[string]any
 	if !common.IsHexAddress(paymentAddress) {
 		return nil, fmt.Errorf("TREASURY_HOT ou SELL_WALLET_ADDRESS precisa ser um endereco EVM valido")
 	}
-	contract, err := s.mcpPaymentContract(ctx, plan.PaymentAsset)
+	contract, err := s.mcpPaymentContract(ctx, plan.PaymentAsset, plan.Network)
 	if err != nil {
 		return nil, err
 	}
@@ -1201,7 +1202,8 @@ func (s *Server) executePaymentsFXCapability(ctx context.Context, event *databas
 	if !common.IsHexAddress(paymentAddress) {
 		return nil, fmt.Errorf("payments_fx: endereco de deposito M2M invalido")
 	}
-	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, paymentLink, barcode, beneficiaryName, dueDate, idempotencyKey, agentWallet)
+	paymentNetwork := normalizeMCPPaymentNetwork(firstNonEmptyMCP(stringFromMap(input, "payment_network"), stringFromMap(input, "paymentNetwork")))
+	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, paymentLink, barcode, beneficiaryName, dueDate, idempotencyKey, agentWallet, paymentNetwork)
 	hashShort := reqHash
 	if len(hashShort) > 24 {
 		hashShort = hashShort[:24]
@@ -1225,6 +1227,7 @@ func (s *Server) executePaymentsFXCapability(ctx context.Context, event *databas
 		RequiredUSDT:    requiredUSDT,
 		USDTRate:        usdtRate,
 		PaymentAddress:  paymentAddress,
+		PaymentNetwork:  paymentNetwork,
 		RequestHash:     reqHash,
 		ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 	}
@@ -1626,13 +1629,14 @@ func (s *Server) mcpPaymentAddress() string {
 	return strings.ToLower(firstNonEmptyMCP(s.cfg.TreasuryHot, s.cfg.SellWalletAddress))
 }
 
-func (s *Server) mcpPaymentContract(ctx context.Context, asset string) (string, error) {
+func (s *Server) mcpPaymentContract(ctx context.Context, asset string, network string) (string, error) {
 	symbol := strings.ToUpper(strings.TrimSpace(asset))
+	network = normalizeMCPPaymentNetwork(network)
 	if symbol == "" {
 		return "", fmt.Errorf("payment asset invalido")
 	}
 	if s.db != nil {
-		registered, err := s.db.GetAgentSupportedAsset(ctx, symbol, "BSC")
+		registered, err := s.db.GetAgentSupportedAsset(ctx, symbol, network)
 		if err != nil {
 			return "", err
 		}
@@ -1640,10 +1644,26 @@ func (s *Server) mcpPaymentContract(ctx context.Context, asset string) (string, 
 			return strings.ToLower(registered.ContractAddress), nil
 		}
 	}
-	if symbol == "USDT" && s.cfg != nil && common.IsHexAddress(s.cfg.BscUsdtContract) {
-		return strings.ToLower(s.cfg.BscUsdtContract), nil
+	if symbol == "USDT" && s.cfg != nil {
+		if network == "POLYGON" && common.IsHexAddress(s.cfg.PolygonUsdtContract) {
+			return strings.ToLower(s.cfg.PolygonUsdtContract), nil
+		}
+		if network == "BSC" && common.IsHexAddress(s.cfg.BscUsdtContract) {
+			return strings.ToLower(s.cfg.BscUsdtContract), nil
+		}
 	}
-	return "", fmt.Errorf("%s BSC nao configurado na allowlist", symbol)
+	return "", fmt.Errorf("%s %s nao configurado na allowlist", symbol, network)
+}
+
+func normalizeMCPPaymentNetwork(network string) string {
+	switch strings.ToUpper(strings.TrimSpace(network)) {
+	case "", "BSC", "BINANCE", "BEP20":
+		return "BSC"
+	case "POL", "POLYGON", "MATIC":
+		return "POLYGON"
+	default:
+		return strings.ToUpper(strings.TrimSpace(network))
+	}
 }
 
 // stringFromMap is an alias for stringArg used in marketplace execution contexts
@@ -1820,7 +1840,8 @@ func (s *Server) toolCreateM2MPaymentIntent(ctx context.Context, args map[string
 	}
 
 	// ── Intent ID ─────────────────────────────────────────────────────────────
-	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, paymentLink, barcode, beneficiaryName, dueDate, idempotencyKey, agentWallet)
+	paymentNetwork := normalizeMCPPaymentNetwork(firstNonEmptyMCP(stringArg(args, "paymentNetwork"), stringArg(args, "payment_network")))
+	reqHash := database.CanonicalRequestHash(paymentType, amountBRLStr, pixKey, paymentLink, barcode, beneficiaryName, dueDate, idempotencyKey, agentWallet, paymentNetwork)
 	hashShort := reqHash
 	if len(hashShort) > 24 {
 		hashShort = hashShort[:24]
@@ -1852,6 +1873,7 @@ func (s *Server) toolCreateM2MPaymentIntent(ctx context.Context, args map[string
 		RequiredUSDT:    requiredUSDT,
 		USDTRate:        usdtRate,
 		PaymentAddress:  paymentAddress,
+		PaymentNetwork:  paymentNetwork,
 		RequestHash:     reqHash,
 		ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 	}
