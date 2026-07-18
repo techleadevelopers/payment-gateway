@@ -258,11 +258,12 @@ Sem token valido: 6985
 
 Arquivos principais:
 
-- `internal/nfc`: token, protocolo APDU/TLV e client de terminal.
+- `internal/nfc`: token, contrato APDU/TLV do cartao digital e client de terminal.
 - `internal/server/nfc_handlers.go`: autorizador backend.
 - `internal/mobile/nfc.go`: provisionamento do cartao digital pelo JWT mobile.
 - `migrations/020_nfc_closed_loop.sql`: tabelas `nfc_tokens`, `nfc_wallet_balances`, `nfc_authorizations`.
-- `C:\Users\Paulo\Desktop\nfcemv-emulator`: laboratorio Android HCE adaptado para token ChainFX fechado.
+
+O backend Go e a fonte de verdade do protocolo e da autorizacao. O app mobile nativo implementa apenas o transporte HCE/NFC do sistema operacional e envia o token `nfc1...` definido pelo Go.
 
 Variaveis:
 
@@ -284,7 +285,7 @@ p99 = 101.557us
 max = 116.765us
 ```
 
-Essa medicao cobre somente o custo criptografico local. A latencia real de pagamento depende de Android HCE, leitor, HTTP, Postgres, price worker e rede.
+Essa medicao cobre somente o custo criptografico local. A latencia real de pagamento depende do transporte HCE/NFC do app nativo, leitor, HTTP, Postgres, price worker e rede.
 
 ### Principio de produto
 
