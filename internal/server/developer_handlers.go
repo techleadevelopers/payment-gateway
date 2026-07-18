@@ -102,6 +102,11 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	agentFunnel, err := s.db.AgentDiscoveryAnalytics(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	certOK, certErr := s.efiCertificateReady()
 	gaps := s.operationalGaps()
 	ready := map[string]any{
@@ -128,6 +133,7 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		"readiness":       ready,
 		"rates":           s.adminRates(),
 		"metrics":         summarizeAdminTransactions(transactions),
+		"agentFunnel":     agentFunnel,
 		"observability":   s.adminObservability(),
 		"transactions":    transactions,
 		"events":          events,
