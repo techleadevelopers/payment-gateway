@@ -9,37 +9,37 @@ import (
 )
 
 type APIRequestLogInput struct {
-	RequestID   string
-	Method      string
-	Path        string
-	RouteClass  string
-	StatusCode  int
-	DurationMS  int64
-	APIKeyHash  string
-	APIKeyScope string
-	AuthMode    string
-	ClientIP    string
-	UserAgent   string
-	AgentID     string
+	RequestID    string
+	Method       string
+	Path         string
+	RouteClass   string
+	StatusCode   int
+	DurationMS   int64
+	APIKeyHash   string
+	APIKeyScope  string
+	AuthMode     string
+	ClientIP     string
+	UserAgent    string
+	AgentID      string
 	AgentSigHash string
 }
 
 type APIRequestLog struct {
-	ID          string    `json:"id"`
-	RequestID   string    `json:"requestId"`
-	Method      string    `json:"method"`
-	Path        string    `json:"path"`
-	RouteClass  string    `json:"routeClass"`
-	StatusCode  int       `json:"statusCode"`
-	DurationMS  int64     `json:"durationMs"`
-	APIKeyHash  string    `json:"apiKeyHash,omitempty"`
-	APIKeyScope string    `json:"apiKeyScope,omitempty"`
-	AuthMode    string    `json:"authMode,omitempty"`
-	ClientIP    string    `json:"clientIp,omitempty"`
-	UserAgent   string    `json:"userAgent,omitempty"`
-	AgentID     string    `json:"agentId,omitempty"`
+	ID           string    `json:"id"`
+	RequestID    string    `json:"requestId"`
+	Method       string    `json:"method"`
+	Path         string    `json:"path"`
+	RouteClass   string    `json:"routeClass"`
+	StatusCode   int       `json:"statusCode"`
+	DurationMS   int64     `json:"durationMs"`
+	APIKeyHash   string    `json:"apiKeyHash,omitempty"`
+	APIKeyScope  string    `json:"apiKeyScope,omitempty"`
+	AuthMode     string    `json:"authMode,omitempty"`
+	ClientIP     string    `json:"clientIp,omitempty"`
+	UserAgent    string    `json:"userAgent,omitempty"`
+	AgentID      string    `json:"agentId,omitempty"`
 	AgentSigHash string    `json:"agentSignatureHash,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 type MCPToolLogInput struct {
@@ -97,28 +97,28 @@ type MarketplaceUsageSummary struct {
 }
 
 type AgentDiscoveryAnalytics struct {
-	Window                string               `json:"window"`
-	GeneratedAt           time.Time            `json:"generatedAt"`
-	DiscoveryRequests     int                  `json:"discoveryRequests"`
-	EstimatedUniqueScouts int                  `json:"estimatedUniqueScouts"`
-	AuthenticatedCallers  int                  `json:"authenticatedCallers"`
-	MCPToolCalls          int                  `json:"mcpToolCalls"`
-	MCPToolErrors         int                  `json:"mcpToolErrors"`
-	A2ACalls              int                  `json:"a2aCalls"`
-	ConnectedAgents       int                  `json:"connectedAgents"`
-	PaymentIntents        int                  `json:"paymentIntents"`
-	PayingAgentWallets    int                  `json:"payingAgentWallets"`
-	MarketplacePurchases  int                  `json:"marketplacePurchases"`
-	CapabilityExecutions  int                  `json:"capabilityExecutions"`
-	FailedPaymentIntents  int                  `json:"failedPaymentIntents"`
-	PaymentRetryAttempts  int                  `json:"paymentRetryAttempts"`
-	DiscoveryToActionRate string               `json:"discoveryToActionRate"`
-	TopDiscoveryEndpoints []AgentEndpointStat  `json:"topDiscoveryEndpoints"`
-	TopAgentUserAgents    []AgentUserAgentStat `json:"topAgentUserAgents"`
-	TopMCPTools           []AgentMCPToolStat   `json:"topMcpTools"`
+	Window                string                     `json:"window"`
+	GeneratedAt           time.Time                  `json:"generatedAt"`
+	DiscoveryRequests     int                        `json:"discoveryRequests"`
+	EstimatedUniqueScouts int                        `json:"estimatedUniqueScouts"`
+	AuthenticatedCallers  int                        `json:"authenticatedCallers"`
+	MCPToolCalls          int                        `json:"mcpToolCalls"`
+	MCPToolErrors         int                        `json:"mcpToolErrors"`
+	A2ACalls              int                        `json:"a2aCalls"`
+	ConnectedAgents       int                        `json:"connectedAgents"`
+	PaymentIntents        int                        `json:"paymentIntents"`
+	PayingAgentWallets    int                        `json:"payingAgentWallets"`
+	MarketplacePurchases  int                        `json:"marketplacePurchases"`
+	CapabilityExecutions  int                        `json:"capabilityExecutions"`
+	FailedPaymentIntents  int                        `json:"failedPaymentIntents"`
+	PaymentRetryAttempts  int                        `json:"paymentRetryAttempts"`
+	DiscoveryToActionRate string                     `json:"discoveryToActionRate"`
+	TopDiscoveryEndpoints []AgentEndpointStat        `json:"topDiscoveryEndpoints"`
+	TopAgentUserAgents    []AgentUserAgentStat       `json:"topAgentUserAgents"`
+	TopMCPTools           []AgentMCPToolStat         `json:"topMcpTools"`
 	CapabilityConversions []CapabilityConversionStat `json:"capabilityConversions"`
-	Funnel                map[string]int       `json:"funnel"`
-	Notes                 []string             `json:"notes"`
+	Funnel                map[string]int             `json:"funnel"`
+	Notes                 []string                   `json:"notes"`
 }
 
 type AgentEndpointStat struct {
@@ -419,15 +419,14 @@ func (db *DB) ListCapabilityConversions(ctx context.Context, limit int) ([]Capab
 		limit = 20
 	}
 	rows, err := db.SQL.QueryContext(ctx, `
-		WITH explored AS (
+		WITH raw_explored AS (
 		  SELECT
 		    CASE
 		      WHEN path LIKE '/marketplace/capabilities/%' THEN trim(leading '/' FROM replace(path, '/marketplace/capabilities', ''))
 		      WHEN path LIKE '/agent/v1/capabilities/%' THEN trim(leading '/' FROM replace(path, '/agent/v1/capabilities', ''))
 		      ELSE ''
 		    END AS raw_capability,
-		    COUNT(*)::int AS explorations,
-		    MAX(created_at) AS last_seen
+		    created_at
 		  FROM api_request_logs
 		  WHERE created_at > now() - interval '24 hours'
 		    AND (
@@ -436,6 +435,10 @@ func (db *DB) ListCapabilityConversions(ctx context.Context, limit int) ([]Capab
 		    )
 		    AND path NOT LIKE '%/execute'
 		    AND path NOT LIKE '%/route'
+		),
+		explored AS (
+		  SELECT raw_capability, COUNT(*)::int AS explorations, MAX(created_at) AS last_seen
+		  FROM raw_explored
 		  GROUP BY raw_capability
 		),
 		explored_clean AS (
