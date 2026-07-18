@@ -28,7 +28,11 @@ import (
 	"payment-gateway/internal/workers"
 )
 
-const protocolVersion = "2024-11-05"
+const (
+	protocolVersion    = "2024-11-05"
+	mcpCatalogCacheTTL = 5 * time.Minute
+	mcpRouteCacheTTL   = time.Minute
+)
 
 // PriceSource is the minimal price lookup the MCP server needs, satisfied
 // by workers.PriceWorker.
@@ -54,11 +58,18 @@ type Server struct {
 
 	cacheMu sync.Mutex
 	cache   map[string]cachedMCPValue
+	builds  map[string]*cachedMCPBuild
 }
 
 type cachedMCPValue struct {
 	value     any
 	expiresAt time.Time
+}
+
+type cachedMCPBuild struct {
+	done  chan struct{}
+	value any
+	err   error
 }
 
 // ─── Per-API-key rate limiter (sliding window, stdlib only) ──────────────────
@@ -166,6 +177,7 @@ func New(db *database.DB, cfg *config.Config, prices *workers.PriceWorker, agent
 		dispatch: dispatcher,
 		rl:       newMCPRateLimiter(),
 		cache:    make(map[string]cachedMCPValue),
+		builds:   make(map[string]*cachedMCPBuild),
 	}
 	if prices != nil {
 		s.prices = prices
@@ -264,20 +276,39 @@ func (s *Server) cachedValue(key string, ttl time.Duration, build func() (any, e
 				return item.value, nil
 			}
 		}
+		if s.builds != nil {
+			if inFlight, ok := s.builds[key]; ok {
+				s.cacheMu.Unlock()
+				<-inFlight.done
+				return inFlight.value, inFlight.err
+			}
+		}
+		if s.builds == nil {
+			s.builds = make(map[string]*cachedMCPBuild)
+		}
+		s.builds[key] = &cachedMCPBuild{done: make(chan struct{})}
 		s.cacheMu.Unlock()
 	}
 
 	value, err := build()
-	if err != nil {
-		return nil, err
-	}
 	if s != nil {
 		s.cacheMu.Lock()
-		if s.cache == nil {
+		if inFlight := s.builds[key]; inFlight != nil {
+			inFlight.value = value
+			inFlight.err = err
+			close(inFlight.done)
+			delete(s.builds, key)
+		}
+		if err == nil && s.cache == nil {
 			s.cache = make(map[string]cachedMCPValue)
 		}
-		s.cache[key] = cachedMCPValue{value: value, expiresAt: now.Add(ttl)}
+		if err == nil {
+			s.cache[key] = cachedMCPValue{value: value, expiresAt: now.Add(ttl)}
+		}
 		s.cacheMu.Unlock()
+	}
+	if err != nil {
+		return nil, err
 	}
 	return value, nil
 }
