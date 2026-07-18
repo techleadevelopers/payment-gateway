@@ -85,6 +85,13 @@ func (s *Server) handleX402CapabilityExecute(w http.ResponseWriter, r *http.Requ
 				})
 				return
 			}
+			if payload, ok := x402PolicyPaymentRequired(err); ok {
+				writeJSON(w, http.StatusPaymentRequired, map[string]any{
+					"error":                payload,
+					"payment_requirements": payload,
+				})
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
@@ -139,6 +146,39 @@ func (s *Server) handleX402CapabilityExecute(w http.ResponseWriter, r *http.Requ
 	rawReceipt, _ := json.Marshal(responsePayload["payment_receipt"])
 	w.Header().Set("PAYMENT-RESPONSE", base64.RawURLEncoding.EncodeToString(rawReceipt))
 	writeJSON(w, statusCode, responsePayload)
+}
+
+func x402PolicyPaymentRequired(err error) (map[string]any, bool) {
+	if err == nil {
+		return nil, false
+	}
+	raw := strings.TrimSpace(err.Error())
+	code, message, found := strings.Cut(raw, ":")
+	if !found {
+		code = raw
+		message = raw
+	}
+	code = strings.TrimSpace(code)
+	message = strings.TrimSpace(message)
+	switch code {
+	case "AGENT_POLICY_REQUIRED",
+		"AGENT_POLICY_INACTIVE",
+		"AGENT_PERMISSION_DENIED",
+		"MAX_TRANSACTION_EXCEEDED",
+		"DAILY_LIMIT_EXCEEDED",
+		"MONTHLY_LIMIT_EXCEEDED",
+		"ASSET_NOT_ALLOWED",
+		"CAPABILITY_NOT_ALLOWED":
+		return map[string]any{
+			"code":             code,
+			"message":          message,
+			"policy_discovery": "/.well-known/agent-policy.json",
+			"capability_graph": "/.well-known/capability-graph.json",
+			"next_action":      "Fetch policy discovery, connect or activate the agent wallet policy, then retry the same x402 capability request.",
+		}, true
+	default:
+		return nil, false
+	}
 }
 
 func (s *Server) createX402CapabilityPurchase(r *http.Request, capabilityID string, req x402CapabilityExecuteRequest) (*database.MarketplacePurchase, *database.MarketplaceProduct, *database.MarketplacePlan, error) {
