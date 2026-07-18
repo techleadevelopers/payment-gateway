@@ -162,12 +162,16 @@ func (s *Server) handleMarketplacePurchaseCreate(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TREASURY_HOT ou SELL_WALLET_ADDRESS precisa ser um endereco EVM valido"})
 		return
 	}
-	paymentContract, err := s.marketplacePaymentContract(r, "USDT")
+	productForPolicy, planForPolicy, err := s.db.GetMarketplacePlan(r.Context(), req.PlanID)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	productForPolicy, planForPolicy, err := s.db.GetMarketplacePlan(r.Context(), req.PlanID)
+	if planForPolicy == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "plano nao encontrado"})
+		return
+	}
+	paymentContract, err := s.marketplacePaymentContract(r, planForPolicy.PaymentAsset, planForPolicy.Network)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -210,6 +214,7 @@ func (s *Server) handleMarketplaceCapabilityPurchase(w http.ResponseWriter, r *h
 		AgentWallet    string `json:"agentWallet"`
 		PayerWallet    string `json:"payerWallet"`
 		PaymentAsset   string `json:"paymentAsset"`
+		Network        string `json:"network"`
 		IdempotencyKey string `json:"idempotencyKey"`
 		Nonce          string `json:"nonce"`
 	}
@@ -226,7 +231,8 @@ func (s *Server) handleMarketplaceCapabilityPurchase(w http.ResponseWriter, r *h
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "capability nao encontrada"})
 		return
 	}
-	_, plan, err := s.db.ResolveMarketplaceCapabilityPlan(r.Context(), capability.ID, req.PlanID, req.PaymentAsset)
+	req.Network = normalizeStablecoinNetwork(req.Network)
+	_, plan, err := s.db.ResolveMarketplaceCapabilityPlan(r.Context(), capability.ID, req.PlanID, req.PaymentAsset, req.Network)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -261,7 +267,7 @@ func (s *Server) handleMarketplaceCapabilityPurchase(w http.ResponseWriter, r *h
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TREASURY_HOT ou SELL_WALLET_ADDRESS precisa ser um endereco EVM valido"})
 		return
 	}
-	paymentContract, err := s.marketplacePaymentContract(r, plan.PaymentAsset)
+	paymentContract, err := s.marketplacePaymentContract(r, plan.PaymentAsset, plan.Network)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -367,7 +373,7 @@ func (s *Server) handleMarketplacePurchaseExecute(w http.ResponseWriter, r *http
 		return
 	}
 	expectedLogIndex := req.LogIndex
-	receipt, err := s.verifyERC20TransferTxRaw(r.Context(), req.TxHash, purchase.PaymentContract, purchase.PayerWallet, purchase.PaymentAddress, expectedAmount, purchase.PaymentAsset, asset.Decimals, &expectedLogIndex)
+	receipt, err := s.verifyERC20TransferTxRaw(r.Context(), purchase.Network, req.TxHash, purchase.PaymentContract, purchase.PayerWallet, purchase.PaymentAddress, expectedAmount, purchase.PaymentAsset, asset.Decimals, &expectedLogIndex)
 	if err != nil {
 		writeJSON(w, http.StatusPaymentRequired, map[string]any{"error": err.Error(), "status": database.MarketplacePurchasePaymentInvalid})
 		return
@@ -855,13 +861,14 @@ func (s *Server) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) marketplacePaymentContract(r *http.Request, asset string) (string, error) {
+func (s *Server) marketplacePaymentContract(r *http.Request, asset string, network string) (string, error) {
 	symbol := strings.ToUpper(strings.TrimSpace(asset))
+	network = normalizeStablecoinNetwork(network)
 	if symbol == "" {
 		return "", fmt.Errorf("payment asset invalido")
 	}
 	if s.db != nil {
-		registered, err := s.db.GetAgentSupportedAsset(r.Context(), symbol, "BSC")
+		registered, err := s.db.GetAgentSupportedAsset(r.Context(), symbol, network)
 		if err != nil {
 			return "", err
 		}
@@ -869,10 +876,15 @@ func (s *Server) marketplacePaymentContract(r *http.Request, asset string) (stri
 			return strings.ToLower(registered.ContractAddress), nil
 		}
 	}
-	if symbol == "USDT" && s.cfg != nil && common.IsHexAddress(s.cfg.BscUsdtContract) {
-		return strings.ToLower(s.cfg.BscUsdtContract), nil
+	if symbol == "USDT" && s.cfg != nil {
+		if network == "POLYGON" && common.IsHexAddress(s.cfg.PolygonUsdtContract) {
+			return strings.ToLower(s.cfg.PolygonUsdtContract), nil
+		}
+		if network == "BSC" && common.IsHexAddress(s.cfg.BscUsdtContract) {
+			return strings.ToLower(s.cfg.BscUsdtContract), nil
+		}
 	}
-	return "", fmt.Errorf("%s BSC nao configurado na allowlist", symbol)
+	return "", fmt.Errorf("%s %s nao configurado na allowlist", symbol, network)
 }
 
 func marketplaceProductsResponse(products []*database.MarketplaceProduct) []map[string]any {
