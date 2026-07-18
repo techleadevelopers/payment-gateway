@@ -49,6 +49,7 @@ type AgentPaymentIntent struct {
 	RequiredUSDT          float64         `json:"required_usdt"`
 	USDTRate              float64         `json:"usdt_rate"`
 	PaymentAddress        string          `json:"payment_address"`
+	PaymentNetwork        string          `json:"payment_network"`
 	Status                M2MIntentStatus `json:"status"`
 	DepositTx             *string         `json:"deposit_tx,omitempty"`
 	DepositAmountUSDT     *float64        `json:"deposit_amount_usdt,omitempty"`
@@ -83,6 +84,7 @@ type M2MCreateInput struct {
 	RequiredUSDT    float64
 	USDTRate        float64
 	PaymentAddress  string
+	PaymentNetwork  string
 	RequestHash     string
 	ExpiresAt       time.Time
 }
@@ -123,17 +125,17 @@ func (db *DB) CreateAgentPaymentIntent(ctx context.Context, in M2MCreateInput) (
 INSERT INTO agent_payment_intents
     (id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
      amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
-     payment_address, status, request_hash, expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending_deposit',$17,$18)
+     payment_address, payment_network, status, request_hash, expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'pending_deposit',$18,$19)
 RETURNING id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
           amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
-          payment_address, status, request_hash, expires_at, attempts, created_at, updated_at`
+          payment_address, payment_network, status, request_hash, expires_at, attempts, created_at, updated_at`
 
 	row := tx.QueryRowContext(ctx, q,
 		in.ID, in.IdempotencyKey, in.AgentWallet, string(in.PaymentType), pixKey,
 		paymentLink, barcode, beneficiaryName, dueDate,
 		in.AmountBRL, in.FeeBps, in.FeeUSDT, in.GrossUSDT, in.RequiredUSDT, in.USDTRate,
-		in.PaymentAddress, in.RequestHash, in.ExpiresAt,
+		in.PaymentAddress, strings.ToUpper(strings.TrimSpace(firstNonEmptyDB(in.PaymentNetwork, "BSC"))), in.RequestHash, in.ExpiresAt,
 	)
 	intent, err := scanIntent(row)
 	if err != nil {
@@ -147,6 +149,7 @@ RETURNING id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link
 		"fee_bps":         intent.FeeBps,
 		"agent_wallet":    intent.AgentWallet,
 		"payment_address": intent.PaymentAddress,
+		"payment_network": intent.PaymentNetwork,
 		"payment_link":    intent.PaymentLink,
 		"barcode":         intent.Barcode,
 		"beneficiary":     intent.BeneficiaryName,
@@ -168,7 +171,7 @@ func (db *DB) GetAgentPaymentIntent(ctx context.Context, id string) (*AgentPayme
 	const q = `
 SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
-       payment_address, status, deposit_tx, deposit_amount_usdt,
+       payment_address, payment_network, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, settlement_receipt_url, settlement_receipt_note, error_message, attempts,
        request_hash, expires_at, settled_at, created_at, updated_at
 FROM agent_payment_intents
@@ -277,16 +280,17 @@ WHERE  status = 'pending_deposit'
 // FindPendingIntentsByDepositAddress returns non-expired pending intents for a
 // given deposit address. Shared deposit addresses are supported; reconciliation
 // selects a unique candidate by amount in the on-chain worker.
-func (db *DB) FindPendingIntentsByDepositAddress(ctx context.Context, address string) ([]M2MDepositMatch, error) {
+func (db *DB) FindPendingIntentsByDepositAddress(ctx context.Context, address string, network string) ([]M2MDepositMatch, error) {
 	const q = `
 SELECT id, agent_wallet, required_usdt
 FROM   agent_payment_intents
 WHERE  payment_address = $1
+  AND  UPPER(COALESCE(payment_network, 'BSC')) = UPPER($2)
   AND  status = 'pending_deposit'
   AND  expires_at > NOW()
 ORDER BY created_at`
 
-	rows, err := db.SQL.QueryContext(ctx, q, strings.ToLower(address))
+	rows, err := db.SQL.QueryContext(ctx, q, strings.ToLower(address), strings.ToUpper(strings.TrimSpace(network)))
 	if err != nil {
 		return nil, fmt.Errorf("m2m: find pending intents: %w", err)
 	}
@@ -439,7 +443,7 @@ func (db *DB) ListAgentPaymentIntentsByWallet(ctx context.Context, wallet, statu
 	const qBase = `
 SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
-       payment_address, status, deposit_tx, deposit_amount_usdt,
+       payment_address, payment_network, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, settlement_receipt_url, settlement_receipt_note, error_message, attempts,
        request_hash, expires_at, settled_at, created_at, updated_at
 FROM   agent_payment_intents
@@ -466,7 +470,7 @@ func (db *DB) GetPaidCryptoIntents(ctx context.Context) ([]AgentPaymentIntent, e
 	const q = `
 SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
-       payment_address, status, deposit_tx, deposit_amount_usdt,
+       payment_address, payment_network, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, settlement_receipt_url, settlement_receipt_note, error_message, attempts,
        request_hash, expires_at, settled_at, created_at, updated_at
 FROM   agent_payment_intents
@@ -517,7 +521,7 @@ func txGetIntentByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (*
 	const q = `
 SELECT id, idempotency_key, agent_wallet, payment_type, pix_key, payment_link, barcode, beneficiary_name, due_date,
        amount_brl, fee_bps, fee_usdt, gross_usdt, required_usdt, usdt_rate,
-       payment_address, status, deposit_tx, deposit_amount_usdt,
+       payment_address, payment_network, status, deposit_tx, deposit_amount_usdt,
        efi_end_to_end_id, efi_status, settlement_receipt_url, settlement_receipt_note, error_message, attempts,
        request_hash, expires_at, settled_at, created_at, updated_at
 FROM   agent_payment_intents WHERE idempotency_key = $1`
@@ -544,7 +548,7 @@ func scanIntent(row *sql.Row) (*AgentPaymentIntent, error) {
 	err := row.Scan(
 		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey, &paymentLink, &barcode, &beneficiaryName, &dueDate,
 		&i.AmountBRL, &i.FeeBps, &i.FeeUSDT, &i.GrossUSDT, &i.RequiredUSDT, &i.USDTRate,
-		&i.PaymentAddress, &i.Status, &i.RequestHash, &i.ExpiresAt,
+		&i.PaymentAddress, &i.PaymentNetwork, &i.Status, &i.RequestHash, &i.ExpiresAt,
 		&i.Attempts, &i.CreatedAt, &i.UpdatedAt,
 	)
 	if err != nil {
@@ -565,7 +569,7 @@ func scanIntentFull(row rowScanner) (*AgentPaymentIntent, error) {
 	err := row.Scan(
 		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey, &paymentLink, &barcode, &beneficiaryName, &dueDate,
 		&i.AmountBRL, &i.FeeBps, &i.FeeUSDT, &i.GrossUSDT, &i.RequiredUSDT, &i.USDTRate,
-		&i.PaymentAddress, &i.Status, &depositTx, &depositUSDT,
+		&i.PaymentAddress, &i.PaymentNetwork, &i.Status, &depositTx, &depositUSDT,
 		&efiID, &efiStatus, &receiptURL, &receiptNote, &errMsg, &i.Attempts,
 		&i.RequestHash, &i.ExpiresAt, &settledAt, &i.CreatedAt, &i.UpdatedAt,
 	)
@@ -606,7 +610,7 @@ func scanIntentFullRow(rows *sql.Rows) (*AgentPaymentIntent, error) {
 	err := rows.Scan(
 		&i.ID, &i.IdempotencyKey, &i.AgentWallet, &i.PaymentType, &pixKey, &paymentLink, &barcode, &beneficiaryName, &dueDate,
 		&i.AmountBRL, &i.FeeBps, &i.FeeUSDT, &i.GrossUSDT, &i.RequiredUSDT, &i.USDTRate,
-		&i.PaymentAddress, &i.Status, &depositTx, &depositUSDT,
+		&i.PaymentAddress, &i.PaymentNetwork, &i.Status, &depositTx, &depositUSDT,
 		&efiID, &efiStatus, &receiptURL, &receiptNote, &errMsg, &i.Attempts,
 		&i.RequestHash, &i.ExpiresAt, &settledAt, &i.CreatedAt, &i.UpdatedAt,
 	)
