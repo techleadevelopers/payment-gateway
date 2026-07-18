@@ -150,6 +150,25 @@ Arquivos principais:
 | `internal/paymaster/token_relayer.go` | Split net leg + fee leg, aritmetica inteira |
 | `internal/paymaster/paymaster.go` | Service top-level, Quote, SubmitRelay, poller |
 
+### NFC Closed-Loop
+
+O trilho NFC e fechado: ele atende app HCE Android + leitor/terminal ChainFX. Ele nao se apresenta como emissor Visa/Mastercard nem roteia POS comum de adquirente.
+
+1. O app chama `POST /api/nfc/provision` e recebe um token opaco `nfc1...` com TTL curto.
+2. O modulo HCE do Android envia esse token ao leitor via APDU, sem PAN real e sem Track2 estatico.
+3. O leitor chama `POST /api/nfc/authorize` com token, valor BRL, merchant, terminal e idempotency key.
+4. O backend valida HMAC/expiracao do token, busca o saldo NFC da wallet e trava o valor USDT necessario.
+5. Se houver saldo, responde `response_code=00` e status `approved`; se faltar saldo, responde `response_code=51` e status `requires_funding`.
+
+Arquivos principais:
+
+| Arquivo | Responsabilidade |
+| --- | --- |
+| `internal/nfc/token.go` | Emissao e verificacao HMAC do token HCE opaco |
+| `internal/server/nfc_handlers.go` | Endpoints de provisionamento, autorizacao, consulta e funding sandbox |
+| `internal/database/nfc.go` | Persistencia transacional de tokens, saldos e autorizacoes |
+| `migrations/020_nfc_closed_loop.sql` | Schema do trilho NFC fechado |
+
 ### PSP Router Efi
 
 Quando `cmd/api/main.go` encontra credenciais e certificado Efi, monta `EfiAdapter` e `psp.Router`.
@@ -224,6 +243,18 @@ GET  /v1/gas/relay/{id}
 GET  /v1/gas/relays
 GET  /v1/gas/sweeper/runs
 ```
+
+### NFC Closed-Loop
+
+```http
+POST /api/nfc/provision
+POST /api/nfc/authorize
+GET  /api/nfc/authorizations/{id}
+GET  /api/nfc/balance/{wallet}?network=BSC
+POST /api/nfc/sandbox/fund
+```
+
+`/api/nfc/sandbox/fund` so funciona com `ALLOW_SIMULATIONS=true`. Em producao, o saldo NFC deve vir de deposito/escrow on-chain reconciliado pelo backend.
 
 ### Quote
 
@@ -477,6 +508,13 @@ SMTP_SECURE=false
 SMTP_FROM_EMAIL=ops@example.com
 SMTP_FROM_NAME=ChainFX Ops
 OPS_EMAIL=ops@example.com
+
+# NFC closed-loop
+NFC_ENABLED=true
+NFC_TOKEN_SECRET=use-um-segredo-forte-diferente-do-jwt
+NFC_TOKEN_TTL_SEC=120
+NFC_HOLD_TTL_SEC=900
+NFC_MAX_AMOUNT_BRL=500
 ```
 
 Producao deve usar:
