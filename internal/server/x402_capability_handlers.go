@@ -18,6 +18,7 @@ type x402CapabilityExecuteRequest struct {
 	AgentWallet    string          `json:"agentWallet"`
 	PayerWallet    string          `json:"payerWallet"`
 	PaymentAsset   string          `json:"paymentAsset"`
+	Network        string          `json:"network"`
 	Nonce          string          `json:"nonce"`
 	Operation      string          `json:"operation"`
 	Input          json.RawMessage `json:"input"`
@@ -48,6 +49,7 @@ func (s *Server) handleX402CapabilityExecute(w http.ResponseWriter, r *http.Requ
 	req.AgentWallet = strings.ToLower(strings.TrimSpace(req.AgentWallet))
 	req.PayerWallet = strings.ToLower(strings.TrimSpace(firstNonEmpty(req.PayerWallet, req.AgentWallet)))
 	req.PaymentAsset = strings.ToUpper(strings.TrimSpace(firstNonEmpty(req.PaymentAsset, "USDT")))
+	req.Network = normalizeStablecoinNetwork(req.Network)
 	req.IdempotencyKey = firstNonEmpty(req.IdempotencyKey, r.Header.Get("X-Idempotency-Key"))
 	req.Nonce = strings.TrimSpace(firstNonEmpty(req.Nonce, "x402_"+strings.ReplaceAll(database.NewID(), "-", "")))
 	req.RequestID = strings.TrimSpace(firstNonEmpty(req.RequestID, "x402_req_"+strings.ReplaceAll(database.NewID(), "-", "")))
@@ -140,7 +142,7 @@ func (s *Server) createX402CapabilityPurchase(r *http.Request, capabilityID stri
 	if capability == nil {
 		return nil, nil, nil, fmt.Errorf("capability not found")
 	}
-	_, plan, err := s.db.ResolveMarketplaceCapabilityPlan(r.Context(), capability.ID, req.PlanID, req.PaymentAsset)
+	_, plan, err := s.db.ResolveMarketplaceCapabilityPlan(r.Context(), capability.ID, req.PlanID, req.PaymentAsset, req.Network)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -148,7 +150,7 @@ func (s *Server) createX402CapabilityPurchase(r *http.Request, capabilityID stri
 	if !common.IsHexAddress(paymentAddress) {
 		return nil, nil, nil, fmt.Errorf("payment address is not configured")
 	}
-	paymentContract, err := s.marketplacePaymentContract(r, plan.PaymentAsset)
+	paymentContract, err := s.marketplacePaymentContract(r, plan.PaymentAsset, plan.Network)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -192,7 +194,7 @@ func (s *Server) activateX402Payment(r *http.Request, payment x402PaymentHeader)
 		return nil, http.StatusInternalServerError, map[string]any{"code": "invalid_internal_amount", "message": err.Error()}
 	}
 	expectedLogIndex := payment.LogIndex
-	receipt, err := s.verifyERC20TransferTxRaw(r.Context(), payment.TxHash, purchase.PaymentContract, purchase.PayerWallet, purchase.PaymentAddress, expectedAmount, purchase.PaymentAsset, asset.Decimals, &expectedLogIndex)
+	receipt, err := s.verifyERC20TransferTxRaw(r.Context(), purchase.Network, payment.TxHash, purchase.PaymentContract, purchase.PayerWallet, purchase.PaymentAddress, expectedAmount, purchase.PaymentAsset, asset.Decimals, &expectedLogIndex)
 	if err != nil {
 		return nil, http.StatusPaymentRequired, map[string]any{"code": "payment_not_verified", "message": err.Error()}
 	}
@@ -208,8 +210,8 @@ func (s *Server) writeX402PaymentRequired(w http.ResponseWriter, r *http.Request
 		challenge = map[string]any{
 			"pricing_scheme": "exact",
 			"asset":          firstNonEmpty(req.PaymentAsset, "USDT"),
-			"network":        "BSC",
-			"chain_id":       56,
+			"network":        normalizeStablecoinNetwork(req.Network),
+			"chain_id":       stablecoinNetworkChainID(req.Network),
 			"capability":     capabilityID,
 			"quote_url":      publicBaseURL(r) + "/x402/capabilities/" + capabilityID + "/execute",
 			"required_fields": []string{
@@ -243,7 +245,7 @@ func x402ChallengeFromPurchase(r *http.Request, purchase *database.MarketplacePu
 	out := marketplacePurchaseIntentResponse(purchase, product, plan)
 	out["pricing_scheme"] = "exact"
 	out["currency"] = purchase.PaymentAsset
-	out["blockchain"] = "eip155:56"
+	out["blockchain"] = fmt.Sprintf("eip155:%d", purchase.ChainID)
 	out["destination_address"] = purchase.PaymentAddress
 	out["amount"] = purchase.GrossAmount
 	out["purchase_id"] = purchase.ID
