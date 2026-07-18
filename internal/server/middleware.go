@@ -183,6 +183,9 @@ func smartRateLimitRouteClass(r *http.Request) string {
 	if strings.HasPrefix(path, "/mcp/") {
 		return "mcp"
 	}
+	if method == http.MethodPost && strings.HasPrefix(path, "/x402/capabilities/") && strings.HasSuffix(path, "/execute") {
+		return "x402_challenge"
+	}
 	if strings.Contains(path, "/execute") || strings.Contains(path, "/usage") || strings.Contains(path, "/purchase") || strings.HasSuffix(path, "/trade/execute") {
 		return "execution"
 	}
@@ -199,23 +202,23 @@ func smartRateLimitMax(tier, routeClass string, configuredMax int) int {
 	limits := map[string]map[string]int{
 		"anonymous": {
 			"public_discovery": 600, "discovery": 600, "read": 600, "write": 20,
-			"mcp_resource_read": 300, "mcp_tool": 600, "mcp": 60, "execution": 10,
+			"mcp_resource_read": 300, "mcp_tool": 600, "mcp": 60, "x402_challenge": 120, "execution": 10,
 		},
 		"invalid_key": {
 			"public_discovery": 120, "discovery": 60, "read": 30, "write": 10,
-			"mcp_resource_read": 30, "mcp_tool": 30, "mcp": 5, "execution": 5,
+			"mcp_resource_read": 30, "mcp_tool": 30, "mcp": 5, "x402_challenge": 20, "execution": 5,
 		},
 		"test": {
 			"public_discovery": 1800, "discovery": 1200, "read": 800, "write": 240,
-			"mcp_resource_read": 900, "mcp_tool": 1200, "mcp": 600, "execution": 180,
+			"mcp_resource_read": 900, "mcp_tool": 1200, "mcp": 600, "x402_challenge": 240, "execution": 180,
 		},
 		"live": {
 			"public_discovery": 3600, "discovery": 3000, "read": 1200, "write": 400,
-			"mcp_resource_read": 1800, "mcp_tool": 2400, "mcp": 2000, "execution": 300,
+			"mcp_resource_read": 1800, "mcp_tool": 2400, "mcp": 2000, "x402_challenge": 600, "execution": 300,
 		},
 		"api": {
 			"public_discovery": 1800, "discovery": 1200, "read": 800, "write": 200,
-			"mcp_resource_read": 900, "mcp_tool": 1200, "mcp": 600, "execution": 120,
+			"mcp_resource_read": 900, "mcp_tool": 1200, "mcp": 600, "x402_challenge": 240, "execution": 120,
 		},
 	}
 	if byClass, ok := limits[tier]; ok {
