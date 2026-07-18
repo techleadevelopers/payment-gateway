@@ -300,9 +300,19 @@ func (s *Server) handleToolsCallWithAuthorize(authorize Authorize) http.HandlerF
 		}
 
 		ctx := context.WithValue(r.Context(), mcpAPIKeyCtxKey{}, apiKey)
+		if isMCPAITool(req.Name) && apiKey == "" {
+			ctx = context.WithValue(ctx, mcpAIForceFallbackCtxKey{}, true)
+		}
 		r = r.WithContext(ctx)
 
-		if !isPublicMCPTool(req.Name) && authorize != nil {
+		if isMCPAITool(req.Name) {
+			if apiKey != "" && authorize != nil {
+				if !authorize(w, r) {
+					s.recordMCPToolLog(r, req.Name, "error", "unauthorized", time.Since(start))
+					return
+				}
+			}
+		} else if !isPublicMCPTool(req.Name) && authorize != nil {
 			if apiKey == "" && returnsAuthRequiredForAnonymousMCPTool(req.Name) {
 				writeJSON(w, http.StatusOK, map[string]any{
 					"isError": false,
@@ -353,6 +363,19 @@ func isPublicMCPTool(name string) bool {
 		"trade",
 		"dryRunCapability",
 		"list_webhook_events":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMCPAITool(name string) bool {
+	switch name {
+	case "market_analysis",
+		"trade_recommendation",
+		"price_prediction",
+		"detect_anomalies",
+		"summarize_transactions":
 		return true
 	default:
 		return false
@@ -464,6 +487,11 @@ func fullMCPSecretHash(value string) string {
 // mcpAPIKeyCtxKey is the context key used to propagate the raw API key from
 // handleToolsCall into the tool dispatcher so deep helpers can read it.
 type mcpAPIKeyCtxKey struct{}
+
+// mcpAIForceFallbackCtxKey marks anonymous MCP AI calls. Anonymous callers get
+// deterministic fallback responses so public availability probes cannot spend
+// provider quota or fail as transport-level auth errors.
+type mcpAIForceFallbackCtxKey struct{}
 
 // mcpAPIKeyFromCtx retrieves the API key stashed in the context by handleToolsCall.
 // Falls back to empty string when not present (non-MCP callers).
@@ -588,7 +616,8 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 }
 
 func (s *Server) callMCPAITool(ctx context.Context, name string, args map[string]any) (any, error) {
-	if s.agents != nil && s.agents.Configured() {
+	forceFallback, _ := ctx.Value(mcpAIForceFallbackCtxKey{}).(bool)
+	if !forceFallback && s.agents != nil && s.agents.Configured() {
 		var (
 			out any
 			err error
