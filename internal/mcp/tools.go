@@ -793,7 +793,7 @@ func (s *Server) toolListCapabilities(ctx context.Context, args map[string]any) 
 		filter.Capability = query
 	}
 	cacheKey := "tool:listCapabilities:" + strings.ToLower(strings.TrimSpace(filter.Category)) + ":" + strings.ToUpper(strings.TrimSpace(filter.PaymentAsset)) + ":" + strings.ToLower(query)
-	return s.cachedValue(cacheKey, 30*time.Second, func() (any, error) {
+	return s.cachedValue(cacheKey, mcpCatalogCacheTTL, func() (any, error) {
 		return s.db.ListMarketplaceCapabilities(ctx, filter)
 	})
 }
@@ -804,7 +804,7 @@ func (s *Server) toolGetCapability(ctx context.Context, args map[string]any) (an
 		return nil, fmt.Errorf("capability e obrigatoria")
 	}
 	cacheKey := "tool:getCapability:" + strings.ToLower(strings.TrimSpace(id))
-	value, err := s.cachedValue(cacheKey, 30*time.Second, func() (any, error) {
+	value, err := s.cachedValue(cacheKey, mcpCatalogCacheTTL, func() (any, error) {
 		return s.db.GetMarketplaceCapability(ctx, id)
 	})
 	if err != nil {
@@ -824,7 +824,7 @@ func (s *Server) toolGetCapabilityContract(ctx context.Context, args map[string]
 	}
 	version := stringArg(args, "version")
 	cacheKey := "tool:getCapabilityContract:" + strings.ToLower(strings.TrimSpace(id)) + ":" + strings.ToLower(strings.TrimSpace(firstNonEmptyMCP(version, "v1")))
-	value, err := s.cachedValue(cacheKey, 30*time.Second, func() (any, error) {
+	value, err := s.cachedValue(cacheKey, mcpCatalogCacheTTL, func() (any, error) {
 		return s.db.GetMarketplaceCapabilityContract(ctx, id, version)
 	})
 	if err != nil {
@@ -997,7 +997,7 @@ func (s *Server) toolChooseRoute(ctx context.Context, args map[string]any) (any,
 	if capability == "" {
 		return nil, fmt.Errorf("capability e obrigatoria")
 	}
-	candidates, err := s.db.ListMarketplaceRouteCandidates(ctx, database.MarketplaceCapabilityExecuteInput{
+	routeInput := database.MarketplaceCapabilityExecuteInput{
 		CapabilityID:      capability,
 		RequestedProvider: stringArg(args, "provider"),
 		RoutingMode:       stringArg(args, "routingMode"),
@@ -1006,10 +1006,14 @@ func (s *Server) toolChooseRoute(ctx context.Context, args map[string]any) (any,
 		MaxCostScore:      intArg(args, "maxCostScore"),
 		RequireReal:       boolArg(args, "requireReal"),
 		Units:             intArg(args, "units"),
+	}
+	value, err := s.cachedValue("tool:chooseRoute:"+mcpRouteCandidatesCacheKey(routeInput), mcpRouteCacheTTL, func() (any, error) {
+		return s.db.ListMarketplaceRouteCandidates(ctx, routeInput)
 	})
 	if err != nil {
 		return nil, err
 	}
+	candidates, _ := value.([]*database.MarketplaceRouteCandidate)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("nenhuma rota encontrada")
 	}
@@ -1019,6 +1023,19 @@ func (s *Server) toolChooseRoute(ctx context.Context, args map[string]any) (any,
 		"selected":    candidates[0],
 		"candidates":  candidates,
 	}, nil
+}
+
+func mcpRouteCandidatesCacheKey(in database.MarketplaceCapabilityExecuteInput) string {
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(in.CapabilityID)),
+		strings.ToLower(strings.TrimSpace(in.RequestedProvider)),
+		strings.ToLower(strings.TrimSpace(in.RoutingMode)),
+		strings.ToLower(strings.TrimSpace(in.Region)),
+		strconv.Itoa(in.MaxLatencyMS),
+		strconv.Itoa(in.MaxCostScore),
+		strconv.FormatBool(in.RequireReal),
+		strconv.Itoa(in.Units),
+	}, ":")
 }
 
 func (s *Server) promoteRealCapabilityExecution(ctx context.Context, event *database.MarketplaceCapabilityExecution) {
