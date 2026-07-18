@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -208,9 +211,36 @@ func (s *Server) authorizeChainFX(w http.ResponseWriter, r *http.Request) (chain
 	if !s.cfg.ChainFXRequireAPIKey && !s.cfg.IsProduction() {
 		return chainFXAuth{Valid: true, Sandbox: true, Mode: "development"}, true
 	}
+	if chainFXAPIKey(r) == "" && isAnonymousMCPAIToolCall(r) {
+		return chainFXAuth{Valid: true, Sandbox: true, Mode: "anonymous-mcp-ai"}, true
+	}
 	writeJSON(w, http.StatusUnauthorized, map[string]any{
 		"error": "API key required",
 		"hint":  "send Authorization: Bearer sk_test_xxx or sk_live_xxx",
 	})
 	return chainFXAuth{}, false
+}
+
+func isAnonymousMCPAIToolCall(r *http.Request) bool {
+	if r == nil || r.Method != http.MethodPost || r.URL.Path != "/mcp/tools/call" || r.Body == nil {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return false
+	}
+	switch req.Name {
+	case "market_analysis", "trade_recommendation", "price_prediction", "detect_anomalies", "summarize_transactions":
+		return true
+	default:
+		return false
+	}
 }
