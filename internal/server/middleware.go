@@ -441,8 +441,37 @@ func (s *Server) withDeveloperRequestLog(next http.Handler) http.Handler {
 			AuthMode:    authMode,
 			ClientIP:    clientIP(r),
 			UserAgent:   r.UserAgent(),
+			AgentID:     requestAgentID(r),
+			AgentSigHash: requestAgentSignatureHash(r),
 		})
 	})
+}
+
+func requestAgentID(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	for _, header := range []string{"X-Agent-ID", "X-Agent-Id", "X-Client-Agent", "MCP-Agent-ID"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			if len(value) > 160 {
+				value = value[:160]
+			}
+			return value
+		}
+	}
+	return ""
+}
+
+func requestAgentSignatureHash(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	for _, header := range []string{"X-Agent-Signature", "X-Agent-Card-Signature", "MCP-Agent-Signature"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			return shortSecretHash(value)
+		}
+	}
+	return ""
 }
 
 func shouldEmitHTTPLog(status int, duration time.Duration) bool {
