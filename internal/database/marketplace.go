@@ -209,6 +209,7 @@ type MarketplaceCapabilityExecution struct {
 
 type MarketplaceCapabilityExecuteInput struct {
 	Token             string
+	AgentWallet       string
 	CapabilityID      string
 	Operation         string
 	RequestID         string
@@ -226,7 +227,62 @@ type MarketplaceCapabilityExecuteInput struct {
 type MarketplaceCapabilityExecuteResult struct {
 	Event     *MarketplaceCapabilityExecution `json:"execution"`
 	Grant     *APIAccessGrant                 `json:"grant"`
+	Credit    *AgentCapabilityCreditAccount    `json:"credit,omitempty"`
 	Duplicate bool                            `json:"duplicate"`
+}
+
+type AgentCapabilityCreditAccount struct {
+	ID                    string    `json:"id"`
+	AgentWallet           string    `json:"agentWallet"`
+	CapabilityID          string    `json:"capability"`
+	Asset                 string    `json:"asset"`
+	Network               string    `json:"network"`
+	CreditLimitUSDT       string    `json:"creditLimitUsdt"`
+	CreditUsedUSDT        string    `json:"creditUsedUsdt"`
+	CreditRemainingUSDT   string    `json:"creditRemainingUsdt"`
+	MinTopUpUSDT          string    `json:"minTopUpUsdt"`
+	ExpiresAt             time.Time `json:"expiresAt"`
+	Status                string    `json:"status"`
+	LastPaymentRequiredAt time.Time `json:"lastPaymentRequiredAt,omitempty"`
+}
+
+type AgentCreditPaymentRequiredError struct {
+	AgentWallet         string `json:"agentWallet"`
+	CapabilityID        string `json:"capability"`
+	Asset               string `json:"asset"`
+	Network             string `json:"network"`
+	CreditLimitUSDT     string `json:"creditLimitUsdt"`
+	CreditUsedUSDT      string `json:"creditUsedUsdt"`
+	CreditRemainingUSDT string `json:"creditRemainingUsdt"`
+	RequiredUSDT        string `json:"requiredUsdt"`
+	MinTopUpUSDT        string `json:"minTopUpUsdt"`
+}
+
+func (e *AgentCreditPaymentRequiredError) Error() string {
+	if e == nil {
+		return "payment required"
+	}
+	return "credit limit reached; top-up required"
+}
+
+func (e *AgentCreditPaymentRequiredError) Challenge() map[string]any {
+	if e == nil {
+		return map[string]any{"code": "AGENT_CREDIT_PAYMENT_REQUIRED"}
+	}
+	return map[string]any{
+		"code":                "AGENT_CREDIT_PAYMENT_REQUIRED",
+		"message":             e.Error(),
+		"agentWallet":         e.AgentWallet,
+		"capability":          e.CapabilityID,
+		"asset":               e.Asset,
+		"network":             e.Network,
+		"creditLimitUsdt":     e.CreditLimitUSDT,
+		"creditUsedUsdt":      e.CreditUsedUSDT,
+		"creditRemainingUsdt": e.CreditRemainingUSDT,
+		"requiredUsdt":        e.RequiredUSDT,
+		"minTopUpUsdt":        e.MinTopUpUSDT,
+		"nextStep":            "create a capability purchase/top-up of at least 20 USDT, pay on-chain, then retry with accessToken",
+	}
 }
 
 type MarketplaceRouteCandidate struct {
@@ -420,7 +476,8 @@ func (db *DB) GetMarketplaceCapabilityContract(ctx context.Context, idOrSlug, ve
 	return contract, err
 }
 
-func (db *DB) ResolveMarketplaceCapabilityPlan(ctx context.Context, capabilityID, requestedPlanID, paymentAsset string) (*MarketplaceProduct, *MarketplacePlan, error) {
+func (db *DB) ResolveMarketplaceCapabilityPlan(ctx context.Context, capabilityID, requestedPlanID, paymentAsset, paymentNetwork string) (*MarketplaceProduct, *MarketplacePlan, error) {
+	paymentNetwork = strings.ToUpper(strings.TrimSpace(paymentNetwork))
 	if strings.TrimSpace(requestedPlanID) != "" {
 		product, _, plan, err := db.getMarketplacePlanBundle(ctx, strings.TrimSpace(requestedPlanID))
 		if err != nil {
@@ -432,6 +489,12 @@ func (db *DB) ResolveMarketplaceCapabilityPlan(ctx context.Context, capabilityID
 		if !strings.EqualFold(product.CapabilityID, capabilityID) && !strings.EqualFold(product.Capability, capabilityID) {
 			return nil, nil, fmt.Errorf("plano nao pertence a capability")
 		}
+		if strings.TrimSpace(paymentAsset) != "" && !strings.EqualFold(plan.PaymentAsset, paymentAsset) {
+			return nil, nil, fmt.Errorf("plano nao aceita asset %s", strings.ToUpper(strings.TrimSpace(paymentAsset)))
+		}
+		if paymentNetwork != "" && !strings.EqualFold(plan.Network, paymentNetwork) {
+			return nil, nil, fmt.Errorf("plano nao aceita network %s", paymentNetwork)
+		}
 		return product, plan, nil
 	}
 	args := []any{strings.TrimSpace(capabilityID)}
@@ -440,9 +503,14 @@ func (db *DB) ResolveMarketplaceCapabilityPlan(ctx context.Context, capabilityID
 		args = append(args, strings.ToUpper(strings.TrimSpace(paymentAsset)))
 		assetFilter = fmt.Sprintf(" AND pl.payment_asset = $%d", len(args))
 	}
+	networkFilter := ""
+	if paymentNetwork != "" {
+		args = append(args, paymentNetwork)
+		networkFilter = fmt.Sprintf(" AND UPPER(pl.network) = $%d", len(args))
+	}
 	product, _, plan, err := db.getMarketplacePlanBundleScanner(db.SQL.QueryRowContext(ctx, marketplacePlanBundleSelect()+`
 		WHERE (p.capability_id = $1 OR p.capability = $1)
-		  AND pl.status = 'active' AND p.status = 'active' AND pr.status = 'active'`+assetFilter+`
+		  AND pl.status = 'active' AND p.status = 'active' AND pr.status = 'active'`+assetFilter+networkFilter+`
 		ORDER BY pl.price_amount ASC
 		LIMIT 1`, args...))
 	if err == sql.ErrNoRows {
@@ -813,7 +881,7 @@ func (db *DB) CreateMarketplacePurchase(ctx context.Context, in MarketplacePurch
 		PaymentAsset:    plan.PaymentAsset,
 		PaymentContract: strings.ToLower(strings.TrimSpace(in.PaymentContract)),
 		Network:         plan.Network,
-		ChainID:         56,
+		ChainID:         marketplaceNetworkChainID(plan.Network),
 		GrossAmount:     FormatMicroAmount(gross),
 		ChainFXAmount:   FormatMicroAmount(chainfx),
 		ProviderAmount:  FormatMicroAmount(providerAmount),
@@ -864,6 +932,15 @@ func (db *DB) CreateMarketplacePurchase(ctx context.Context, in MarketplacePurch
 		return nil, nil, nil, err
 	}
 	return p, product, plan, nil
+}
+
+func marketplaceNetworkChainID(network string) int64 {
+	switch strings.ToUpper(strings.TrimSpace(network)) {
+	case "POLYGON", "POL", "MATIC":
+		return 137
+	default:
+		return 56
+	}
 }
 
 func (db *DB) GetMarketplacePurchase(ctx context.Context, id string) (*MarketplacePurchase, error) {
