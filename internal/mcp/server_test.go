@@ -19,6 +19,9 @@ func TestTierLimitSupportsMCPAvailabilityLoad(t *testing.T) {
 	if got := tierLimit("", "mcp_tool_read"); got != 300 {
 		t.Fatalf("expected anonymous MCP read limit 300/min, got %d", got)
 	}
+	if got := tierLimit("", "mcp_ai_expensive"); got != 120 {
+		t.Fatalf("expected anonymous MCP AI fallback limit 120/min, got %d", got)
+	}
 	if got := tierLimit("sk_live_cfx_probe", "mcp_financial"); got != 300 {
 		t.Fatalf("expected live MCP financial limit 300/min, got %d", got)
 	}
