@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestTierLimitSupportsMCPAvailabilityLoad(t *testing.T) {
@@ -207,6 +210,45 @@ func TestMCPAIToolsReturnFallbackWhenProviderUnavailable(t *testing.T) {
 	}
 	if body["source"] != "fallback" {
 		t.Fatalf("expected fallback source, got %#v", body)
+	}
+}
+
+func TestCachedValueCoalescesConcurrentBuilds(t *testing.T) {
+	s := New(nil, nil, nil, nil, nil)
+	var builds int32
+	const callers = 16
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			value, err := s.cachedValue("catalog:test", time.Minute, func() (any, error) {
+				atomic.AddInt32(&builds, 1)
+				time.Sleep(20 * time.Millisecond)
+				return "ready", nil
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			if value != "ready" {
+				errs <- context.Canceled
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("unexpected cachedValue error: %v", err)
+		}
+	}
+	if got := atomic.LoadInt32(&builds); got != 1 {
+		t.Fatalf("expected one coalesced build, got %d", got)
 	}
 }
 
