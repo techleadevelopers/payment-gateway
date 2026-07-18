@@ -27,6 +27,7 @@ type m2mCreateRequest struct {
 	DueDate         string `json:"due_date"`         // optional due date hint
 	IdempotencyKey  string `json:"idempotency_key"`  // caller-generated, immutable
 	AgentWallet     string `json:"agent_wallet"`     // EVM address of paying agent (audit)
+	PaymentNetwork  string `json:"payment_network"`  // "BSC" | "POLYGON"
 }
 
 type m2mCreateResponse struct {
@@ -40,6 +41,7 @@ type m2mCreateResponse struct {
 	FeeBps          int       `json:"fee_bps"`
 	USDTRate        string    `json:"usdt_rate"`
 	PaymentAddress  string    `json:"payment_address"`
+	PaymentNetwork  string    `json:"payment_network"`
 	PaymentLink     string    `json:"payment_link,omitempty"`
 	Barcode         string    `json:"barcode,omitempty"`
 	BeneficiaryName string    `json:"beneficiary_name,omitempty"`
@@ -67,6 +69,7 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 	req.Type = strings.TrimSpace(strings.ToLower(req.Type))
 	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
 	req.AgentWallet = strings.ToLower(strings.TrimSpace(req.AgentWallet))
+	req.PaymentNetwork = normalizeStablecoinNetwork(req.PaymentNetwork)
 	req.PixKey = strings.TrimSpace(req.PixKey)
 	req.PaymentLink = strings.TrimSpace(req.PaymentLink)
 	req.Barcode = strings.TrimSpace(req.Barcode)
@@ -83,6 +86,10 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 	}
 	if !common.IsHexAddress(req.AgentWallet) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "agent_wallet must be a valid EVM address"})
+		return
+	}
+	if req.PaymentNetwork != "BSC" && req.PaymentNetwork != "POLYGON" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payment_network deve ser BSC ou POLYGON"})
 		return
 	}
 
@@ -162,7 +169,7 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 	requestHash := database.CanonicalRequestHash(
 		req.Type, req.AmountBRL, req.PixKey,
 		req.PaymentLink, req.Barcode, req.BeneficiaryName, req.DueDate,
-		req.IdempotencyKey, req.AgentWallet,
+		req.IdempotencyKey, req.AgentWallet, req.PaymentNetwork,
 	)
 
 	paymentAddress, err := s.db.PickAvailableM2MDepositAddress(
@@ -196,6 +203,7 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 		RequiredUSDT:    requiredUSDT,
 		USDTRate:        usdtRate,
 		PaymentAddress:  paymentAddress,
+		PaymentNetwork:  req.PaymentNetwork,
 		RequestHash:     requestHash,
 		ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 	}
@@ -223,12 +231,13 @@ func (s *Server) handleM2MCreateIntent(w http.ResponseWriter, r *http.Request) {
 			Type:    "m2m.intent.created",
 			OrderID: intent.ID,
 			Payload: map[string]any{
-				"intent_id":    intent.ID,
-				"agent_wallet": intent.AgentWallet,
-				"payment_type": string(intent.PaymentType),
-				"amount_brl":   intent.AmountBRL,
-				"fee_bps":      intent.FeeBps,
-				"expires_at":   intent.ExpiresAt,
+				"intent_id":       intent.ID,
+				"agent_wallet":    intent.AgentWallet,
+				"payment_type":    string(intent.PaymentType),
+				"payment_network": intent.PaymentNetwork,
+				"amount_brl":      intent.AmountBRL,
+				"fee_bps":         intent.FeeBps,
+				"expires_at":      intent.ExpiresAt,
 			},
 		})
 	}
@@ -269,7 +278,7 @@ func (s *Server) handleM2MGetIntent(w http.ResponseWriter, r *http.Request) {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 func m2mIntentToResponse(i *database.AgentPaymentIntent, idempotent bool) m2mCreateResponse {
-	nextStep := "deposit RequiredUSDT on-chain to PaymentAddress, then poll GET /agent/v1/pay/{intent_id}"
+	nextStep := fmt.Sprintf("deposit RequiredUSDT USDT on %s to PaymentAddress, then poll GET /agent/v1/pay/{intent_id}", i.PaymentNetwork)
 	if i.Status != "pending_deposit" {
 		nextStep = fmt.Sprintf("intent is %s — no deposit required", i.Status)
 	}
@@ -284,6 +293,7 @@ func m2mIntentToResponse(i *database.AgentPaymentIntent, idempotent bool) m2mCre
 		FeeBps:          i.FeeBps,
 		USDTRate:        fmt.Sprintf("%.4f", i.USDTRate),
 		PaymentAddress:  i.PaymentAddress,
+		PaymentNetwork:  i.PaymentNetwork,
 		PaymentLink:     i.PaymentLink,
 		Barcode:         i.Barcode,
 		BeneficiaryName: i.BeneficiaryName,
@@ -306,6 +316,7 @@ func intentFullView(i *database.AgentPaymentIntent) map[string]any {
 		"fee_bps":         i.FeeBps,
 		"usdt_rate":       fmt.Sprintf("%.4f", i.USDTRate),
 		"payment_address": i.PaymentAddress,
+		"payment_network": i.PaymentNetwork,
 		"expires_at":      i.ExpiresAt,
 		"attempts":        i.Attempts,
 		"created_at":      i.CreatedAt,
