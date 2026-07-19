@@ -46,6 +46,34 @@ describe("Swappy7702PayoutDelegate", function () {
     expect(await token.balanceOf(customer.address)).to.equal(ethers.parseUnits("10", 18));
   });
 
+  it("blocks contract recipients unless explicitly approved as contracts", async function () {
+    const { owner, operator, token, tokenAddress, delegate } = await deployFixture();
+
+    await delegate.initialize(owner.address, operator.address);
+    await delegate.connect(owner).setTokenAllowed(tokenAddress, true);
+    await delegate.connect(owner).setRecipientAllowed(tokenAddress, true);
+
+    await expect(
+      delegate.connect(operator).payout(ethers.id("delegate-contract-blocked"), tokenAddress, tokenAddress, ethers.parseUnits("1", 18))
+    ).to.be.revertedWithCustomError(delegate, "ContractRecipientNotAllowed");
+
+    await expect(delegate.connect(owner).setContractRecipientAllowed(tokenAddress, true))
+      .to.emit(delegate, "ContractRecipientAllowed")
+      .withArgs(tokenAddress, true);
+
+    await delegate.connect(operator).payout(ethers.id("delegate-contract-approved"), tokenAddress, tokenAddress, ethers.parseUnits("1", 18));
+    expect(await token.balanceOf(tokenAddress)).to.equal(ethers.parseUnits("1", 18));
+  });
+
+  it("rejects adding an EOA to the contract-recipient allowlist", async function () {
+    const { owner, customer, delegate } = await deployFixture();
+
+    await delegate.initialize(owner.address, owner.address);
+
+    await expect(delegate.connect(owner).setContractRecipientAllowed(customer.address, true))
+      .to.be.revertedWithCustomError(delegate, "ContractRecipientNotAllowed");
+  });
+
   it("blocks unauthorized payout and duplicate operation", async function () {
     const { owner, operator, customer, attacker, tokenAddress, delegate } = await deployFixture();
 
@@ -62,5 +90,17 @@ describe("Swappy7702PayoutDelegate", function () {
     await expect(
       delegate.connect(operator).payout(operationId, tokenAddress, customer.address, ethers.parseUnits("1", 18))
     ).to.be.revertedWithCustomError(delegate, "OperationAlreadyExecuted");
+  });
+
+  it("rejects empty operation id explicitly", async function () {
+    const { owner, operator, customer, tokenAddress, delegate } = await deployFixture();
+
+    await delegate.initialize(owner.address, operator.address);
+    await delegate.connect(owner).setTokenAllowed(tokenAddress, true);
+    await delegate.connect(owner).setRecipientAllowed(customer.address, true);
+
+    await expect(
+      delegate.connect(operator).payout(ethers.ZeroHash, tokenAddress, customer.address, ethers.parseUnits("1", 18))
+    ).to.be.revertedWithCustomError(delegate, "InvalidOperationId");
   });
 });
