@@ -43,6 +43,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if err := db.SeedNFCTerminals(ctx, cfg.NFCTerminals); err != nil {
+		log.Fatalf("Erro fatal ao preparar terminais NFC: %v", err)
+	}
+
 	mailer := email.NewService(cfg)
 
 	// 2. RPC pool (BSC). Nil-safe — workers self-disable gracefully if absent.
