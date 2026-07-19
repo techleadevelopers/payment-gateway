@@ -13,6 +13,14 @@ import (
 	"payment-gateway/internal/models"
 )
 
+type mobileWalletKey struct {
+	UserID              string
+	WalletAddress       string
+	EncryptedPrivateKey string
+	CustodyMode         string
+	Network             string
+}
+
 // mobileDB wraps the existing DB to add mobile-specific queries.
 // Uses DB.SQL directly so we don't touch the existing database package.
 type mobileQueries struct {
@@ -147,6 +155,53 @@ func (q *mobileQueries) AttachSystemWallet(ctx context.Context, userID, walletAd
 	return q.GetUserByID(ctx, userID)
 }
 
+func (q *mobileQueries) UpsertCustodialWalletKey(ctx context.Context, userID, walletAddress, encryptedPrivateKey string) error {
+	if err := q.ensureMobileWalletKeySchema(ctx); err != nil {
+		return err
+	}
+	_, err := q.sql.ExecContext(ctx, `
+                INSERT INTO mobile_wallet_keys (user_id, wallet_address, encrypted_private_key)
+                VALUES ($1::uuid, $2, $3)
+                ON CONFLICT (user_id) DO UPDATE SET
+                  wallet_address=EXCLUDED.wallet_address,
+                  encrypted_private_key=EXCLUDED.encrypted_private_key,
+                  custody_mode='system_custody',
+                  network='EVM',
+                  updated_at=NOW()`,
+		userID, walletAddress, encryptedPrivateKey)
+	return err
+}
+
+func (q *mobileQueries) GetCustodialWalletKey(ctx context.Context, userID, walletAddress string) (*mobileWalletKey, error) {
+	if err := q.ensureMobileWalletKeySchema(ctx); err != nil {
+		return nil, err
+	}
+	k := &mobileWalletKey{}
+	err := q.sql.QueryRowContext(ctx, `
+                SELECT user_id::text, wallet_address, encrypted_private_key, custody_mode, network
+                  FROM mobile_wallet_keys
+                 WHERE user_id=$1::uuid
+                   AND lower(wallet_address)=lower($2)`,
+		userID, walletAddress).Scan(&k.UserID, &k.WalletAddress, &k.EncryptedPrivateKey, &k.CustodyMode, &k.Network)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return k, err
+}
+
+func (q *mobileQueries) RecordMobileWalletTransfer(ctx context.Context, userID, from, to, token, asset, network, amount, amountRaw, txHash, idempotencyKey string) error {
+	if err := q.ensureMobileWalletTransferSchema(ctx); err != nil {
+		return err
+	}
+	_, err := q.sql.ExecContext(ctx, `
+                INSERT INTO mobile_wallet_transfers
+                  (user_id, from_address, to_address, token_contract, asset, network, amount, amount_raw, tx_hash, idempotency_key)
+                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10,''))
+                ON CONFLICT (tx_hash) DO NOTHING`,
+		userID, from, to, token, asset, network, amount, amountRaw, txHash, idempotencyKey)
+	return err
+}
+
 func (q *mobileQueries) ensureMobileWalletKeySchema(ctx context.Context) error {
 	_, err := q.sql.ExecContext(ctx, `
                 CREATE TABLE IF NOT EXISTS mobile_wallet_keys (
@@ -164,6 +219,32 @@ func (q *mobileQueries) ensureMobileWalletKeySchema(ctx context.Context) error {
 	_, err = q.sql.ExecContext(ctx, `
                 CREATE INDEX IF NOT EXISTS idx_mobile_wallet_keys_address
                   ON mobile_wallet_keys (lower(wallet_address))`)
+	return err
+}
+
+func (q *mobileQueries) ensureMobileWalletTransferSchema(ctx context.Context) error {
+	_, err := q.sql.ExecContext(ctx, `
+                CREATE TABLE IF NOT EXISTS mobile_wallet_transfers (
+                  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id         UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  from_address    TEXT        NOT NULL,
+                  to_address      TEXT        NOT NULL,
+                  token_contract  TEXT        NOT NULL,
+                  asset           TEXT        NOT NULL,
+                  network         TEXT        NOT NULL,
+                  amount          TEXT        NOT NULL,
+                  amount_raw      TEXT        NOT NULL,
+                  tx_hash         TEXT        NOT NULL UNIQUE,
+                  idempotency_key TEXT,
+                  status          TEXT        NOT NULL DEFAULT 'submitted',
+                  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                )`)
+	if err != nil {
+		return err
+	}
+	_, err = q.sql.ExecContext(ctx, `
+                CREATE INDEX IF NOT EXISTS idx_mobile_wallet_transfers_user_created
+                  ON mobile_wallet_transfers (user_id, created_at DESC)`)
 	return err
 }
 
