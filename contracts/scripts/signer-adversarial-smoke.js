@@ -11,6 +11,14 @@ function arg(name, fallback = "") {
   return found ? found.slice(prefix.length) : fallback;
 }
 
+function intArg(name, fallback = 0) {
+  const envName = name.replaceAll("-", "_").toUpperCase();
+  const npmName = `npm_config_${name.replaceAll("-", "_")}`;
+  const raw = arg(name, process.env[envName] || process.env[npmName] || `${fallback}`);
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function hmacRaw(secret, ts, nonce, body) {
   return crypto.createHmac("sha256", secret).update(`${ts}.${nonce}.${body}`).digest("hex");
 }
@@ -178,12 +186,66 @@ async function primedParallelNonceReplayCase(baseURL, secret) {
   };
 }
 
+async function parallelIdempotencyReplayCase(baseURL, secret, count = 20) {
+  const idempotencyKey = `parallel-idem-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  const body = transferBody({ amount: "0", idempotencyKey });
+  const attempts = await Promise.all(
+    Array.from({ length: count }, () =>
+      request(baseURL, "/hd/transfer", {
+        method: "POST",
+        body,
+        headers: signedHeaders(secret, body),
+      }),
+    ),
+  );
+  const conflicts = attempts.filter((item) => item.status === 409).length;
+  const successful = attempts.filter((item) => item.status >= 200 && item.status < 300).length;
+  return {
+    name: `parallel same idempotency key is fail-closed (${count} requests)`,
+    pass: successful === 0 && conflicts >= 1,
+    status: `${conflicts}/${count} conflicts, ${successful}/${count} success`,
+    expected: ">=1 conflict, 0 success",
+    ms: Math.max(...attempts.map((item) => item.ms)),
+    detail: attempts.map((item) => item.status).join(","),
+  };
+}
+
+async function invalidHMACFloodCase(baseURL, count) {
+  const body = transferBody({ amount: "0", idempotencyKey: `flood-${Date.now()}` });
+  const started = Date.now();
+  const attempts = await Promise.all(
+    Array.from({ length: count }, (_, index) =>
+      request(baseURL, "/hd/transfer", {
+        method: "POST",
+        body,
+        headers: {
+          "content-type": "application/json",
+          "x-ts": `${Math.floor(Date.now() / 1000)}`,
+          "x-nonce": `flood-${index}-${crypto.randomBytes(8).toString("hex")}`,
+          "x-signer-hmac": crypto.randomBytes(32).toString("hex"),
+        },
+      }),
+    ),
+  );
+  const rejected = attempts.filter((item) => item.status === 401 || item.status === 429).length;
+  const successful = attempts.filter((item) => item.status >= 200 && item.status < 300).length;
+  return {
+    name: `invalid HMAC flood is rejected (${count} requests)`,
+    pass: rejected === count && successful === 0,
+    status: `${rejected}/${count} rejected`,
+    expected: `${count}/${count} rejected`,
+    ms: Date.now() - started,
+    detail: attempts.map((item) => item.status).join(","),
+  };
+}
+
 async function main() {
   const baseURL = (arg("url", process.env.SIGNER_URL) || DEFAULT_SIGNER_URL).replace(/\/+$/, "");
   const secret = arg("secret", process.env.SIGNER_HMAC_SECRET || process.env.HMAC_SECRET || "");
   const token = arg("token", process.env.BSC_USDT_CONTRACT || DEFAULT_USDT);
   const recipient = arg("to", DEFAULT_RECIPIENT);
   const network = arg("network", "BSC");
+  const floodInvalidHMAC = intArg("flood-invalid-hmac", 0);
 
   const results = [];
   results.push(expectStatus("healthz is public", await request(baseURL, "/healthz"), [200]));
@@ -232,6 +294,19 @@ async function main() {
       ),
     );
 
+    const futureTs = `${Math.floor(Date.now() / 1000) + 3600}`;
+    results.push(
+      expectStatus(
+        "protected transfer rejects future signed request",
+        await request(baseURL, "/hd/transfer", {
+          method: "POST",
+          body,
+          headers: signedHeaders(secret, body, nonce("future"), futureTs),
+        }),
+        [401],
+      ),
+    );
+
     const signedOriginal = signedHeaders(secret, body, nonce("tamper"));
     const tamperedBody = JSON.stringify({ ...bodyObject, to: "0x1111111111111111111111111111111111111111" });
     results.push(
@@ -269,8 +344,15 @@ async function main() {
     results.push(await signedTransferCase(baseURL, secret, "same idempotency key replay with new nonce is deduped or blocked", { amount: "0", idempotencyKey: idem }, [200, 400, 409, 502]));
     results.push(await parallelNonceReplayCase(baseURL, secret));
     results.push(await primedParallelNonceReplayCase(baseURL, secret));
+    results.push(await parallelIdempotencyReplayCase(baseURL, secret, intArg("parallel-idempotency", 20)));
   } else {
     console.log("SKIP signed adversarial cases: set SIGNER_HMAC_SECRET or pass --secret=...");
+  }
+
+  if (floodInvalidHMAC > 0) {
+    results.push(await invalidHMACFloodCase(baseURL, floodInvalidHMAC));
+  } else {
+    console.log("SKIP invalid HMAC flood: pass --flood-invalid-hmac=100 to enable.");
   }
 
   for (const result of results) printResult(result);
