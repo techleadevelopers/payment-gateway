@@ -2624,15 +2624,20 @@ CREATE TABLE IF NOT EXISTS nfc_authorizations (
   amount_brl_minor BIGINT NOT NULL CHECK (amount_brl_minor > 0),
   usdt_rate NUMERIC(20,8) NOT NULL,
   required_usdt_micro BIGINT NOT NULL CHECK (required_usdt_micro > 0),
-  status TEXT NOT NULL CHECK (status IN ('approved','declined','requires_funding','reversed','captured')),
+  status TEXT NOT NULL CHECK (status IN ('approved','declined','requires_funding','reversed','captured','expired')),
   response_code TEXT NOT NULL,
   reason TEXT,
   hold_expires_at TIMESTAMPTZ,
   reversed_at TIMESTAMPTZ,
   captured_at TIMESTAMPTZ,
+  expired_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE nfc_authorizations DROP CONSTRAINT IF EXISTS nfc_authorizations_status_check;
+ALTER TABLE nfc_authorizations ADD CONSTRAINT nfc_authorizations_status_check
+  CHECK (status IN ('approved','declined','requires_funding','reversed','captured','expired'));
+ALTER TABLE nfc_authorizations ADD COLUMN IF NOT EXISTS expired_at TIMESTAMPTZ;
 ALTER TABLE nfc_authorizations DROP CONSTRAINT IF EXISTS nfc_authorizations_idempotency_key_key;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_nfc_auth_terminal_idempotency ON nfc_authorizations(terminal_id, idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_nfc_auth_wallet_created ON nfc_authorizations(LOWER(wallet_address), created_at DESC);
