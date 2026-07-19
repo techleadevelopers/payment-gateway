@@ -27,6 +27,7 @@ type PayoutWorker struct {
 	cfg    *config.Config
 	client *http.Client
 	dlq    *DeadLetterQueue
+	sem    chan struct{}
 }
 
 func NewPayoutWorker(bus *EventBus, db *database.DB, cfg *config.Config) *PayoutWorker {
@@ -36,6 +37,7 @@ func NewPayoutWorker(bus *EventBus, db *database.DB, cfg *config.Config) *Payout
 		cfg:    cfg,
 		client: httpclient.Default(),
 		dlq:    NewPersistentDLQ(db, 1000),
+		sem:    make(chan struct{}, 8),
 	}
 }
 
@@ -53,8 +55,14 @@ func (pw *PayoutWorker) Start(ctx context.Context) {
 			if !ok {
 				return
 			}
+			select {
+			case pw.sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			go func(e Event) {
 				defer func() {
+					<-pw.sem
 					if r := recover(); r != nil {
 						slog.Error("PayoutWorker: panic em processPayout", "recover", r)
 					}
