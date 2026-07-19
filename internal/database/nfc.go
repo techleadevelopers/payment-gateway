@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -19,6 +20,7 @@ const (
 	NFCStatusRequiresFunding = "requires_funding"
 	NFCStatusCaptured        = "captured"
 	NFCStatusReversed        = "reversed"
+	NFCStatusExpired         = "expired"
 )
 
 type NFCTokenInput struct {
@@ -173,14 +175,15 @@ func (db *DB) ValidateNFCTerminal(ctx context.Context, merchantID, terminalID, a
 		return nil, nil
 	}
 	const q = `
-SELECT m.id, t.id, m.status, t.status, t.max_amount_brl_minor, t.daily_limit_brl_minor,
+SELECT m.id, t.id, t.api_key_hash, m.status, t.status, t.max_amount_brl_minor, t.daily_limit_brl_minor,
        t.risk_policy_version, COALESCE(m.settlement_pix_key,''), COALESCE(m.settlement_document,'')
 FROM nfc_terminals t
 JOIN nfc_merchants m ON m.id = t.merchant_id
-WHERE t.merchant_id = $1 AND t.id = $2 AND t.api_key_hash = $3`
+WHERE t.merchant_id = $1 AND t.id = $2`
 	var p NFCTerminalPolicy
-	err := db.SQL.QueryRowContext(ctx, q, merchantID, terminalID, nfcAPIKeyHash(apiKey)).Scan(
-		&p.MerchantID, &p.TerminalID, &p.MerchantStatus, &p.TerminalStatus,
+	var storedHash string
+	err := db.SQL.QueryRowContext(ctx, q, merchantID, terminalID).Scan(
+		&p.MerchantID, &p.TerminalID, &storedHash, &p.MerchantStatus, &p.TerminalStatus,
 		&p.MaxAmountBRLMinor, &p.DailyLimitBRLMinor, &p.RiskPolicyVersion,
 		&p.SettlementPixKey, &p.SettlementDocument,
 	)
@@ -189,6 +192,10 @@ WHERE t.merchant_id = $1 AND t.id = $2 AND t.api_key_hash = $3`
 	}
 	if err != nil {
 		return nil, err
+	}
+	gotHash := nfcAPIKeyHash(apiKey)
+	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(gotHash)) != 1 {
+		return nil, nil
 	}
 	return &p, nil
 }
@@ -352,6 +359,73 @@ func (db *DB) CaptureNFCAuthorization(ctx context.Context, id string) (*NFCAutho
 
 func (db *DB) ReverseNFCAuthorization(ctx context.Context, id string) (*NFCAuthorization, error) {
 	return db.finishNFCAuthorization(ctx, id, NFCStatusReversed)
+}
+
+func (db *DB) ExpireNFCHolds(ctx context.Context, limit int) ([]*NFCAuthorization, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	tx, err := db.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("nfc: begin expire tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx, `
+SELECT id, idempotency_key, token_id, wallet_address, network, merchant_id, terminal_id, COALESCE(external_ref,''),
+       amount_brl_minor, usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
+       hold_expires_at, created_at, updated_at
+FROM nfc_authorizations
+WHERE status = 'approved'
+  AND hold_expires_at IS NOT NULL
+  AND hold_expires_at <= NOW()
+ORDER BY hold_expires_at
+FOR UPDATE SKIP LOCKED
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("nfc: select expired holds: %w", err)
+	}
+	defer rows.Close()
+
+	var expired []*NFCAuthorization
+	for rows.Next() {
+		auth, err := scanNFCAuthorization(rows)
+		if err != nil {
+			return nil, err
+		}
+		res, err := tx.ExecContext(ctx, `
+UPDATE nfc_wallet_balances
+SET available_usdt_micro = available_usdt_micro + $3,
+    locked_usdt_micro = locked_usdt_micro - $3,
+    updated_at = NOW()
+WHERE wallet_address = $1 AND network = $2 AND asset = 'USDT'
+  AND locked_usdt_micro >= $3`,
+			strings.ToLower(auth.Wallet), normalizeNFCNetwork(auth.Network), auth.RequiredUSDTMic)
+		if err != nil {
+			return nil, fmt.Errorf("nfc: expire balance %s: %w", auth.ID, err)
+		}
+		if affected, err := res.RowsAffected(); err != nil {
+			return nil, err
+		} else if affected != 1 {
+			return nil, fmt.Errorf("nfc: authorization %s has no matching locked balance", auth.ID)
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE nfc_authorizations
+SET status='expired', reason='hold_expired', expired_at=NOW(), updated_at=NOW()
+WHERE id=$1 AND status='approved'`, auth.ID); err != nil {
+			return nil, fmt.Errorf("nfc: expire authorization %s: %w", auth.ID, err)
+		}
+		auth.Status = NFCStatusExpired
+		auth.Reason = "hold_expired"
+		expired = append(expired, auth)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("nfc: commit expire holds: %w", err)
+	}
+	return expired, nil
 }
 
 func (db *DB) finishNFCAuthorization(ctx context.Context, id, finalStatus string) (*NFCAuthorization, error) {
