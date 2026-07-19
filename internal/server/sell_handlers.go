@@ -9,6 +9,7 @@ import (
 
 	"payment-gateway/internal/database"
 	"payment-gateway/internal/models"
+	"payment-gateway/internal/transactions"
 	"payment-gateway/internal/workers"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -105,12 +106,40 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.AddEvent(ctx, order.ID, "order.meta", map[string]any{"requestId": requestID(r), "ip": clientIP(r), "userAgent": r.UserAgent()})
 	s.workers.Bus.Publish(workers.Event{Type: "order.created", OrderID: order.ID, Payload: map[string]any{"requestId": requestID(r), "amountBRL": totalBRL}})
 	go s.email.NotifyOps("ChainFx: nova ordem criada", fmt.Sprintf("Ordem %s criada para %.2f BRL. EndereÃ§o: %s", order.ID, totalBRL, depositAddress))
+	contract := transactions.Build(transactions.BuildInput{
+		Side:               transactions.SideSell,
+		OrderID:            order.ID,
+		SourceAsset:        asset,
+		DestinationAsset:   "BRL",
+		SourceNetwork:      network,
+		DestinationNetwork: "PIX",
+		SourceChainID:      transactions.ChainID(network),
+		SourceAmount:       amountUSDT,
+		DestinationAmount:  payout,
+		ExchangeRate:       rate,
+		FeeAmount:          fee,
+		FeeAsset:           "BRL",
+		WalletAddress:      depositAddress,
+		TreasuryAddress:    s.cfg.TreasuryHot,
+		PaymentMethod:      "pix",
+		PSPProvider:        "efi",
+		Status:             transactions.CanonicalSellStatus(string(order.Status)),
+		Request:            r,
+		Metadata: map[string]any{
+			"surface":           "api",
+			"spreadBRL":         spread,
+			"rateLockExpiresAt": order.RateLockExpiresAt,
+		},
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": order.ID, "orderId": order.ID, "accessToken": order.AccessToken, "status": order.Status, "address": depositAddress, "depositAddress": depositAddress,
 		"amountBRL": totalBRL, "subtotalBRL": payout, "amountUSDT": amountUSDT, "btcAmount": amountUSDT, "feeBRL": fee, "spreadBRL": spread, "totalBRL": totalBRL, "payoutBRL": payout,
 		"rate": rate, "marketRate": roundRate(marketRate), "network": network, "sellPolicy": s.sellPolicy(marketRate, rate),
-		"statusUrl": fmt.Sprintf("/api/order/%s?accessToken=%s", order.ID, order.AccessToken),
-		"streamUrl": fmt.Sprintf("/api/order/%s/stream?accessToken=%s", order.ID, order.AccessToken),
+		"tradeIntent":        contract.Trade,
+		"settlementContract": contract.Settlement,
+		"ledgerContract":     contract.Ledger,
+		"statusUrl":          fmt.Sprintf("/api/order/%s?accessToken=%s", order.ID, order.AccessToken),
+		"streamUrl":          fmt.Sprintf("/api/order/%s/stream?accessToken=%s", order.ID, order.AccessToken),
 	})
 }
 
