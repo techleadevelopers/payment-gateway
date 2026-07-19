@@ -52,14 +52,14 @@ func (s *Server) adminWalletsSnapshot() map[string]any {
 	}
 	add(adminWalletRow{
 		ID:            "treasury_vault_bsc",
-		Role:          "treasury_vault",
+		Role:          "treasury_vault_optional",
 		Address:       s.cfg.BscTreasuryContract,
 		Network:       "BSC",
 		Asset:         "USDT",
 		TokenContract: s.cfg.BscUsdtContract,
 		ConfigKey:     "BSC_TREASURY_CONTRACT",
-		CanPayout:     s.cfg.SignerUrl != "" && s.cfg.SignerHmacSecret != "",
-		Notes:         "BSC Solidity vault used for institutional BUY settlement.",
+		CanPayout:     false,
+		Notes:         "Optional Solidity vault. Core buy/sell runs without this contract.",
 	})
 	add(adminWalletRow{
 		ID:            "treasury_hot_bsc",
@@ -96,14 +96,14 @@ func (s *Server) adminWalletsSnapshot() map[string]any {
 	})
 	add(adminWalletRow{
 		ID:            "treasury_vault_polygon",
-		Role:          "treasury_vault",
+		Role:          "treasury_vault_optional",
 		Address:       s.cfg.PolygonTreasuryContract,
 		Network:       "POLYGON",
 		Asset:         "USDT",
 		TokenContract: s.cfg.PolygonUsdtContract,
 		ConfigKey:     "POLYGON_TREASURY_CONTRACT",
 		CanPayout:     false,
-		Notes:         "Polygon vault is configured separately from BSC and should be rolled out after BSC.",
+		Notes:         "Optional Polygon vault. Leave empty until a later on-chain policy phase.",
 	})
 	add(adminWalletRow{
 		ID:            "polygon_usdt_contract",
