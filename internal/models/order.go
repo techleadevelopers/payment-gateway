@@ -12,6 +12,7 @@ const (
 	StatusAguardandoValidacao OrderStatus = "aguardando_validacao" // Caso fuja da tolerância de %
 	StatusExpirada            OrderStatus = "expirada"
 	StatusPago                OrderStatus = "pago"
+	StatusAguardandoPixManual OrderStatus = "aguardando_pix_manual"
 	StatusProcessandoPayout   OrderStatus = "processando_payout"
 	StatusIncidenteValidacao  OrderStatus = "incidente_validacao"
 	StatusConcluida           OrderStatus = "concluida"
@@ -24,6 +25,7 @@ var ValidStatuses = map[OrderStatus]bool{
 	StatusAguardandoValidacao: true,
 	StatusExpirada:            true,
 	StatusPago:                true,
+	StatusAguardandoPixManual: true,
 	StatusProcessandoPayout:   true,
 	StatusIncidenteValidacao:  true,
 	StatusConcluida:           true,
@@ -51,7 +53,8 @@ func (s OrderStatus) CanTransition(to OrderStatus) bool {
 	transitions := map[OrderStatus][]OrderStatus{
 		StatusAguardandoDeposito:  {StatusAguardandoValidacao, StatusExpirada, StatusErro},
 		StatusAguardandoValidacao: {StatusPago, StatusExpirada, StatusErro, StatusIncidenteValidacao},
-		StatusPago:                {StatusProcessandoPayout, StatusErro, StatusIncidenteValidacao},
+		StatusPago:                {StatusAguardandoPixManual, StatusProcessandoPayout, StatusErro, StatusIncidenteValidacao},
+		StatusAguardandoPixManual: {StatusConcluida, StatusErro, StatusIncidenteValidacao},
 		StatusProcessandoPayout:   {StatusConcluida, StatusErro, StatusIncidenteValidacao},
 		StatusIncidenteValidacao:  {},
 		StatusConcluida:           {}, // Terminal
