@@ -411,7 +411,12 @@ NFC_TOKEN_SECRET=use-um-segredo-forte
 NFC_TOKEN_TTL_SEC=120
 NFC_HOLD_TTL_SEC=900
 NFC_MAX_AMOUNT_BRL=500
+NFC_TERMINALS=merchant_demo:terminal_01:chave-forte-do-terminal:Demo Merchant
 ```
+
+`NFC_TERMINALS` e opcional e serve para bootstrap operacional. O formato e
+`merchant_id:terminal_id:terminal_api_key[:merchant_display_name]`. A chave aberta
+fica somente no ambiente; o banco guarda hash SHA-256.
 
 Latencia local medida para `IssueToken + VerifyToken` em `internal/nfc`:
 
