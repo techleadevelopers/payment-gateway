@@ -72,7 +72,7 @@ func loadCloudinaryConfig() (*cloudinaryConfig, error) {
 
 func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request) {
 	uid := userIDFromCtx(r)
-	upload, err := uploadMobileMultipartMedia(w, r, uid, "avatar")
+	upload, _, err := uploadMobileMultipartMedia(w, r, uid, "avatar")
 	if err != nil {
 		writeUploadError(w, err)
 		return
@@ -88,46 +88,50 @@ func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := db.GetUserByID(r.Context(), uid)
+	var safeUser any
+	if user != nil {
+		safeUser = s.sanitizeUser(user)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"avatar_url": upload.SecureURL,
 		"upload":     upload,
-		"user":       s.sanitizeUser(user),
+		"user":       safeUser,
 	})
 }
 
 func (s *Server) handleUploadKYCMedia(w http.ResponseWriter, r *http.Request) {
 	uid := userIDFromCtx(r)
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
-	upload, err := uploadMobileMultipartMedia(w, r, uid, kind)
+	upload, normalizedKind, err := uploadMobileMultipartMedia(w, r, uid, kind)
 	if err != nil {
 		writeUploadError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"kind":   normalizeUploadKind(kind),
+		"kind":   normalizedKind,
 		"url":    upload.SecureURL,
 		"upload": upload,
 	})
 }
 
-func uploadMobileMultipartMedia(w http.ResponseWriter, r *http.Request, userID, kind string) (*cloudinaryUploadResult, error) {
+func uploadMobileMultipartMedia(w http.ResponseWriter, r *http.Request, userID, kind string) (*cloudinaryUploadResult, string, error) {
 	maxBytes := int64(maxMobileVideoUploadBytes)
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	if err := r.ParseMultipartForm(maxBytes); err != nil {
-		return nil, uploadClientError("arquivo invalido ou acima do limite")
+		return nil, "", uploadClientError("arquivo invalido ou acima do limite")
 	}
 	if kind == "" {
 		kind = strings.TrimSpace(r.FormValue("kind"))
 	}
 	kind = normalizeUploadKind(kind)
 	if kind == "" {
-		return nil, uploadClientError("tipo de upload invalido")
+		return nil, "", uploadClientError("tipo de upload invalido")
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		return nil, uploadClientError("campo file e obrigatorio")
+		return nil, "", uploadClientError("campo file e obrigatorio")
 	}
 	defer file.Close()
 
@@ -136,12 +140,12 @@ func uploadMobileMultipartMedia(w http.ResponseWriter, r *http.Request, userID, 
 		allowedBytes = maxMobileVideoUploadBytes
 	}
 	if header.Size > allowedBytes {
-		return nil, uploadClientError("arquivo acima do limite permitido")
+		return nil, "", uploadClientError("arquivo acima do limite permitido")
 	}
 
 	cfg, err := loadCloudinaryConfig()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	folder := fmt.Sprintf("chainfx/mobile/users/%s/avatar", userID)
@@ -149,7 +153,8 @@ func uploadMobileMultipartMedia(w http.ResponseWriter, r *http.Request, userID, 
 		folder = fmt.Sprintf("chainfx/mobile/users/%s/kyc/%s", userID, kind)
 	}
 	publicID := fmt.Sprintf("%s_%d", kind, time.Now().UnixNano())
-	return uploadToCloudinary(r.Context(), cfg, file, header, folder, publicID)
+	upload, err := uploadToCloudinary(r.Context(), cfg, file, header, folder, publicID)
+	return upload, kind, err
 }
 
 func uploadToCloudinary(ctx context.Context, cfg *cloudinaryConfig, file multipart.File, header *multipart.FileHeader, folder, publicID string) (*cloudinaryUploadResult, error) {
