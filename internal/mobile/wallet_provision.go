@@ -14,7 +14,7 @@ import (
 )
 
 const ownerMobileEmail = "paulo@chainfx.com"
-const ownerMobileWalletAddress = "0x622E47153Ec6979B363aD682148Ede599df54352"
+const defaultOwnerMobileWalletAddress = "0xb6B00781a81ee10E77f9417d24531FB2529955aA"
 
 func (s *Server) ensureUserWallet(ctx context.Context, user *models.User) (*models.User, error) {
 	if user == nil {
@@ -61,7 +61,14 @@ func (s *Server) ensureUserWallet(ctx context.Context, user *models.User) (*mode
 }
 
 func (s *Server) ensureOwnerMobileWallet(ctx context.Context, user *models.User) (*models.User, error) {
-	checksummed := common.HexToAddress(ownerMobileWalletAddress).Hex()
+	ownerAddress := strings.TrimSpace(envOr("OWNER_MOBILE_WALLET_ADDRESS", defaultOwnerMobileWalletAddress))
+	if !common.IsHexAddress(ownerAddress) {
+		return nil, fmt.Errorf("OWNER_MOBILE_WALLET_ADDRESS invalido")
+	}
+	checksummed := common.HexToAddress(ownerAddress).Hex()
+	if err := s.ensureOwnerMobileWalletKey(ctx, user.ID, checksummed); err != nil {
+		return nil, err
+	}
 	if user.WalletAddress != nil && strings.EqualFold(strings.TrimSpace(*user.WalletAddress), checksummed) {
 		return user, nil
 	}
@@ -73,6 +80,34 @@ func (s *Server) ensureOwnerMobileWallet(ctx context.Context, user *models.User)
 		return nil, err
 	}
 	return mobileDB(s.db).GetUserByID(ctx, user.ID)
+}
+
+func (s *Server) ensureOwnerMobileWalletKey(ctx context.Context, userID, expectedAddress string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	privateKeyHex := strings.TrimSpace(envOr("OWNER_MOBILE_WALLET_PRIVATE_KEY", ""))
+	if privateKeyHex == "" {
+		return nil
+	}
+	key, err := crypto.HexToECDSA(strings.TrimPrefix(privateKeyHex, "0x"))
+	if err != nil {
+		return fmt.Errorf("OWNER_MOBILE_WALLET_PRIVATE_KEY invalida: %w", err)
+	}
+	address := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	if !strings.EqualFold(address, expectedAddress) {
+		return fmt.Errorf("OWNER_MOBILE_WALLET_PRIVATE_KEY nao corresponde a OWNER_MOBILE_WALLET_ADDRESS")
+	}
+	secret := s.mobileWalletEncryptionSecret()
+	codec, err := privacy.New(secret)
+	if err != nil {
+		return err
+	}
+	encryptedKey, err := codec.Encrypt("0x" + hex.EncodeToString(crypto.FromECDSA(key)))
+	if err != nil {
+		return err
+	}
+	return mobileDB(s.db).UpsertCustodialWalletKey(ctx, userID, expectedAddress, encryptedKey)
 }
 
 func (s *Server) mobileWalletEncryptionSecret() string {
