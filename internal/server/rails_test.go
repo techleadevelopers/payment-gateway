@@ -221,6 +221,62 @@ func TestProductionRejectsAPIKeyInQueryString(t *testing.T) {
 	}
 }
 
+func TestSensitiveProbePathsAreBlockedBeforeFallback(t *testing.T) {
+	s := &Server{cfg: &config.Config{Environment: "production"}}
+	for _, path := range []string{
+		"/.env",
+		"/.git/config",
+		"/secrets/efi-production.p12",
+		"/debug/pprof/",
+		"/actuator/env",
+		"/phpinfo.php",
+		"/config.json",
+		"/docs/..%2f..%2f.env",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		withRequestID(s.withPublicSurfaceGuards(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("handler should not be reached for %s", path)
+		}))).ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected %s to return 404, got %d", path, rec.Code)
+		}
+	}
+}
+
+func TestProductionSecurityHeaders(t *testing.T) {
+	s := &Server{cfg: &config.Config{Environment: "production"}}
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+
+	securityHeaders(s.cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})).ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000; includeSubDomains" {
+		t.Fatalf("expected HSTS header, got %q", got)
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") {
+		t.Fatalf("expected API CSP header, got %q", got)
+	}
+}
+
+func TestHTMLRoutesDoNotReceiveStrictAPICSP(t *testing.T) {
+	s := &Server{cfg: &config.Config{Environment: "production"}}
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+
+	securityHeaders(s.cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Content-Security-Policy"); got != "" {
+		t.Fatalf("expected no strict API CSP on HTML route, got %q", got)
+	}
+}
+
 func TestDevelopmentAllowsAPIKeyInQueryStringForCompatibility(t *testing.T) {
 	s := &Server{cfg: &config.Config{Environment: "development"}}
 	req := httptest.NewRequest(http.MethodGet, "/developers/dashboard?apiKey=sk_test_local", nil)
