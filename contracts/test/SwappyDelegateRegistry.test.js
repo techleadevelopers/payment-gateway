@@ -26,4 +26,15 @@ describe("SwappyDelegateRegistry", function () {
       .to.emit(registry, "DelegateRevoked");
     expect(await registry.isTrusted(delegateAddress, codeHash)).to.equal(false);
   });
+
+  it("rejects trusting an address without contract code", async function () {
+    const [owner, eoa] = await ethers.getSigners();
+
+    const Registry = await ethers.getContractFactory("SwappyDelegateRegistry");
+    const registry = await Registry.deploy(owner.address);
+    await registry.waitForDeployment();
+
+    await expect(registry.trustDelegate(eoa.address, ethers.ZeroHash, "eoa"))
+      .to.be.revertedWithCustomError(registry, "EmptyCode");
+  });
 });
