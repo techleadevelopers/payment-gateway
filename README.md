@@ -187,7 +187,7 @@ CLOUDINARY_URL
 CLOUDINARY_API_KEY
 CLOUDINARY_API_SECRET
 FACE_BIOMETRY_SECRET  # preferencial; fallback LGPD_SECRET/WEBHOOK_SECRET/MOBILE_JWT_SECRET
-KYC_ENGINE_PROVIDER_URL      # opcional; ativa provider OCR/facial/liveness real
+KYC_ENGINE_PROVIDER_URL      # URL base do provider ou URL completa /analyze
 KYC_ENGINE_PROVIDER_API_KEY  # bearer token do provider
 ```
 
@@ -202,11 +202,13 @@ Dados sensíveis:
 Modo produção real self-hosted:
 
 - Configure `KYC_ENGINE_PROVIDER_URL` para apontar para um serviço privado nosso de OCR/facial/liveness.
+- A URL pode ser `https://...` ou `https://.../analyze`; o gateway normaliza para `/analyze`.
 - O backend envia o payload KYC para esse provider e espera scores, decisão, embedding e detalhes.
 - Se `KYC_ENGINE_PROVIDER_URL` não estiver definido, a engine usa modo determinístico de desenvolvimento.
 - `chainfx-kyc-provider/` contém o serviço local isolado: HTTP, mídia, OCR, face, liveness, antifraude, pipeline e modelos ONNX.
 - `chainfx-kyc-provider/` fica no `.gitignore` do `payment-gateway`; em produção deve virar repo/serviço separado.
 - `scripts/kyc_engine_efficiency.ps1` mede latência HTTP e métricas da engine contra `/api/mobile/kyc/engine/metrics`.
+- `scripts/kyc_cloud_probe.ps1` testa `/health` e `/analyze` diretamente no provider cloud.
 
 Componentes esperados no provider local:
 
