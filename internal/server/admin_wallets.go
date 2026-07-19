@@ -51,6 +51,17 @@ func (s *Server) adminWalletsSnapshot() map[string]any {
 		wallets = append(wallets, row)
 	}
 	add(adminWalletRow{
+		ID:            "treasury_vault_bsc",
+		Role:          "treasury_vault",
+		Address:       s.cfg.BscTreasuryContract,
+		Network:       "BSC",
+		Asset:         "USDT",
+		TokenContract: s.cfg.BscUsdtContract,
+		ConfigKey:     "BSC_TREASURY_CONTRACT",
+		CanPayout:     s.cfg.SignerUrl != "" && s.cfg.SignerHmacSecret != "",
+		Notes:         "BSC Solidity vault used for institutional BUY settlement.",
+	})
+	add(adminWalletRow{
 		ID:            "treasury_hot_bsc",
 		Role:          "treasury_hot",
 		Address:       s.cfg.TreasuryHot,
@@ -84,6 +95,17 @@ func (s *Server) adminWalletsSnapshot() map[string]any {
 		Notes:         "Customer sell deposit wallet for BSC flow.",
 	})
 	add(adminWalletRow{
+		ID:            "treasury_vault_polygon",
+		Role:          "treasury_vault",
+		Address:       s.cfg.PolygonTreasuryContract,
+		Network:       "POLYGON",
+		Asset:         "USDT",
+		TokenContract: s.cfg.PolygonUsdtContract,
+		ConfigKey:     "POLYGON_TREASURY_CONTRACT",
+		CanPayout:     false,
+		Notes:         "Polygon vault is configured separately from BSC and should be rolled out after BSC.",
+	})
+	add(adminWalletRow{
 		ID:            "polygon_usdt_contract",
 		Role:          "token_contract",
 		Address:       s.cfg.PolygonUsdtContract,
@@ -92,7 +114,7 @@ func (s *Server) adminWalletsSnapshot() map[string]any {
 		TokenContract: s.cfg.PolygonUsdtContract,
 		ConfigKey:     "POLYGON_USDT_CONTRACT",
 		CanPayout:     false,
-		Notes:         "Polygon asset contract already configured; payout/delegate rollout should stay separate from BSC.",
+		Notes:         "Official Polygon USDT contract for the next network rollout.",
 	})
 	return map[string]any{
 		"generatedAt": time.Now().UTC().Format(time.RFC3339Nano),
