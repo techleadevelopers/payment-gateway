@@ -153,8 +153,8 @@ Contrato esperado de resposta:
 
 ```json
 {
-  "provider": "aws_rekognition_textract",
-  "model_version": "v1",
+  "provider": "chainfx_local_ai",
+  "model_version": "chainfx-local-ai-service-v1",
   "decision": "approved",
   "score": 94,
   "document_score": 96,
@@ -175,10 +175,10 @@ Contrato esperado de resposta:
 
 ## Provider Local Self-Hosted
 
-Existe uma implementação de referência sem AWS/GCP/vendor KYC em:
+Existe uma implementação de referência sem AWS/GCP/vendor KYC em uma pasta isolada na raiz:
 
 ```text
-scripts/kyc_provider_local_ai.py
+chainfx-kyc-provider/
 ```
 
 Ela é o contrato do nosso provider local. Em produção, conectar modelos próprios:
@@ -191,11 +191,12 @@ Ela é o contrato do nosso provider local. Em produção, conectar modelos próp
 Instalação local:
 
 ```bash
-pip install flask requests opencv-python numpy onnxruntime
+cd chainfx-kyc-provider
+pip install -r requirements.txt
 set KYC_PROVIDER_API_KEY=local-secret
 set FACE_EMBEDDING_ONNX=C:\models\face_embedding.onnx
 set LIVENESS_ONNX=C:\models\liveness.onnx
-python scripts/kyc_provider_local_ai.py
+python main.py
 ```
 
 Backend:
@@ -207,6 +208,40 @@ set FACE_BIOMETRY_SECRET=<secret-forte>
 ```
 
 Sem modelos reais configurados, o provider retorna `manual_review` e flag `local_models_not_configured`. Isso evita aprovar usuário fingindo biometria bancária.
+
+Estrutura do serviço:
+
+```text
+chainfx-kyc-provider/main.py                     entrypoint
+chainfx-kyc-provider/src/kyc_local_ai/app.py     HTTP Flask: /health e /analyze
+chainfx-kyc-provider/src/kyc_local_ai/config.py  env vars e thresholds
+chainfx-kyc-provider/src/kyc_local_ai/media.py   download temporário das mídias Cloudinary
+chainfx-kyc-provider/src/kyc_local_ai/quality.py qualidade de documento/imagem
+chainfx-kyc-provider/src/kyc_local_ai/ocr.py     hook de OCR local
+chainfx-kyc-provider/src/kyc_local_ai/liveness.py análise de vídeo, movimento e replay
+chainfx-kyc-provider/src/kyc_local_ai/face.py    face embedding e comparação facial
+chainfx-kyc-provider/src/kyc_local_ai/pipeline.py score final e decisão
+```
+
+Tecnicamente, a biometria via vídeo funciona assim:
+
+1. O app grava um vídeo guiado com rosto central, virada para esquerda, virada para direita, piscada e retorno ao centro.
+2. O provider baixa o vídeo pelo URL assinado/privado entregue pelo backend.
+3. `liveness.py` extrai frames, mede movimento entre frames e, em produção, roda `LIVENESS_ONNX` para detectar replay, tela, deepfake, ausência de piscada ou pose inválida.
+4. `face.py` escolhe frames bons, detecta/corta rosto e roda `FACE_EMBEDDING_ONNX` para gerar o vetor facial.
+5. O rosto do documento também é detectado e transformado em embedding.
+6. A comparação é feita por similaridade entre embeddings.
+7. O provider retorna score, embedding do vídeo, liveness, face match, flags e latência.
+8. O backend criptografa o embedding e salva em `user_face_biometrics`.
+9. Verificações futuras usam `/api/mobile/biometry/verify`, gerando novo embedding e comparando contra o embedding criptografado salvo.
+
+Decisão de produção:
+
+```text
+approved       somente com modelos reais disponíveis, score alto e sem flags críticas
+manual_review  quando há dúvida, modelos ausentes, baixa qualidade ou inconsistência moderada
+rejected       quando score é baixo, liveness falha ou face match é muito ruim
+```
 
 ## Teste de Eficiência
 
