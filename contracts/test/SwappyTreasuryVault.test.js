@@ -44,12 +44,50 @@ describe("SwappyTreasuryVault", function () {
     ).to.be.revertedWithCustomError(vault, "OperationAlreadyExecuted");
   });
 
+  it("rejects empty operation id explicitly", async function () {
+    const { operator, customer, tokenAddress, vault } = await deployFixture();
+
+    await expect(
+      vault.connect(operator).payout(ethers.ZeroHash, tokenAddress, customer.address, ethers.parseUnits("1", 18))
+    ).to.be.revertedWithCustomError(vault, "InvalidOperationId");
+  });
+
   it("blocks non-allowed recipient", async function () {
     const { operator, attacker, tokenAddress, vault } = await deployFixture();
 
     await expect(
       vault.connect(operator).payout(ethers.id("bad-recipient"), tokenAddress, attacker.address, ethers.parseUnits("1", 18))
     ).to.be.revertedWithCustomError(vault, "RecipientNotAllowed");
+  });
+
+  it("blocks contract recipients by default even when recipient is allowlisted", async function () {
+    const { owner, operator, tokenAddress, vault } = await deployFixture();
+
+    await vault.connect(owner).setRecipientAllowed(tokenAddress, true);
+
+    await expect(
+      vault.connect(operator).payout(ethers.id("contract-recipient-blocked"), tokenAddress, tokenAddress, ethers.parseUnits("1", 18))
+    ).to.be.revertedWithCustomError(vault, "ContractRecipientNotAllowed");
+  });
+
+  it("allows audited contract recipients only after explicit contract allowlist", async function () {
+    const { owner, operator, token, tokenAddress, vault } = await deployFixture();
+
+    await vault.connect(owner).setRecipientAllowed(tokenAddress, true);
+    await expect(vault.connect(owner).setContractRecipientAllowed(tokenAddress, true))
+      .to.emit(vault, "ContractRecipientAllowed")
+      .withArgs(tokenAddress, true);
+
+    await vault.connect(operator).payout(ethers.id("contract-recipient-approved"), tokenAddress, tokenAddress, ethers.parseUnits("1", 18));
+
+    expect(await token.balanceOf(tokenAddress)).to.equal(ethers.parseUnits("1", 18));
+  });
+
+  it("rejects adding an EOA to the contract-recipient allowlist", async function () {
+    const { owner, customer, vault } = await deployFixture();
+
+    await expect(vault.connect(owner).setContractRecipientAllowed(customer.address, true))
+      .to.be.revertedWithCustomError(vault, "ContractRecipientNotAllowed");
   });
 
   it("guardian can pause payouts", async function () {
@@ -73,5 +111,16 @@ describe("SwappyTreasuryVault", function () {
     await expect(
       vault.connect(operator).payout(ethers.id("daily-6"), tokenAddress, customer.address, ethers.parseUnits("1", 18))
     ).to.be.revertedWithCustomError(vault, "DailyLimitExceeded");
+  });
+
+  it("caps batch payout size", async function () {
+    const { operator, customer, tokenAddress, vault } = await deployFixture();
+    const ids = Array.from({ length: 101 }, (_, i) => ethers.id(`batch-${i}`));
+    const recipients = Array.from({ length: 101 }, () => customer.address);
+    const amounts = Array.from({ length: 101 }, () => ethers.parseUnits("1", 18));
+
+    await expect(
+      vault.connect(operator).batchPayout(ids, tokenAddress, recipients, amounts)
+    ).to.be.revertedWithCustomError(vault, "BatchTooLarge");
   });
 });
