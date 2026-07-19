@@ -25,14 +25,24 @@ func (s *Server) handleNFCCard(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"card": map[string]any{
-			"type":           "chainfx_closed_loop_nfc",
-			"display_name":   "ChainFX NFC",
+			"type":           "chainfx_tap_usdt",
+			"display_name":   "ChainFX Tap",
 			"wallet_address": *user.WalletAddress,
 			"network":        network,
 			"asset":          "USDT",
 			"aid":            nfc.ChainFXAIDHex,
 			"hce":            true,
-			"scheme":         "closed_loop",
+			"scheme":         "chainfx_own_closed_loop",
+			"card_network":   "none",
+			"fiat_settlement": map[string]any{
+				"rail":     "efi_pix",
+				"provider": "efi",
+				"mode":     "chainfx_terminal_to_chainfx_backend",
+			},
+			"crypto_debit": map[string]any{
+				"asset":  "USDT",
+				"source": "nfc_internal_usdt_ledger",
+			},
 		},
 		"balance": nfcBalanceForMobile(bal),
 	})
