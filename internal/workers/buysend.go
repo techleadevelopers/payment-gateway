@@ -6,14 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
 	"payment-gateway/internal/httpclient"
 	"payment-gateway/internal/security"
+	"payment-gateway/internal/transactions"
 )
 
 type BuySendWorker struct {
@@ -124,18 +129,91 @@ func (bw *BuySendWorker) processBuyOnchainSend(event Event) {
 		return
 	}
 
-	// Prepara payload
 	network := strings.ToUpper(strings.TrimSpace(bw.cfg.SignerNetwork))
 	if network == "" || network == "EVM" || network == "BINANCE" || network == "BEP20" {
 		network = "BSC"
 	}
+	if network != "BSC" {
+		errMsg := "BUY settlement inicial permitido apenas em BSC"
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": errMsg})
+		slog.Error("Envio BUY bloqueado por rede nao suportada nesta fase", "buy_order_id", orderID, "network", network)
+		return
+	}
+	if strings.TrimSpace(bw.cfg.BscTreasuryContract) == "" || strings.TrimSpace(bw.cfg.BscUsdtContract) == "" {
+		errMsg := "BSC_TREASURY_CONTRACT e BSC_USDT_CONTRACT obrigatorios para settlement"
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": errMsg})
+		slog.Error("Envio BUY bloqueado: vault/token BSC ausente", "buy_order_id", orderID)
+		return
+	}
 
+	amountRaw, err := transactions.TokenAmountRaw(buy.Asset, network, strconv.FormatFloat(buy.CryptoAmount, 'f', 8, 64))
+	if err != nil {
+		slog.Error("Erro ao converter amount BUY para raw", "buy_order_id", orderID, "error", err)
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": "amount BUY invalido"})
+		return
+	}
+	policy, err := transactions.DefaultBSCUSDTSettlementPolicy(
+		bw.cfg.BscTreasuryContract,
+		bw.cfg.BscUsdtContract,
+		big.NewInt(0),
+		big.NewInt(0),
+	)
+	if err != nil {
+		slog.Error("Erro ao criar settlement policy BUY", "buy_order_id", orderID, "error", err)
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": err.Error()})
+		return
+	}
+	policy.MaxTransferRaw = new(big.Int).Set(amountRaw)
+	policy.DailyLimitRaw = new(big.Int).Mul(amountRaw, big.NewInt(1000))
+	validator, err := transactions.NewSettlementPolicyValidator([]transactions.SettlementPolicy{policy})
+	if err != nil {
+		slog.Error("Erro ao inicializar settlement policy validator", "buy_order_id", orderID, "error", err)
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": err.Error()})
+		return
+	}
+	instruction, err := validator.BuildInstruction(transactions.SettlementValidationInput{
+		SettlementIntentID: "buy-" + buy.ID,
+		OrderID:            buy.ID,
+		Side:               transactions.SideBuy,
+		Network:            network,
+		ChainID:            uint64(transactions.ChainID(network)),
+		Vault:              common.HexToAddress(bw.cfg.BscTreasuryContract),
+		Token:              common.HexToAddress(bw.cfg.BscUsdtContract),
+		Recipient:          common.HexToAddress(buy.DestAddress),
+		AmountRaw:          amountRaw,
+		SourceChannel:      transactions.SourceWorker,
+		RiskDecision:       "APPROVED",
+		IntentStatus:       transactions.StatusPaymentConfirmed,
+		QuoteCreatedAt:     time.Now().Add(-1 * time.Minute),
+		TreasuryBalanceRaw: amountRaw,
+	})
+	if err != nil {
+		slog.Error("Settlement policy rejeitou BUY", "buy_order_id", orderID, "error", err)
+		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": err.Error()})
+		return
+	}
+
+	operationID := common.BytesToHash(instruction.OperationID[:]).Hex()
 	payload := map[string]any{
-		"to":             buy.DestAddress,
-		"amount":         fmt.Sprintf("%.8f", buy.CryptoAmount),
-		"tokenContract":  bw.cfg.BscUsdtContract,
-		"network":        network,
-		"idempotencyKey": "buy-" + buy.ID,
+		"operationId":        operationID,
+		"settlementIntentId": instruction.SettlementIntentID,
+		"orderId":            instruction.OrderID,
+		"side":               instruction.Side,
+		"network":            instruction.Network,
+		"chainId":            instruction.ChainID,
+		"vault":              instruction.Vault.Hex(),
+		"token":              instruction.Token.Hex(),
+		"recipient":          instruction.Recipient.Hex(),
+		"amountRaw":          instruction.AmountRaw.String(),
+		"sourceChannel":      instruction.SourceChannel,
+		"riskDecision":       instruction.RiskDecision,
+		"policyVersion":      instruction.PolicyVersion,
+		"networkPolicy":      instruction.NetworkPolicy,
+		"riskPolicy":         instruction.RiskPolicy,
+		"contractVersion":    instruction.ContractVersion,
+		"authorizedAt":       instruction.CreatedAt.Format(time.RFC3339Nano),
+		"expiresAt":          instruction.ExpiresAt.Format(time.RFC3339Nano),
+		"idempotencyKey":     "settlement-" + operationID,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -145,7 +223,7 @@ func (bw *BuySendWorker) processBuyOnchainSend(event Event) {
 	}
 
 	// Envia para signer
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, bw.cfg.SignerUrl+"/hd/transfer", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, bw.cfg.SignerUrl+"/settlements/execute", bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Erro ao montar request para signer BUY", "buy_order_id", orderID, "error", err)
 		_ = bw.db.UpdateBuyOrderStatus(ctx, orderID, "erro", map[string]any{"error": err.Error()})
