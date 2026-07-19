@@ -36,6 +36,7 @@ func sanitizeUser(u *models.User) map[string]any {
 		"email":              u.Email,
 		"phone":              u.Phone,
 		"full_name":          u.FullName,
+		"avatar_url":         u.AvatarURL,
 		"wallet_address":     u.WalletAddress,
 		"pix_key":            u.PixKey,
 		"kyc_status":         u.KYCStatus,
