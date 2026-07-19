@@ -2,6 +2,7 @@
 .env
 .env.local
 secrets/
+chainfx-kyc-provider/
 .mcpregistry_*_token
 .gocache
 .gocache/
