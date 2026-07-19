@@ -103,10 +103,13 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req nfcAuthorizeRequest
+	stage := time.Now()
 	if err := decodeJSON(r, &req); err != nil {
+		addServerTiming(r.Context(), "json_decode", time.Since(stage))
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON payload"})
 		return
 	}
+	addServerTiming(r.Context(), "json_decode", time.Since(stage))
 	req.Token = strings.TrimSpace(req.Token)
 	req.Currency = strings.ToUpper(strings.TrimSpace(defaultString(req.Currency, "BRL")))
 	req.MerchantID = strings.TrimSpace(req.MerchantID)
@@ -117,7 +120,9 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "token, merchant_id, terminal_id and idempotency_key are required"})
 		return
 	}
+	stage = time.Now()
 	terminal, ok := s.authorizeNFCTerminal(w, r, req.MerchantID, req.TerminalID)
+	addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
 	if !ok {
 		return
 	}
@@ -125,21 +130,29 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "only BRL NFC authorizations are currently supported"})
 		return
 	}
+	stage = time.Now()
 	amount, err := money.ParseMoney(req.AmountBRL)
+	addServerTiming(r.Context(), "amount_parse", time.Since(stage))
 	if err != nil || amount <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amount_brl must be a positive decimal amount"})
 		return
 	}
+	stage = time.Now()
 	if s.cfg.NFCMaxAmountBRL > 0 && amount.Float64() > s.cfg.NFCMaxAmountBRL {
+		addServerTiming(r.Context(), "risk_validation", time.Since(stage))
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "amount exceeds NFC_MAX_AMOUNT_BRL", "code": "NFC_AMOUNT_LIMIT"})
 		return
 	}
 	if terminal.MaxAmountBRLMinor > 0 && int64(amount) > terminal.MaxAmountBRLMinor {
+		addServerTiming(r.Context(), "risk_validation", time.Since(stage))
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "amount exceeds terminal max amount", "code": "NFC_TERMINAL_AMOUNT_LIMIT", "response_code": "61"})
 		return
 	}
+	addServerTiming(r.Context(), "risk_validation", time.Since(stage))
 
+	stage = time.Now()
 	claims, err := nfc.VerifyToken(s.cfg.NFCTokenSecret, req.Token, time.Now().UTC())
+	addServerTiming(r.Context(), "token_validation", time.Since(stage))
 	if err != nil {
 		status := http.StatusUnauthorized
 		code := "NFC_INVALID_TOKEN"
@@ -149,7 +162,9 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]any{"error": err.Error(), "code": code, "response_code": "05"})
 		return
 	}
+	stage = time.Now()
 	price := s.workers.PriceWorker.GetSnapshot("BRL")
+	addServerTiming(r.Context(), "price_lookup", time.Since(stage))
 	if price.Price <= 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "USDT/BRL rate unavailable"})
 		return
@@ -164,6 +179,7 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stage = time.Now()
 	auth, idempotent, err := s.db.AuthorizeNFCPayment(r.Context(), database.NFCAuthorizeInput{
 		ID:              "nfc_auth_" + database.NewAccessToken()[:24],
 		IdempotencyKey:  req.IdempotencyKey,
@@ -179,6 +195,7 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		RequiredUSDTMic: int64(required),
 		HoldExpiresAt:   time.Now().UTC().Add(time.Duration(s.cfg.NFCHoldTTLSeconds) * time.Second),
 	})
+	addServerTiming(r.Context(), "db_transaction", time.Since(stage))
 	if err != nil {
 		if errors.Is(err, database.ErrNFCIdempotencyPayloadMismatch) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "idempotency key replayed with different payload", "code": "NFC_IDEMPOTENCY_PAYLOAD_MISMATCH"})
@@ -199,7 +216,9 @@ func (s *Server) handleNFCGetAuthorization(w http.ResponseWriter, r *http.Reques
 	if !s.nfcReady(w) {
 		return
 	}
+	stage := time.Now()
 	auth, err := s.db.GetNFCAuthorization(r.Context(), strings.TrimSpace(r.PathValue("id")))
+	addServerTiming(r.Context(), "authorization_lookup", time.Since(stage))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -208,9 +227,12 @@ func (s *Server) handleNFCGetAuthorization(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "authorization not found"})
 		return
 	}
+	stage = time.Now()
 	if _, ok := s.authorizeNFCTerminal(w, r, auth.MerchantID, auth.TerminalID); !ok {
+		addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
 		return
 	}
+	addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
 	writeJSON(w, http.StatusOK, nfcAuthorizationView(auth))
 }
 
@@ -219,7 +241,9 @@ func (s *Server) handleNFCCaptureAuthorization(w http.ResponseWriter, r *http.Re
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
+	stage := time.Now()
 	current, err := s.db.GetNFCAuthorization(r.Context(), id)
+	addServerTiming(r.Context(), "authorization_lookup", time.Since(stage))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -228,10 +252,15 @@ func (s *Server) handleNFCCaptureAuthorization(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "authorization not found"})
 		return
 	}
+	stage = time.Now()
 	if _, ok := s.authorizeNFCTerminal(w, r, current.MerchantID, current.TerminalID); !ok {
+		addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
 		return
 	}
+	addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
+	stage = time.Now()
 	auth, err := s.db.CaptureNFCAuthorization(r.Context(), id)
+	addServerTiming(r.Context(), "ledger_capture", time.Since(stage))
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": "NFC_CAPTURE_FAILED"})
 		return
@@ -249,7 +278,9 @@ func (s *Server) handleNFCReverseAuthorization(w http.ResponseWriter, r *http.Re
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
+	stage := time.Now()
 	current, err := s.db.GetNFCAuthorization(r.Context(), id)
+	addServerTiming(r.Context(), "authorization_lookup", time.Since(stage))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -258,10 +289,15 @@ func (s *Server) handleNFCReverseAuthorization(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "authorization not found"})
 		return
 	}
+	stage = time.Now()
 	if _, ok := s.authorizeNFCTerminal(w, r, current.MerchantID, current.TerminalID); !ok {
+		addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
 		return
 	}
+	addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
+	stage = time.Now()
 	auth, err := s.db.ReverseNFCAuthorization(r.Context(), id)
+	addServerTiming(r.Context(), "ledger_reverse", time.Since(stage))
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": "NFC_REVERSAL_FAILED"})
 		return
