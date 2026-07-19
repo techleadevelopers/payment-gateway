@@ -88,6 +88,10 @@ func (q *mobileQueries) UpdateUser(ctx context.Context, id string, fields map[st
 }
 
 func (q *mobileQueries) AttachSystemWallet(ctx context.Context, userID, walletAddress, encryptedPrivateKey string) (*models.User, error) {
+	if err := q.ensureMobileWalletKeySchema(ctx); err != nil {
+		return nil, err
+	}
+
 	tx, err := q.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -128,6 +132,26 @@ func (q *mobileQueries) AttachSystemWallet(ctx context.Context, userID, walletAd
 		return nil, err
 	}
 	return q.GetUserByID(ctx, userID)
+}
+
+func (q *mobileQueries) ensureMobileWalletKeySchema(ctx context.Context) error {
+	_, err := q.sql.ExecContext(ctx, `
+                CREATE TABLE IF NOT EXISTS mobile_wallet_keys (
+                  user_id               UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                  wallet_address        TEXT        NOT NULL UNIQUE,
+                  encrypted_private_key TEXT        NOT NULL,
+                  custody_mode          TEXT        NOT NULL DEFAULT 'system_custody',
+                  network               TEXT        NOT NULL DEFAULT 'EVM',
+                  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+                )`)
+	if err != nil {
+		return err
+	}
+	_, err = q.sql.ExecContext(ctx, `
+                CREATE INDEX IF NOT EXISTS idx_mobile_wallet_keys_address
+                  ON mobile_wallet_keys (lower(wallet_address))`)
+	return err
 }
 
 func (q *mobileQueries) IsUserActive(ctx context.Context, userID string) (bool, error) {
