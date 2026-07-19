@@ -72,12 +72,20 @@ Isso esta tecnicamente certo para baixa latencia porque o caminho sincronico fic
 
 1. Terminal/merchant registry real
 
-Hoje o terminal usa `authorizeChainFX`, que aceita API key ChainFX generica. Para producao NFC, precisa existir uma tabela/politica propria de terminal:
+Status: implementado para o caminho de autorizacao.
+
+O backend agora possui `nfc_merchants` e `nfc_terminals`, com API key de terminal guardada como hash SHA-256. O bootstrap operacional pode ser feito por `NFC_TERMINALS`:
+
+```env
+NFC_TERMINALS=merchant_demo:terminal_01:chave-forte-do-terminal:Demo Merchant
+```
+
+Modelo de politica:
 
 ```text
 merchant_id
 terminal_id
-api_key_hash
+api_key_hash SHA-256
 status
 max_amount_brl
 daily_limit_brl
@@ -90,15 +98,15 @@ O authorize deve validar se o `terminal_id` pertence ao `merchant_id` e se a cha
 
 2. Idempotencia deve ser por terminal
 
-Hoje `nfc_authorizations.idempotency_key` e globalmente unico. Isso e seguro contra replay, mas pode causar colisao falsa entre terminais diferentes.
+Status: implementado.
 
-Modelo recomendado:
+`nfc_authorizations.idempotency_key` deixa de ser globalmente unico e passa a ter indice unico por terminal:
 
 ```sql
 UNIQUE (terminal_id, idempotency_key)
 ```
 
-E o replay deve retornar a mesma autorizacao apenas quando terminal, merchant, valor e token baterem com a requisicao original.
+O replay retorna a mesma autorizacao somente quando terminal, merchant, wallet, rede, external_ref, valor BRL e valor USDT requerido batem. Payload diferente retorna conflito.
 
 3. Outbox duravel no capture
 
