@@ -204,7 +204,8 @@ Modo produção real self-hosted:
 - Configure `KYC_ENGINE_PROVIDER_URL` para apontar para um serviço privado nosso de OCR/facial/liveness.
 - O backend envia o payload KYC para esse provider e espera scores, decisão, embedding e detalhes.
 - Se `KYC_ENGINE_PROVIDER_URL` não estiver definido, a engine usa modo determinístico de desenvolvimento.
-- `scripts/kyc_provider_local_ai.py` é uma implementação de referência self-hosted para ligar modelos locais.
+- `chainfx-kyc-provider/` contém o serviço local isolado: HTTP, mídia, OCR, face, liveness, antifraude, pipeline e modelos ONNX.
+- `chainfx-kyc-provider/` fica no `.gitignore` do `payment-gateway`; em produção deve virar repo/serviço separado.
 - `scripts/kyc_engine_efficiency.ps1` mede latência HTTP e métricas da engine contra `/api/mobile/kyc/engine/metrics`.
 
 Componentes esperados no provider local:
