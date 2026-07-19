@@ -145,6 +145,25 @@ Integracoes recentes refletidas no backend:
 - **Adversarial/Chaos Ops**: `schema_chaos.sql`, `internal/adversarial`, `/v1/admin/gas/chaos-run`, `/v1/admin/gas/chaos-history` e `/admin/chaos`.
 - **Stress tests k6**: `tests/paymaster_stress.js` cobre spike, colisao de idempotencia, rate limit por tier, quote load e status probe.
 
+## Backend: Security Cloud RPA
+
+Suite segura contra o backend cloud, sem credenciais reais e sem envio on-chain. Ela testa superficie publica, rotas admin/mobile protegidas, JWT invalido, enumeracao de login, CORS, headers, payloads SQLi/XSS/path traversal, webhooks com assinatura invalida, rotas internas HMAC, replay de idempotencia invalido e latencia p50/p55/p75/p90/p95/p99.
+
+```powershell
+cd C:\Users\Paulo\Desktop\payment-gateway
+$env:SECURITY_RPA_BASE_URL="https://api-production-bc748.up.railway.app"
+node tests\security_cloud_adversarial.js
+```
+
+Probe opcional de flood baixo e nao destrutivo:
+
+```powershell
+$env:SECURITY_RPA_RATE_LIMIT_COUNT="25"
+node tests\security_cloud_adversarial.js
+```
+
+O script grava relatorios em `tests/security-cloud-report-*.json` e `tests/security-cloud-report-*.txt`. Resultado esperado: `FAIL=0`; `WARN` pode indicar hardening recomendado, como HSTS/CSP ou catch-all HTML para rotas inexistentes.
+
 ## Signer: Smoke Adversarial e Latencia
 
 Como o fluxo atual de Buy/Sell nao depende de contrato Swappy em producao, a camada critica e o signer com wallet direta, HMAC, nonce, idempotencia, custody guard, allowlist e limites.
