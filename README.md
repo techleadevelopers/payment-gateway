@@ -411,6 +411,7 @@ NFC_TOKEN_SECRET=use-um-segredo-forte
 NFC_TOKEN_TTL_SEC=120
 NFC_HOLD_TTL_SEC=900
 NFC_MAX_AMOUNT_BRL=500
+NFC_PRICE_MAX_AGE_SEC=180
 NFC_TERMINALS=merchant_demo:terminal_01:chave-forte-do-terminal:Demo Merchant
 ```
 
