@@ -127,6 +127,10 @@ type AdminTransaction struct {
 	ProviderPaymentID *string   `json:"providerPaymentId,omitempty"`
 	TxHash            *string   `json:"txHash,omitempty"`
 	DepositTx         *string   `json:"depositTx,omitempty"`
+	DepositAmount     *float64  `json:"depositAmount,omitempty"`
+	PixKey            string    `json:"pixKey,omitempty"`
+	PixCpf            string    `json:"pixCpf,omitempty"`
+	PixPhone          string    `json:"pixPhone,omitempty"`
 	Error             *string   `json:"error,omitempty"`
 	RequestID         *string   `json:"requestId,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
@@ -279,6 +283,51 @@ func (db *DB) ClaimOrderForPayout(ctx context.Context, orderID string) (bool, er
 		return false, err
 	}
 	return true, nil
+}
+
+// ClaimOrderForManualPayout atomically moves a confirmed sell deposit into the
+// admin PIX queue. It prevents duplicated worker events from creating multiple
+// manual payout tasks for the same order.
+func (db *DB) ClaimOrderForManualPayout(ctx context.Context, orderID string, extra map[string]any) (bool, error) {
+	var claimed string
+	err := db.SQL.QueryRowContext(ctx, `
+                UPDATE orders
+                   SET status = 'aguardando_pix_manual', updated_at = now()
+                 WHERE id = $1 AND status = 'pago'
+                RETURNING id`, orderID).Scan(&claimed)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, db.AddEvent(ctx, orderID, "order.aguardando_pix_manual", extra)
+}
+
+func (db *DB) MarkManualPixPaid(ctx context.Context, orderID, providerID, adminEmail, note string) (bool, error) {
+	if strings.TrimSpace(providerID) == "" {
+		providerID = "pix-manual-" + orderID
+	}
+	var claimed string
+	err := db.SQL.QueryRowContext(ctx, `
+                UPDATE orders
+                   SET status = 'concluida',
+                       tx_hash = COALESCE(NULLIF($2,''), tx_hash),
+                       updated_at = now()
+                 WHERE id = $1
+                   AND status IN ('aguardando_pix_manual','pago','processando_payout')
+                RETURNING id`, orderID, providerID).Scan(&claimed)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, db.AddEvent(ctx, orderID, "order.pix_manual_paid", map[string]any{
+		"providerId": providerID,
+		"adminEmail": adminEmail,
+		"note":       note,
+	})
 }
 
 // ClaimBuyOrderForSend atomically transitions a buy order from 'pago_fiat'/'pago_pix' → 'enviando'.
@@ -865,7 +914,8 @@ func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTran
                 SELECT source, id::text, status, amount_brl::float8, amount_fiat::float8,
                        fiat_currency, payment_method, fee_brl::float8, payout_brl::float8,
                        crypto_amount::float8, asset, address, network, rate_locked::float8,
-                       provider_payment_id, tx_hash, deposit_tx, error, request_id,
+                       provider_payment_id, tx_hash, deposit_tx, deposit_amount,
+                       pix_cpf_enc, pix_phone_enc, error, request_id,
                        created_at, updated_at
                 FROM (
                         SELECT 'buy' AS source, id, status,
@@ -883,6 +933,9 @@ func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTran
                                provider_payment_id,
                                tx_hash_out AS tx_hash,
                                NULL::text AS deposit_tx,
+                               NULL::numeric AS deposit_amount,
+                               NULL::text AS pix_cpf_enc,
+                               NULL::text AS pix_phone_enc,
                                error,
                                request_id,
                                created_at,
@@ -904,11 +957,15 @@ func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTran
                                NULL::text AS provider_payment_id,
                                tx_hash,
                                deposit_tx,
+                               deposit_amount,
+                               op.pix_cpf_enc,
+                               op.pix_phone_enc,
                                error,
                                request_id,
                                created_at,
                                COALESCE(updated_at, created_at) AS updated_at
-                        FROM orders
+                        FROM orders o
+                        LEFT JOIN order_private op ON op.order_id = o.id
                 ) txs
                 ORDER BY created_at DESC
                 LIMIT $1`, limit)
@@ -919,11 +976,12 @@ func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTran
 	var out []AdminTransaction
 	for rows.Next() {
 		var tx AdminTransaction
-		var providerPaymentID, txHash, depositTx, errMsg, requestID sql.NullString
+		var providerPaymentID, txHash, depositTx, pixCpfEnc, pixPhoneEnc, errMsg, requestID sql.NullString
+		var depositAmount sql.NullFloat64
 		if err := rows.Scan(&tx.Source, &tx.ID, &tx.Status, &tx.AmountBRL, &tx.AmountFiat,
 			&tx.FiatCurrency, &tx.PaymentMethod, &tx.FeeBRL, &tx.PayoutBRL,
 			&tx.CryptoAmount, &tx.Asset, &tx.Address, &tx.Network, &tx.RateLocked,
-			&providerPaymentID, &txHash, &depositTx, &errMsg, &requestID,
+			&providerPaymentID, &txHash, &depositTx, &depositAmount, &pixCpfEnc, &pixPhoneEnc, &errMsg, &requestID,
 			&tx.CreatedAt, &tx.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -935,6 +993,25 @@ func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTran
 		}
 		if depositTx.Valid {
 			tx.DepositTx = &depositTx.String
+		}
+		if depositAmount.Valid {
+			tx.DepositAmount = &depositAmount.Float64
+		}
+		if db.privacy != nil {
+			if pixCpfEnc.Valid && pixCpfEnc.String != "" {
+				if plain, err := db.privacy.Decrypt(pixCpfEnc.String); err == nil {
+					tx.PixCpf = plain
+				}
+			}
+			if pixPhoneEnc.Valid && pixPhoneEnc.String != "" {
+				if plain, err := db.privacy.Decrypt(pixPhoneEnc.String); err == nil {
+					tx.PixPhone = plain
+					tx.PixKey = plain
+				}
+			}
+		}
+		if tx.PixKey == "" {
+			tx.PixKey = firstNonEmpty(tx.PixPhone, tx.PixCpf)
 		}
 		if errMsg.Valid {
 			tx.Error = &errMsg.String
