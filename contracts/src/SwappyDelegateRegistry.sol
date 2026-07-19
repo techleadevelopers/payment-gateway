@@ -66,8 +66,8 @@ contract SwappyDelegateRegistry {
 
     function trustDelegate(address delegate, bytes32 expectedCodeHash, string calldata label) external onlyOwner {
         if (delegate == address(0)) revert ZeroAddress();
+        if (delegate.code.length == 0) revert EmptyCode();
         bytes32 observed = delegate.codehash;
-        if (observed == bytes32(0)) revert EmptyCode();
         if (expectedCodeHash != bytes32(0) && observed != expectedCodeHash) revert HashMismatch();
 
         delegates[delegate] = DelegateInfo({
