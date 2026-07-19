@@ -16,22 +16,23 @@ const (
 )
 
 type User struct {
-	ID                 string     `json:"id"                          db:"id"`
-	Email              string     `json:"email"                        db:"email"`
-	Phone              *string    `json:"phone,omitempty"              db:"phone"`
-	FullName           *string    `json:"full_name,omitempty"          db:"full_name"`
-	PasswordHash       string     `json:"-"                            db:"password_hash"`
-	WalletAddress      *string    `json:"wallet_address,omitempty"     db:"wallet_address"`
-	PixKey             *string    `json:"pix_key,omitempty"            db:"pix_key"`
-	KYCStatus          KYCStatus  `json:"kyc_status"                   db:"kyc_status"`
-	KYCDocuments       *string    `json:"kyc_documents,omitempty"      db:"kyc_documents"`
-	PinHash            *string    `json:"-"                            db:"pin_hash"`
-	BiometryEnabled    bool       `json:"biometry_enabled"             db:"biometry_enabled"`
-	TwoFactorEnabled   bool       `json:"two_factor_enabled"           db:"two_factor_enabled"`
-	TwoFactorSecret    *string    `json:"-"                            db:"two_factor_secret"`
-	RefreshTokenHash   *string    `json:"-"                            db:"refresh_token_hash"`
-	CreatedAt          time.Time  `json:"created_at"                   db:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"                   db:"updated_at"`
+	ID               string    `json:"id"                          db:"id"`
+	Email            string    `json:"email"                        db:"email"`
+	Phone            *string   `json:"phone,omitempty"              db:"phone"`
+	FullName         *string   `json:"full_name,omitempty"          db:"full_name"`
+	AvatarURL        *string   `json:"avatar_url,omitempty"         db:"avatar_url"`
+	PasswordHash     string    `json:"-"                            db:"password_hash"`
+	WalletAddress    *string   `json:"wallet_address,omitempty"     db:"wallet_address"`
+	PixKey           *string   `json:"pix_key,omitempty"            db:"pix_key"`
+	KYCStatus        KYCStatus `json:"kyc_status"                   db:"kyc_status"`
+	KYCDocuments     *string   `json:"kyc_documents,omitempty"      db:"kyc_documents"`
+	PinHash          *string   `json:"-"                            db:"pin_hash"`
+	BiometryEnabled  bool      `json:"biometry_enabled"             db:"biometry_enabled"`
+	TwoFactorEnabled bool      `json:"two_factor_enabled"           db:"two_factor_enabled"`
+	TwoFactorSecret  *string   `json:"-"                            db:"two_factor_secret"`
+	RefreshTokenHash *string   `json:"-"                            db:"refresh_token_hash"`
+	CreatedAt        time.Time `json:"created_at"                   db:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"                   db:"updated_at"`
 }
 
 // ─── Device ──────────────────────────────────────────────────────────────────
