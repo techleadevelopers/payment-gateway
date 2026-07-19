@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"math"
+	"os"
 	"strings"
 	"time"
 )
@@ -49,6 +50,7 @@ type Result struct {
 
 type Engine struct {
 	hmacSecret []byte
+	provider   Provider
 }
 
 func New(secret string) *Engine {
@@ -56,8 +58,52 @@ func New(secret string) *Engine {
 	return &Engine{hmacSecret: sum[:]}
 }
 
+func NewFromEnv(secret string) *Engine {
+	engine := New(secret)
+	if endpoint := strings.TrimSpace(os.Getenv("KYC_ENGINE_PROVIDER_URL")); endpoint != "" {
+		engine.provider = NewHTTPProvider(endpoint, strings.TrimSpace(os.Getenv("KYC_ENGINE_PROVIDER_API_KEY")))
+	}
+	return engine
+}
+
 func (e *Engine) Analyze(ctx context.Context, in Input) Result {
 	start := time.Now()
+	if e.provider != nil {
+		if result, err := e.provider.Analyze(ctx, in); err == nil {
+			result.RequestID = in.RequestID
+			result.UserID = in.UserID
+			result.Provider = firstNonEmpty(result.Provider, "external")
+			result.ModelVersion = firstNonEmpty(result.ModelVersion, Version)
+			result.Score = clamp(result.Score, 0, 100)
+			result.DocumentScore = clamp(result.DocumentScore, 0, 100)
+			result.FaceMatchScore = clamp(result.FaceMatchScore, 0, 100)
+			result.LivenessScore = clamp(result.LivenessScore, 0, 100)
+			result.ReplayRiskScore = clamp(result.ReplayRiskScore, 0, 100)
+			result.DuplicateScore = clamp(result.DuplicateScore, 0, 100)
+			result.RiskScore = clamp(result.RiskScore, 0, 100)
+			if result.LatencyMS <= 0 {
+				result.LatencyMS = time.Since(start).Milliseconds()
+			}
+			if len(result.Embedding) > 0 && result.EmbeddingHash == "" {
+				result.EmbeddingHash = e.EmbeddingHash(result.Embedding)
+			}
+			if len(result.Embedding) == 0 {
+				result.Flags = append(result.Flags, "provider_embedding_missing")
+				if result.Decision == "approved" {
+					result.Decision = "manual_review"
+				}
+			}
+			if result.Decision == "" {
+				result.Decision = decide(result.Score, result.ReplayRiskScore, result.Flags, in.Level)
+			}
+			if result.Details == nil {
+				result.Details = map[string]any{}
+			}
+			result.Details["provider_mode"] = "external_http"
+			return result
+		}
+	}
+
 	seed := in.DocumentURL + "|" + in.DocumentBackURL + "|" + in.SelfieURL + "|" + in.FacialVideoURL
 	embedding := deterministicEmbedding(seed, 128)
 	embeddingHash := e.EmbeddingHash(embedding)
@@ -89,12 +135,7 @@ func (e *Engine) Analyze(ctx context.Context, in Input) Result {
 	}
 
 	score := int(math.Round(float64(documentScore)*0.25 + float64(faceScore)*0.30 + float64(livenessScore)*0.30 + float64(100-replayRisk)*0.10 + float64(100-riskScore)*0.05))
-	decision := "approved"
-	if score < 60 || replayRisk >= 85 {
-		decision = "rejected"
-	} else if score < 82 || len(flags) > 0 || in.Level >= 3 {
-		decision = "manual_review"
-	}
+	decision := decide(score, replayRisk, flags, in.Level)
 
 	select {
 	case <-ctx.Done():
@@ -127,6 +168,16 @@ func (e *Engine) Analyze(ctx context.Context, in Input) Result {
 			"liveness":         "motion_video_required",
 		},
 	}
+}
+
+func decide(score, replayRisk int, flags []string, level int) string {
+	if score < 60 || replayRisk >= 85 {
+		return "rejected"
+	}
+	if score < 82 || len(flags) > 0 || level >= 3 {
+		return "manual_review"
+	}
+	return "approved"
 }
 
 func (e *Engine) EmbeddingHash(embedding []float32) string {
@@ -194,4 +245,13 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
