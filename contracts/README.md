@@ -35,7 +35,7 @@ O script usa `amount: "0"` nos casos assinados para passar pela autenticação e
 O final do relatorio imprime latencia agregada:
 
 ```text
-count=16 min=...ms avg=...ms p50=...ms p55=...ms p75=...ms p90=...ms p95=...ms p99=...ms max=...ms
+count=18 min=...ms avg=...ms p50=...ms p55=...ms p75=...ms p90=...ms p95=...ms p99=...ms max=...ms
 ```
 
 Casos cobertos:
@@ -52,6 +52,20 @@ Casos cobertos:
 - recipient invalido;
 - idempotency key repetida;
 - `/readyz` sem treasury contract obrigatorio.
+
+Flood opcional de HMAC invalido:
+
+```powershell
+$env:FLOOD_INVALID_HMAC="100"
+npm run smoke:signer-adversarial
+```
+
+Concorrencia maior de idempotency key:
+
+```powershell
+$env:PARALLEL_IDEMPOTENCY="50"
+npm run smoke:signer-adversarial
+```
 
 Teste live/testnet com envio real fica separado e exige flag explicita:
 
