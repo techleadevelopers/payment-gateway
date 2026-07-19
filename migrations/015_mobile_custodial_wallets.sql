@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS mobile_wallet_keys (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wallet_unique
   ON users (lower(wallet_address))
-  WHERE wallet_address IS NOT NULL;
+  WHERE wallet_address IS NOT NULL AND wallet_address <> '';
 
-CREATE INDEX IF NOT EXISTS idx_mobile_wallet_keys_address
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mobile_wallet_keys_address
   ON mobile_wallet_keys (lower(wallet_address));
