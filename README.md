@@ -161,7 +161,15 @@ npm run smoke:signer-adversarial
 O resultado mostra `PASS/FAIL` por caso e resumo de latencia:
 
 ```text
-count=16 min=...ms avg=...ms p50=...ms p55=...ms p75=...ms p90=...ms p95=...ms p99=...ms max=...ms
+count=18 min=...ms avg=...ms p50=...ms p55=...ms p75=...ms p90=...ms p95=...ms p99=...ms max=...ms
+```
+
+Hardening extra:
+
+```powershell
+$env:FLOOD_INVALID_HMAC="100"
+$env:PARALLEL_IDEMPOTENCY="50"
+npm run smoke:signer-adversarial
 ```
 
 Teste com transacao real/testnet fica separado e exige flag explicita:
