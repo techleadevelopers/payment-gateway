@@ -177,19 +177,25 @@ Essas regras devem ser locais/cacheadas e rapidas.
 
 8. Metricas por etapa
 
-Adicionar histograma por etapa:
+Status: parcialmente implementado via `Server-Timing` para diagnostico HTTP.
+
+O header inclui etapas como:
 
 ```text
-nfc_authorize_total_ms
-nfc_authorize_token_verify_ms
-nfc_authorize_price_ms
-nfc_authorize_db_ms
-nfc_authorize_status_total
-nfc_capture_total_ms
-nfc_reverse_total_ms
-nfc_hold_expired_total
-nfc_settlement_lag_ms
+terminal_auth
+json_decode
+amount_parse
+token_validation
+price_lookup
+risk_validation
+authorization_lookup
+db_transaction
+ledger_capture
+ledger_reverse
+server_total
 ```
+
+Ainda falta exportar histogramas Prometheus persistentes para SLO.
 
 ## Metas de latencia
 
@@ -220,6 +226,87 @@ request total: 500 ms
 6. Staleness de cotacao no authorize.
 7. Risk leve cacheado no authorize.
 8. Metricas por etapa e teste de carga 10/50/100 autorizacoes concorrentes.
+
+## Testes staff-level
+
+### Unidade e contrato
+
+```powershell
+go test -race ./internal/nfc ./internal/database ./internal/server ./internal/workers -count=1
+```
+
+Cobre:
+
+- APDU/TLV malformado;
+- token expirado/tamperado;
+- registry de terminal;
+- idempotencia por terminal;
+- freshness de cotacao;
+- expiracao de holds.
+
+### RPA de produto NFC
+
+Modo nao mutavel:
+
+```powershell
+node tests\nfc_product_rpa.js
+```
+
+Modo sandbox/staging mutavel:
+
+```powershell
+$env:NFC_RPA_RUN_MUTATING="true"
+$env:NFC_RPA_BASE_URL="https://api-staging.chainfx.com"
+$env:NFC_RPA_CHAINFX_API_KEY="sk_test_..."
+$env:NFC_RPA_TERMINAL_KEY="terminal_key..."
+$env:NFC_RPA_MERCHANT_ID="merchant_demo"
+$env:NFC_RPA_TERMINAL_ID="terminal_01"
+$env:NFC_RPA_WALLET="0x..."
+$env:NFC_RPA_ITERATIONS="10"
+node tests\nfc_product_rpa.js
+```
+
+O script valida:
+
+- endpoints de terminal exigem credencial;
+- provisionamento;
+- funding sandbox, quando habilitado;
+- authorize;
+- replay com mesma idempotency key;
+- mismatch de idempotencia;
+- capture duplicado controlado;
+- reverse;
+- isolamento por chave errada;
+- percentis de latencia;
+- amostras de `Server-Timing`.
+
+### Carga k6
+
+```powershell
+k6 run tests\nfc_authorize_load.js
+```
+
+Variaveis:
+
+```powershell
+$env:NFC_BASE_URL="https://api-staging.chainfx.com"
+$env:NFC_CHAINFX_API_KEY="sk_test_..."
+$env:NFC_TERMINAL_KEY="terminal_key..."
+$env:NFC_MERCHANT_ID="merchant_demo"
+$env:NFC_TERMINAL_ID="terminal_01"
+$env:NFC_WALLET="0x..."
+$env:NFC_K6_RATE="50"
+$env:NFC_K6_DURATION="5m"
+```
+
+Thresholds iniciais:
+
+```text
+nfc_authorize_latency p50 < 100ms
+nfc_authorize_latency p95 < 250ms
+nfc_authorize_latency p99 < 500ms
+nfc_failed_requests < 0.1%
+```
 
 ## Conclusao
 
