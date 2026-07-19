@@ -1,6 +1,7 @@
 package nfc
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -43,7 +44,15 @@ func TestVerifyTokenRejectsPayloadTampering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueToken() error = %v", err)
 	}
-	tampered := token[:len(token)-1] + "A"
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("unexpected token format: %s", token)
+	}
+	tamperedPayload := parts[1][:len(parts[1])-1] + "A"
+	if tamperedPayload == parts[1] {
+		tamperedPayload = parts[1][:len(parts[1])-1] + "B"
+	}
+	tampered := parts[0] + "." + tamperedPayload + "." + parts[2]
 	if _, err := VerifyToken("secret", tampered, now); err != ErrInvalidToken {
 		t.Fatalf("expected invalid token after tamper, got %v", err)
 	}
