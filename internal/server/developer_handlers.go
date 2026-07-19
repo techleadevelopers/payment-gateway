@@ -132,6 +132,7 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		"adminUser":       adminUser,
 		"readiness":       ready,
 		"rates":           s.adminRates(),
+		"wallets":         s.adminWalletsSnapshot(),
 		"metrics":         summarizeAdminTransactions(transactions),
 		"agentFunnel":     agentFunnel,
 		"observability":   s.adminObservability(),
