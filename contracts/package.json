@@ -14,6 +14,7 @@
     "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
     "deploy:polygon-amoy": "hardhat run scripts/deploy.js --network polygonAmoy",
     "smoke:testnet": "hardhat run scripts/smoke-testnet.js --network bscTestnet",
+    "smoke:signer-adversarial": "node scripts/signer-adversarial-smoke.js",
     "wallets:eip-probes": "node scripts/create-eip-probe-wallets.js",
     "wallets:system": "node scripts/create-system-wallets.js",
     "deploy:eip-probe-usdt:amoy": "node scripts/deploy-eip-probe-usdt.js --network=polygon-amoy",
