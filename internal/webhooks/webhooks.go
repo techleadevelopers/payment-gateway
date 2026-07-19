@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"payment-gateway/internal/config"
@@ -99,6 +100,8 @@ type Dispatcher struct {
 	client     *http.Client
 	maxRetries int
 	queue      *RetryQueue
+	running    atomic.Bool
+	heartbeat  atomic.Int64
 }
 
 // New creates a Dispatcher and its backing retry queue. Call Start to begin
@@ -189,6 +192,9 @@ func (d *Dispatcher) Start(ctx context.Context, bus *workers.EventBus) {
 		slog.Info("Webhooks: automação desabilitada (WEBHOOKS_ENABLED=false)")
 		return
 	}
+	d.running.Store(true)
+	d.heartbeat.Store(time.Now().UTC().Unix())
+	go d.runHeartbeat(ctx)
 	d.queue.Start(ctx)
 	busTypes := []string{
 		// Order / buy lifecycle (existing)
@@ -212,6 +218,37 @@ func (d *Dispatcher) Start(ctx context.Context, bus *workers.EventBus) {
 	slog.Info("Webhooks: dispatcher de automação (n8n/Zapier/Make) iniciado")
 }
 
+func (d *Dispatcher) runHeartbeat(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	defer d.running.Store(false)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.heartbeat.Store(time.Now().UTC().Unix())
+		}
+	}
+}
+
+func (d *Dispatcher) Status() map[string]any {
+	if d == nil {
+		return map[string]any{"enabled": false, "running": false}
+	}
+	lastUnix := d.heartbeat.Load()
+	var last any
+	if lastUnix > 0 {
+		last = time.Unix(lastUnix, 0).UTC()
+	}
+	return map[string]any{
+		"enabled":        d.cfg != nil && d.cfg.WebhooksEnabled,
+		"running":        d.running.Load(),
+		"last_heartbeat": last,
+		"queue":          d.queue.Metrics(),
+	}
+}
+
 func (d *Dispatcher) consume(ctx context.Context, bus *workers.EventBus, eventType string, ch chan workers.Event) {
 	defer bus.Unsubscribe(eventType, ch)
 	for {
@@ -222,6 +259,7 @@ func (d *Dispatcher) consume(ctx context.Context, bus *workers.EventBus, eventTy
 			if !ok {
 				return
 			}
+			d.heartbeat.Store(time.Now().UTC().Unix())
 			d.handle(ctx, ev)
 		}
 	}
