@@ -62,9 +62,17 @@ func NewFromEnv(secret string) *Engine {
 	engine := New(secret)
 	if endpoint := strings.TrimSpace(os.Getenv("KYC_ENGINE_PROVIDER_URL")); endpoint != "" {
 		apiKey := firstNonEmpty(os.Getenv("KYC_ENGINE_PROVIDER_API_KEY"), os.Getenv("KYC_PROVIDER_API_KEY"))
-		engine.provider = NewHTTPProvider(endpoint, apiKey)
+		engine.provider = NewHTTPProvider(normalizeProviderEndpoint(endpoint), apiKey)
 	}
 	return engine
+}
+
+func normalizeProviderEndpoint(endpoint string) string {
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if strings.HasSuffix(endpoint, "/analyze") {
+		return endpoint
+	}
+	return endpoint + "/analyze"
 }
 
 func (e *Engine) Analyze(ctx context.Context, in Input) Result {
