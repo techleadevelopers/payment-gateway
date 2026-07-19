@@ -32,6 +32,7 @@ type WorkerManager struct {
 	SellExpiryWorker    *SellExpiryWorker
 	SweepWorker         *SweepWorker
 	EmailWorker         *EmailWorker
+	KYCWorker           *KYCWorker
 	M2MSettlementWorker *M2MSettlementWorker
 	AutoSweeperWorker   *AutoSweeperWorker
 	PaymasterService    *paymaster.Service
@@ -58,6 +59,7 @@ func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service
 		SellExpiryWorker:    NewSellExpiryWorker(db),
 		SweepWorker:         NewSweepWorker(bus, db, cfg),
 		EmailWorker:         NewEmailWorker(bus, db, mailer),
+		KYCWorker:           NewKYCWorker(bus, db, cfg),
 		M2MSettlementWorker: NewM2MSettlementWorker(bus, db, cfg),
 		AutoSweeperWorker:   NewAutoSweeperWorker(cfg, db, pool),
 		PaymasterService:    paymasterSvc,
@@ -70,7 +72,7 @@ func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service
 func (wm *WorkerManager) StartAll(ctx context.Context) {
 	slog.Info("Iniciando todos os workers...")
 
-	workerCount := 10 // base 8 + AutoSweeper + Paymaster
+	workerCount := 11 // base workers + KYC + AutoSweeper + Paymaster
 	if wm.PSPRouter != nil {
 		workerCount++ // + PSP health probe
 	}
@@ -109,6 +111,11 @@ func (wm *WorkerManager) StartAll(ctx context.Context) {
 	go func() {
 		defer wm.wg.Done()
 		wm.EmailWorker.Start(ctx)
+	}()
+
+	go func() {
+		defer wm.wg.Done()
+		wm.KYCWorker.Start(ctx)
 	}()
 
 	go func() {
