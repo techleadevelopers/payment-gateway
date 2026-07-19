@@ -145,6 +145,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	user, err = s.ensureUserWallet(r.Context(), user)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro ao criar carteira do usuario"})
+		return
+	}
 	access, _ := s.newAccessToken(user.ID)
 	refresh, _ := s.newRefreshToken(user.ID)
 	if err := mobileDB(s.db).SaveRefreshToken(r.Context(), user.ID, refresh); err != nil {
@@ -176,6 +181,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "credenciais inválidas"})
 		return
 	}
+	user, err = s.ensureUserWallet(r.Context(), user)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro ao criar carteira do usuario"})
+		return
+	}
 	access, _ := s.newAccessToken(user.ID)
 	refresh, _ := s.newRefreshToken(user.ID)
 	if err := mobileDB(s.db).SaveRefreshToken(r.Context(), user.ID, refresh); err != nil {
@@ -205,6 +215,11 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	user, err := mobileDB(s.db).GetUserByID(r.Context(), claims.Sub)
 	if err != nil || user == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "usuário não encontrado"})
+		return
+	}
+	user, err = s.ensureUserWallet(r.Context(), user)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro ao criar carteira do usuario"})
 		return
 	}
 	// C-05: validate refresh token against the stored server-side digest.
