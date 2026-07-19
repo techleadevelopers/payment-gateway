@@ -34,14 +34,14 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := map[string]any{}
-	if req.FullName != "" {
-		fields["full_name"] = req.FullName
+	if fullName := strings.TrimSpace(req.FullName); fullName != "" {
+		fields["full_name"] = fullName
 	}
-	if req.Phone != "" {
-		fields["phone"] = req.Phone
+	if phone := strings.TrimSpace(req.Phone); phone != "" {
+		fields["phone"] = phone
 	}
-	if req.PixKey != "" {
-		fields["pix_key"] = req.PixKey
+	if pixKey := strings.TrimSpace(req.PixKey); pixKey != "" {
+		fields["pix_key"] = pixKey
 	}
 	if len(fields) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "nenhum campo para atualizar"})
@@ -51,8 +51,12 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	user, _ := mobileDB(s.db).GetUserByID(r.Context(), uid)
-	user, err := s.ensureUserWallet(r.Context(), user)
+	user, err := mobileDB(s.db).GetUserByID(r.Context(), uid)
+	if err != nil || user == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "usuario nao encontrado"})
+		return
+	}
+	user, err = s.ensureUserWallet(r.Context(), user)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro ao criar carteira do usuario"})
 		return
