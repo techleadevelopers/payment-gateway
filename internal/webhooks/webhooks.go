@@ -56,6 +56,7 @@ const (
 	// ChainFX Tap closed-loop NFC lifecycle events.
 	EventNFCCaptured = "nfc.capture.completed"
 	EventNFCReversed = "nfc.authorization.reversed"
+	EventNFCExpired  = "nfc.authorization.expired"
 )
 
 // AllEvents lists every trigger automation platforms can subscribe to.
@@ -79,6 +80,7 @@ func AllEvents() []string {
 		EventCapabilityGranted,
 		EventNFCCaptured,
 		EventNFCReversed,
+		EventNFCExpired,
 	}
 }
 
@@ -179,6 +181,8 @@ func busEventMapping(eventType string) []string {
 		return []string{EventNFCCaptured, EventPaymentReceived}
 	case "nfc.authorization.reversed":
 		return []string{EventNFCReversed}
+	case "nfc.authorization.expired":
+		return []string{EventNFCExpired}
 
 	default:
 		return nil
@@ -209,7 +213,7 @@ func (d *Dispatcher) Start(ctx context.Context, bus *workers.EventBus) {
 		"marketplace.capability.purchased", "marketplace.capability.granted",
 		"marketplace.capability.executed",
 		// ChainFX Tap closed-loop NFC lifecycle
-		"nfc.capture.completed", "nfc.authorization.reversed",
+		"nfc.capture.completed", "nfc.authorization.reversed", "nfc.authorization.expired",
 	}
 	for _, t := range busTypes {
 		ch := bus.Subscribe(t)
