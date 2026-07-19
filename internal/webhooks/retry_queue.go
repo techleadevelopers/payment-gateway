@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"payment-gateway/internal/database"
@@ -34,6 +35,8 @@ type RetryQueue struct {
 	jobs       chan retryJob
 	workers    int
 	wg         sync.WaitGroup
+	enqueued   atomic.Uint64
+	dropped    atomic.Uint64
 }
 
 // NewRetryQueue creates a queue with the given number of worker goroutines
@@ -71,8 +74,23 @@ func (q *RetryQueue) Stop() {
 func (q *RetryQueue) Enqueue(sub *database.WebhookSubscription, event string, payload map[string]any) {
 	select {
 	case q.jobs <- retryJob{sub: sub, event: event, payload: payload}:
+		q.enqueued.Add(1)
 	default:
+		q.dropped.Add(1)
 		slog.Warn("Webhooks: fila de retry cheia, entrega descartada", "subscriptionId", sub.ID, "event", event)
+	}
+}
+
+func (q *RetryQueue) Metrics() map[string]any {
+	if q == nil {
+		return map[string]any{"workers": 0, "queued": 0, "capacity": 0}
+	}
+	return map[string]any{
+		"workers":  q.workers,
+		"queued":   len(q.jobs),
+		"capacity": cap(q.jobs),
+		"enqueued": q.enqueued.Load(),
+		"dropped":  q.dropped.Load(),
 	}
 }
 
