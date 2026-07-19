@@ -14,6 +14,11 @@ func (s *Server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "usuário não encontrado"})
 		return
 	}
+	user, err = s.ensureUserWallet(r.Context(), user)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro ao criar carteira do usuario"})
+		return
+	}
 	writeJSON(w, http.StatusOK, s.sanitizeUser(user))
 }
 
@@ -47,6 +52,11 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := mobileDB(s.db).GetUserByID(r.Context(), uid)
+	user, err := s.ensureUserWallet(r.Context(), user)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro ao criar carteira do usuario"})
+		return
+	}
 	writeJSON(w, http.StatusOK, s.sanitizeUser(user))
 }
 
