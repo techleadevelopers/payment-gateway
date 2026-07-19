@@ -129,9 +129,9 @@ worker reads outbox
 
 4. Expiracao automatica de holds
 
-Existe indice para `status='approved'` com `hold_expires_at`, mas falta worker que reverta holds expirados.
+Status: implementado.
 
-Sem isso, saldo pode ficar preso em `locked_usdt_micro`.
+`NFCExpirationWorker` varre holds aprovados vencidos com `FOR UPDATE SKIP LOCKED`, devolve `locked_usdt_micro` para `available_usdt_micro` e marca a autorizacao como `expired`.
 
 5. Funding real do ledger NFC
 
@@ -149,7 +149,9 @@ O endpoint sandbox/fund deve continuar bloqueado em producao.
 
 6. Staleness explicito da cotacao
 
-`PriceWorker.GetPrice("BRL")` e em memoria, mas o authorize nao verifica idade do snapshot. Para producao NFC:
+Status: implementado.
+
+`PriceWorker` expoe `PriceSnapshot` com `UpdatedAt`, e o authorize rejeita cotacao velha usando:
 
 ```text
 NFC_PRICE_MAX_AGE_SEC=30
