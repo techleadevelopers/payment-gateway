@@ -159,6 +159,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// ── User / KYC ────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/mobile/user/profile", s.requireAuth(s.handleGetProfile))
+	mux.HandleFunc("GET /api/mobile/user/membership", s.requireAuth(s.handleGetMembership))
 	mux.HandleFunc("PUT /api/mobile/user/profile", s.requireAuth(s.handleUpdateProfile))
 	mux.HandleFunc("POST /api/mobile/user/avatar", s.requireAuth(s.handleUploadAvatar))
 	mux.HandleFunc("DELETE /api/mobile/user/account", s.requireAuth(s.handleDeleteAccount))
@@ -229,6 +230,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/settings", s.requireAuth(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/mobile/settings", s.requireAuth(s.handleUpdateSettings))
 	mux.HandleFunc("GET /api/mobile/settings/limits", s.requireAuth(s.handleGetLimits))
+	mux.HandleFunc("GET /api/mobile/settings/preferences", s.requireAuth(s.handleGetPreferences))
+	mux.HandleFunc("PUT /api/mobile/settings/preferences", s.requireAuth(s.handleUpdatePreferences))
 
 	// ── Health ────────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/mobile/health", s.handleHealth)
@@ -243,6 +246,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/countries/detect", s.handleDetectCountry)
 	mux.HandleFunc("GET /api/mobile/countries/{code}", s.handleGetCountry)
 	mux.HandleFunc("GET /api/mobile/countries/{code}/rails", s.handleListCountryRails)
+
+	mux.HandleFunc("GET /api/mobile/content/faq", s.handleContentFAQ)
+	mux.HandleFunc("GET /api/mobile/content/{document}", s.handleContentDocument)
+	mux.HandleFunc("GET /api/mobile/app/about", s.handleAppAbout)
 
 	// ── Phase 5: KYC async (non-blocking) ────────────────────────────────────
 	mux.HandleFunc("POST /api/mobile/uploads/kyc", s.requireAuth(s.handleUploadKYCMedia))
