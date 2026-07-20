@@ -173,7 +173,10 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "USDT/BRL rate is stale", "code": "NFC_PRICE_STALE", "response_code": "91"})
 		return
 	}
-	required := money.TokensFromFiat(amount, money.RateFromFloat(price.Price))
+	feeBps := maxInt(0, s.cfg.NFCFeeBps)
+	feeBRL := money.FeeBps(amount, feeBps)
+	totalBRL := amount + feeBRL
+	required := money.TokensFromFiat(totalBRL, money.RateFromFloat(price.Price))
 	if required <= 0 {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "invalid required USDT amount"})
 		return
@@ -191,6 +194,9 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 		TerminalID:      req.TerminalID,
 		ExternalRef:     req.ExternalRef,
 		AmountBRLMinor:  int64(amount),
+		FeeBRLMinor:     int64(feeBRL),
+		TotalBRLMinor:   int64(totalBRL),
+		FeeBps:          feeBps,
 		USDTRate:        price.Price,
 		RequiredUSDTMic: int64(required),
 		HoldExpiresAt:   time.Now().UTC().Add(time.Duration(s.cfg.NFCHoldTTLSeconds) * time.Second),
@@ -426,24 +432,28 @@ func (s *Server) authorizeNFCTerminal(w http.ResponseWriter, r *http.Request, me
 
 func nfcAuthorizationView(a *database.NFCAuthorization) map[string]any {
 	out := map[string]any{
-		"authorization_id": a.ID,
-		"token_id":         a.TokenID,
-		"wallet_address":   a.Wallet,
-		"network":          a.Network,
-		"merchant_id":      a.MerchantID,
-		"terminal_id":      a.TerminalID,
-		"amount_brl":       fmt.Sprintf("%.2f", float64(a.AmountBRLMinor)/100),
-		"required_usdt":    fmt.Sprintf("%.6f", float64(a.RequiredUSDTMic)/1_000_000),
-		"usdt_rate":        fmt.Sprintf("%.4f", a.USDTRate),
-		"status":           a.Status,
-		"response_code":    a.ResponseCode,
-		"reason":           a.Reason,
-		"idempotent":       a.Idempotent,
-		"created_at":       a.CreatedAt,
-		"rail":             "chainfx_tap",
-		"scheme":           "chainfx_own_closed_loop",
-		"card_network":     "none",
-		"settlement":       nfcSettlementView(a),
+		"authorization_id":    a.ID,
+		"token_id":            a.TokenID,
+		"wallet_address":      a.Wallet,
+		"network":             a.Network,
+		"merchant_id":         a.MerchantID,
+		"terminal_id":         a.TerminalID,
+		"amount_brl":          fmt.Sprintf("%.2f", float64(a.AmountBRLMinor)/100),
+		"merchant_amount_brl": fmt.Sprintf("%.2f", float64(a.AmountBRLMinor)/100),
+		"chainfx_fee_brl":     fmt.Sprintf("%.2f", float64(a.FeeBRLMinor)/100),
+		"total_debit_brl":     fmt.Sprintf("%.2f", float64(a.TotalBRLMinor)/100),
+		"fee_bps":             a.FeeBps,
+		"required_usdt":       fmt.Sprintf("%.6f", float64(a.RequiredUSDTMic)/1_000_000),
+		"usdt_rate":           fmt.Sprintf("%.4f", a.USDTRate),
+		"status":              a.Status,
+		"response_code":       a.ResponseCode,
+		"reason":              a.Reason,
+		"idempotent":          a.Idempotent,
+		"created_at":          a.CreatedAt,
+		"rail":                "chainfx_tap",
+		"scheme":              "chainfx_own_closed_loop",
+		"card_network":        "none",
+		"settlement":          nfcSettlementView(a),
 	}
 	if a.ExternalRef != "" {
 		out["external_ref"] = a.ExternalRef
@@ -462,19 +472,23 @@ func (s *Server) publishNFCEvent(eventType string, a *database.NFCAuthorization)
 		Type:    eventType,
 		OrderID: a.ID,
 		Payload: map[string]any{
-			"authorization_id":         a.ID,
-			"wallet_address":           a.Wallet,
-			"network":                  a.Network,
-			"merchant_id":              a.MerchantID,
-			"terminal_id":              a.TerminalID,
-			"external_ref":             a.ExternalRef,
-			"amount_brl_minor":         a.AmountBRLMinor,
-			"required_usdt_micro":      a.RequiredUSDTMic,
-			"rail":                     "chainfx_tap",
-			"scheme":                   "chainfx_own_closed_loop",
-			"card_network":             "none",
-			"fiat_settlement_rail":     "efi_pix",
-			"merchant_settlement_mode": "manual_or_worker",
+			"authorization_id":          a.ID,
+			"wallet_address":            a.Wallet,
+			"network":                   a.Network,
+			"merchant_id":               a.MerchantID,
+			"terminal_id":               a.TerminalID,
+			"external_ref":              a.ExternalRef,
+			"amount_brl_minor":          a.AmountBRLMinor,
+			"merchant_amount_brl_minor": a.AmountBRLMinor,
+			"chainfx_fee_brl_minor":     a.FeeBRLMinor,
+			"total_debit_brl_minor":     a.TotalBRLMinor,
+			"fee_bps":                   a.FeeBps,
+			"required_usdt_micro":       a.RequiredUSDTMic,
+			"rail":                      "chainfx_tap",
+			"scheme":                    "chainfx_own_closed_loop",
+			"card_network":              "none",
+			"fiat_settlement_rail":      "efi_pix",
+			"merchant_settlement_mode":  "manual_or_worker",
 		},
 	})
 }
