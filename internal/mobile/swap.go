@@ -3,9 +3,12 @@ package mobile
 // Phase 5 direct crypto-to-crypto swap endpoints for mobile.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"payment-gateway/internal/models"
 )
@@ -49,8 +52,12 @@ func (s *Server) handleSwapQuote(w http.ResponseWriter, r *http.Request) {
 	netFrom := req.Amount - fee
 	estimatedTo := netFrom * rate
 	minReceived := estimatedTo * (1 - req.Slippage)
+	quoteID := mobileSwapQuoteID()
+	expiresAt := time.Now().Add(60 * time.Second).UTC()
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"quote_id":       quoteID,
+		"expires_at":     expiresAt.Format(time.RFC3339),
 		"from_asset":     req.FromAsset,
 		"to_asset":       req.ToAsset,
 		"from_amount":    req.Amount,
@@ -63,6 +70,14 @@ func (s *Server) handleSwapQuote(w http.ResponseWriter, r *http.Request) {
 		"from_price_brl": fromBRL,
 		"to_price_brl":   toBRL,
 	})
+}
+
+func mobileSwapQuoteID() string {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return "swq_" + hex.EncodeToString(b[:])
+	}
+	return "swq_" + strings.ToLower(hex.EncodeToString([]byte(time.Now().UTC().Format("20060102150405.000000000"))))
 }
 
 func (s *Server) handleSwapExecute(w http.ResponseWriter, r *http.Request) {
