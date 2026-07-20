@@ -38,6 +38,7 @@ func (w *NFCSettlementReconciliationWorker) Start(ctx context.Context) {
 }
 
 func (w *NFCSettlementReconciliationWorker) runOnce(ctx context.Context) {
+	start := time.Now()
 	if w == nil || w.db == nil {
 		return
 	}
@@ -53,15 +54,20 @@ func (w *NFCSettlementReconciliationWorker) runOnce(ctx context.Context) {
 	}
 	metrics.SetNFCSettlementSnapshot(metrics.NFCSettlementSnapshot{
 		Counts:                     report.Snapshot.Counts,
+		AnomalyCounts:              report.Snapshot.AnomalyCounts,
 		QueueAgeSeconds:            report.Snapshot.QueueAgeSeconds,
 		SubmitLatencySeconds:       report.Snapshot.SubmitLatencySeconds,
 		ConfirmationLatencySeconds: report.Snapshot.ConfirmationLatencySeconds,
 		EndToEndSeconds:            report.Snapshot.EndToEndSeconds,
+		TreasurySnapshotAgeSeconds: report.Snapshot.TreasurySnapshotAgeSeconds,
 		EfiBalanceBRL:              report.Snapshot.EfiBalanceBRL,
 		EfiPendingBRL:              report.Snapshot.PendingBRL,
 		EfiSubmittedBRL:            report.Snapshot.SubmittedBRL,
+		EfiReservedBRL:             report.Snapshot.ReservedBRL,
 		EfiMinBufferBRL:            report.Snapshot.EfiMinBufferBRL,
 		EfiAvailableRealBRL:        report.Snapshot.EfiAvailableRealBRL,
+		ReconciliationLastSuccess:  float64(time.Now().Unix()),
+		ReconciliationDuration:     time.Since(start).Seconds(),
 	})
 	for _, issue := range report.Issues {
 		slog.Warn("NFC settlement reconciliation anomaly",
