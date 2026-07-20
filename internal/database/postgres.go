@@ -2651,6 +2651,38 @@ CREATE INDEX IF NOT EXISTS idx_nfc_auth_wallet_created ON nfc_authorizations(LOW
 CREATE INDEX IF NOT EXISTS idx_nfc_auth_merchant_created ON nfc_authorizations(merchant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_nfc_auth_status_hold ON nfc_authorizations(status, hold_expires_at) WHERE status = 'approved';
 
+CREATE TABLE IF NOT EXISTS merchant_settlements (
+  id TEXT PRIMARY KEY,
+  merchant_id TEXT NOT NULL REFERENCES nfc_merchants(id),
+  terminal_id TEXT NOT NULL,
+  authorization_id TEXT NOT NULL UNIQUE REFERENCES nfc_authorizations(id),
+  capture_id TEXT NOT NULL,
+  amount_brl_minor BIGINT NOT NULL CHECK (amount_brl_minor > 0),
+  fee_brl_minor BIGINT NOT NULL DEFAULT 0 CHECK (fee_brl_minor >= 0),
+  provider TEXT NOT NULL DEFAULT 'efi',
+  rail TEXT NOT NULL DEFAULT 'pix_send',
+  status TEXT NOT NULL CHECK (status IN ('PENDING','SUBMITTED','CONFIRMED','FAILED')),
+  provider_reference TEXT,
+  provider_status TEXT,
+  txid TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  target_pix_key TEXT,
+  target_document TEXT,
+  retry_count INT NOT NULL DEFAULT 0,
+  next_retry_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  error_message TEXT,
+  submitted_at TIMESTAMPTZ,
+  confirmed_at TIMESTAMPTZ,
+  failed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_merchant_settlements_status_retry
+  ON merchant_settlements(status, next_retry_at, created_at)
+  WHERE status IN ('PENDING','SUBMITTED');
+CREATE INDEX IF NOT EXISTS idx_merchant_settlements_merchant_created
+  ON merchant_settlements(merchant_id, created_at DESC);
+
 -- M2M Agent Pay supports shared configured deposit addresses. Older hardening
 -- deployments created a unique pending-address index that blocks concurrent
 -- PIX/card intents when all deposits route to the same treasury address.
