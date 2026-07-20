@@ -132,6 +132,35 @@ type NFCCaptureResult struct {
 	Settlement    *MerchantSettlement `json:"settlement,omitempty"`
 }
 
+type NFCSettlementReconciliationIssue struct {
+	Key             string         `json:"key"`
+	Type            string         `json:"type"`
+	Severity        string         `json:"severity"`
+	AuthorizationID sql.NullString `json:"authorization_id"`
+	SettlementID    sql.NullString `json:"settlement_id"`
+	MerchantID      sql.NullString `json:"merchant_id"`
+	Details         map[string]any `json:"details,omitempty"`
+}
+
+type NFCSettlementOperationalSnapshot struct {
+	Counts                     map[string]int64 `json:"counts"`
+	QueueAgeSeconds            float64          `json:"queue_age_seconds"`
+	SubmitLatencySeconds       float64          `json:"submit_latency_seconds"`
+	ConfirmationLatencySeconds float64          `json:"confirmation_latency_seconds"`
+	EndToEndSeconds            float64          `json:"end_to_end_seconds"`
+	PendingBRL                 float64          `json:"pending_brl"`
+	SubmittedBRL               float64          `json:"submitted_brl"`
+	ConfirmedBRL               float64          `json:"confirmed_brl"`
+	EfiBalanceBRL              float64          `json:"efi_balance_brl"`
+	EfiMinBufferBRL            float64          `json:"efi_min_buffer_brl"`
+	EfiAvailableRealBRL        float64          `json:"efi_available_real_brl"`
+}
+
+type NFCSettlementReconciliationReport struct {
+	Issues   []NFCSettlementReconciliationIssue `json:"issues"`
+	Snapshot NFCSettlementOperationalSnapshot   `json:"snapshot"`
+}
+
 type NFCBalance struct {
 	Wallet         string    `json:"wallet_address"`
 	Network        string    `json:"network"`
@@ -937,6 +966,178 @@ func classifyMerchantProviderStatus(status string) string {
 	default:
 		return MerchantSettlementStatusSubmitted
 	}
+}
+
+func (db *DB) ReconcileNFCMerchantSettlements(ctx context.Context, efiBalanceBRL, minBufferBRL float64) (*NFCSettlementReconciliationReport, error) {
+	issues, err := db.detectNFCSettlementIssues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.persistNFCSettlementIssues(ctx, issues); err != nil {
+		return nil, err
+	}
+	snapshot, err := db.NFCSettlementOperationalSnapshot(ctx, efiBalanceBRL, minBufferBRL)
+	if err != nil {
+		return nil, err
+	}
+	return &NFCSettlementReconciliationReport{Issues: issues, Snapshot: snapshot}, nil
+}
+
+func (db *DB) NFCSettlementOperationalSnapshot(ctx context.Context, efiBalanceBRL, minBufferBRL float64) (NFCSettlementOperationalSnapshot, error) {
+	snapshot := NFCSettlementOperationalSnapshot{Counts: map[string]int64{}, EfiBalanceBRL: efiBalanceBRL, EfiMinBufferBRL: minBufferBRL}
+	rows, err := db.SQL.QueryContext(ctx, `
+SELECT status, COUNT(*)
+FROM merchant_settlements
+GROUP BY status`)
+	if err != nil {
+		return snapshot, fmt.Errorf("nfc settlement metrics: counts: %w", err)
+	}
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		snapshot.Counts[status] = count
+	}
+	if err := rows.Close(); err != nil {
+		return snapshot, err
+	}
+
+	_ = db.SQL.QueryRowContext(ctx, `
+SELECT COALESCE(EXTRACT(EPOCH FROM NOW() - MIN(created_at)), 0)
+FROM merchant_settlements
+WHERE status IN ('PENDING','RETRYABLE','SUBMITTED','SUBMISSION_UNKNOWN')`).Scan(&snapshot.QueueAgeSeconds)
+	_ = db.SQL.QueryRowContext(ctx, `
+SELECT COALESCE(AVG(EXTRACT(EPOCH FROM submitted_at - created_at)), 0)
+FROM merchant_settlements
+WHERE submitted_at IS NOT NULL`).Scan(&snapshot.SubmitLatencySeconds)
+	_ = db.SQL.QueryRowContext(ctx, `
+SELECT COALESCE(AVG(EXTRACT(EPOCH FROM confirmed_at - submitted_at)), 0)
+FROM merchant_settlements
+WHERE confirmed_at IS NOT NULL AND submitted_at IS NOT NULL`).Scan(&snapshot.ConfirmationLatencySeconds)
+	_ = db.SQL.QueryRowContext(ctx, `
+SELECT COALESCE(AVG(EXTRACT(EPOCH FROM confirmed_at - created_at)), 0)
+FROM merchant_settlements
+WHERE confirmed_at IS NOT NULL`).Scan(&snapshot.EndToEndSeconds)
+	_ = db.SQL.QueryRowContext(ctx, `
+SELECT
+  COALESCE(SUM(amount_brl_minor) FILTER (WHERE status IN ('PENDING','RETRYABLE','MANUAL_REQUIRED')), 0)::float8 / 100,
+  COALESCE(SUM(amount_brl_minor) FILTER (WHERE status IN ('SUBMITTED','SUBMISSION_UNKNOWN','PROCESSING')), 0)::float8 / 100,
+  COALESCE(SUM(amount_brl_minor) FILTER (WHERE status = 'CONFIRMED'), 0)::float8 / 100
+FROM merchant_settlements`).Scan(&snapshot.PendingBRL, &snapshot.SubmittedBRL, &snapshot.ConfirmedBRL)
+	snapshot.EfiAvailableRealBRL = efiBalanceBRL - snapshot.PendingBRL - snapshot.SubmittedBRL - minBufferBRL
+	return snapshot, nil
+}
+
+func (db *DB) detectNFCSettlementIssues(ctx context.Context) ([]NFCSettlementReconciliationIssue, error) {
+	const q = `
+WITH duplicate_authorizations AS (
+  SELECT authorization_id, COUNT(*) AS duplicate_count
+  FROM merchant_settlements
+  GROUP BY authorization_id
+  HAVING COUNT(*) > 1
+)
+SELECT 'CAPTURED_WITHOUT_SETTLEMENT:' || a.id, 'CAPTURED_WITHOUT_SETTLEMENT', 'critical',
+       a.id, NULL::TEXT, a.merchant_id,
+       jsonb_build_object('amount_brl_minor', a.amount_brl_minor)
+FROM nfc_authorizations a
+LEFT JOIN merchant_settlements ms ON ms.authorization_id = a.id
+WHERE a.status = 'captured' AND ms.id IS NULL
+UNION ALL
+SELECT 'SETTLEMENT_WITHOUT_CAPTURED_AUTH:' || ms.id, 'SETTLEMENT_WITHOUT_CAPTURED_AUTH', 'critical',
+       a.id, ms.id, ms.merchant_id,
+       jsonb_build_object('authorization_status', COALESCE(a.status, 'missing'), 'amount_brl_minor', ms.amount_brl_minor)
+FROM merchant_settlements ms
+LEFT JOIN nfc_authorizations a ON a.id = ms.authorization_id
+WHERE a.id IS NULL OR a.status <> 'captured'
+UNION ALL
+SELECT 'CONFIRMED_WITHOUT_E2E:' || ms.id, 'CONFIRMED_WITHOUT_E2E', 'critical',
+       ms.authorization_id, ms.id, ms.merchant_id,
+       jsonb_build_object('provider_status', ms.provider_status)
+FROM merchant_settlements ms
+WHERE ms.status = 'CONFIRMED' AND COALESCE(ms.provider_e2e_id, ms.provider_reference, ms.txid, '') = ''
+UNION ALL
+SELECT 'SUBMITTED_OLD:' || ms.id, 'SUBMITTED_OLD', 'warning',
+       ms.authorization_id, ms.id, ms.merchant_id,
+       jsonb_build_object('age_seconds', EXTRACT(EPOCH FROM NOW() - COALESCE(ms.submitted_at, ms.updated_at)))
+FROM merchant_settlements ms
+WHERE ms.status = 'SUBMITTED' AND COALESCE(ms.submitted_at, ms.updated_at) < NOW() - INTERVAL '5 minutes'
+UNION ALL
+SELECT 'SUBMISSION_UNKNOWN_OLD:' || ms.id, 'SUBMISSION_UNKNOWN_OLD', 'critical',
+       ms.authorization_id, ms.id, ms.merchant_id,
+       jsonb_build_object('age_seconds', EXTRACT(EPOCH FROM NOW() - ms.updated_at), 'error', ms.error_message)
+FROM merchant_settlements ms
+WHERE ms.status = 'SUBMISSION_UNKNOWN' AND ms.updated_at < NOW() - INTERVAL '2 minutes'
+UNION ALL
+SELECT 'EFI_AMOUNT_MISMATCH:' || ms.id || ':' || ev.id, 'EFI_AMOUNT_MISMATCH', 'critical',
+       ms.authorization_id, ms.id, ms.merchant_id,
+       jsonb_build_object('settlement_amount_brl_minor', ms.amount_brl_minor, 'provider_amount_brl_minor', (ev.payload->>'amount_brl_minor')::BIGINT)
+FROM merchant_settlements ms
+JOIN merchant_settlement_provider_events ev ON ev.settlement_id = ms.id
+WHERE ev.payload ? 'amount_brl_minor'
+  AND (ev.payload->>'amount_brl_minor') ~ '^[0-9]+$'
+  AND (ev.payload->>'amount_brl_minor')::BIGINT <> ms.amount_brl_minor
+UNION ALL
+SELECT 'DUPLICATE_SETTLEMENT_FOR_AUTH:' || d.authorization_id, 'DUPLICATE_SETTLEMENT_FOR_AUTH', 'critical',
+       d.authorization_id, NULL::TEXT, NULL::TEXT,
+       jsonb_build_object('duplicate_count', d.duplicate_count)
+FROM duplicate_authorizations d
+UNION ALL
+SELECT 'SETTLEMENT_MERCHANT_MISMATCH:' || ms.id, 'SETTLEMENT_MERCHANT_MISMATCH', 'critical',
+       ms.authorization_id, ms.id, ms.merchant_id,
+       jsonb_build_object('authorization_merchant_id', a.merchant_id, 'settlement_merchant_id', ms.merchant_id)
+FROM merchant_settlements ms
+JOIN nfc_authorizations a ON a.id = ms.authorization_id
+WHERE a.merchant_id <> ms.merchant_id
+ORDER BY 2, 1`
+	rows, err := db.SQL.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("nfc settlement reconciliation: detect: %w", err)
+	}
+	defer rows.Close()
+	var issues []NFCSettlementReconciliationIssue
+	for rows.Next() {
+		var issue NFCSettlementReconciliationIssue
+		var raw []byte
+		if err := rows.Scan(&issue.Key, &issue.Type, &issue.Severity, &issue.AuthorizationID, &issue.SettlementID, &issue.MerchantID, &raw); err != nil {
+			return nil, err
+		}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &issue.Details)
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
+func (db *DB) persistNFCSettlementIssues(ctx context.Context, issues []NFCSettlementReconciliationIssue) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	tx, err := db.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	for _, issue := range issues {
+		raw, _ := json.Marshal(issue.Details)
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO nfc_settlement_reconciliation_anomalies
+  (anomaly_key, anomaly_type, severity, authorization_id, settlement_id, merchant_id, details, status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,'OPEN')
+ON CONFLICT (anomaly_key) DO UPDATE SET
+  severity=EXCLUDED.severity,
+  details=EXCLUDED.details,
+  status='OPEN',
+  last_seen_at=NOW(),
+  resolved_at=NULL`,
+			issue.Key, issue.Type, issue.Severity, nullableString(issue.AuthorizationID.String), nullableString(issue.SettlementID.String), nullableString(issue.MerchantID.String), raw); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func txGetMerchantSettlementByAuthorization(ctx context.Context, tx *sql.Tx, authorizationID string) (*MerchantSettlement, error) {
