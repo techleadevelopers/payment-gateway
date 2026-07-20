@@ -90,6 +90,7 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		CustomerName  string  `json:"customer_name"`
 		CustomerEmail string  `json:"customer_email"`
 		CustomerCPF   string  `json:"customer_cpf"`
+		CustomerPhone string  `json:"customer_phone"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.AmountBRL <= 0 || req.DestAddress == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amount_brl e dest_address obrigatórios"})
@@ -102,6 +103,28 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		req.PaymentMethod = "pix"
 	}
 
+	user, _ := mobileDB(s.db).GetUserByID(r.Context(), uid)
+	customerName := strings.TrimSpace(req.CustomerName)
+	customerEmail := strings.TrimSpace(req.CustomerEmail)
+	customerCPF := onlyDigitsMobile(req.CustomerCPF)
+	customerPhone := onlyDigitsMobile(req.CustomerPhone)
+	if user != nil {
+		customerName = strings.TrimSpace(firstNonEmptyStr(customerName, mobileUserString(user.FullName)))
+		customerEmail = strings.TrimSpace(firstNonEmptyStr(customerEmail, user.Email))
+		customerCPF = onlyDigitsMobile(firstNonEmptyStr(customerCPF, mobileUserCPF(user)))
+		customerPhone = onlyDigitsMobile(firstNonEmptyStr(customerPhone, mobileUserString(user.Phone)))
+	}
+	if strings.EqualFold(req.PaymentMethod, "pix") {
+		if customerName == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "nome do cliente obrigatorio no perfil"})
+			return
+		}
+		if customerCPF == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "cpf do cliente obrigatorio no perfil ou KYC"})
+			return
+		}
+	}
+
 	// Forward to existing /api/buy
 	payload := map[string]any{
 		"amountBRL":     req.AmountBRL,
@@ -109,9 +132,10 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		"address":       req.DestAddress,
 		"paymentMethod": req.PaymentMethod,
 		"customer": map[string]any{
-			"name":  req.CustomerName,
-			"email": req.CustomerEmail,
-			"cpf":   req.CustomerCPF,
+			"name":  customerName,
+			"email": customerEmail,
+			"cpf":   customerCPF,
+			"phone": customerPhone,
 		},
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 1500*time.Millisecond)
@@ -120,7 +144,7 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	resp, err := forwardToInternal(internalReq, "POST", s.internalBase(r)+"/api/buy", payload, s.internalAPIKey())
 	if err != nil {
 		if strings.EqualFold(req.PaymentMethod, "pix") {
-			if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, req.PaymentMethod, req.CustomerEmail, "internal_request_failed") {
+			if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, req.PaymentMethod, customerEmail, "internal_request_failed") {
 				return
 			}
 		}
@@ -130,7 +154,7 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 500 && strings.EqualFold(req.PaymentMethod, "pix") {
-		if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, req.PaymentMethod, req.CustomerEmail, "payment_provider_unavailable") {
+		if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, req.PaymentMethod, customerEmail, "payment_provider_unavailable") {
 			return
 		}
 	}
