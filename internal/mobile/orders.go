@@ -97,6 +97,7 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		AmountBRL     float64 `json:"amount_brl"`
 		Asset         string  `json:"asset"`
 		DestAddress   string  `json:"dest_address"`
+		Network       string  `json:"network"`
 		PaymentMethod string  `json:"payment_method"` // "pix" | "card"
 		CustomerName  string  `json:"customer_name"`
 		CustomerEmail string  `json:"customer_email"`
@@ -113,6 +114,11 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PaymentMethod == "" {
 		req.PaymentMethod = "pix"
+	}
+	network := normalizeMobileTransferNetwork(firstNonEmptyStr(req.Network, "BSC"))
+	if network != "BSC" && network != "POLYGON" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC ou POLYGON"})
+		return
 	}
 	req.Asset = strings.ToUpper(firstNonEmptyStr(req.Asset, "USDT"))
 	if !mobileTradeAssetSupported(req.Asset) {
@@ -152,6 +158,7 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		"amountBRL":     req.AmountBRL,
 		"asset":         req.Asset,
 		"address":       req.DestAddress,
+		"network":       network,
 		"paymentMethod": req.PaymentMethod,
 		"quoteId":       req.QuoteID,
 		"rateLocked":    claims.Rate,
@@ -168,7 +175,7 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	resp, err := forwardToInternal(internalReq, "POST", s.internalBase(r)+"/api/buy", payload, s.internalAPIKey())
 	if err != nil {
 		if strings.EqualFold(req.PaymentMethod, "pix") {
-			if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, req.PaymentMethod, customerEmail, claims.Rate, "internal_request_failed") {
+			if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, network, req.PaymentMethod, customerEmail, claims.Rate, "internal_request_failed") {
 				return
 			}
 		}
@@ -178,7 +185,7 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 500 && strings.EqualFold(req.PaymentMethod, "pix") {
-		if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, req.PaymentMethod, customerEmail, claims.Rate, "payment_provider_unavailable") {
+		if s.writeDegradedMobileBuy(w, r, req.AmountBRL, req.Asset, req.DestAddress, network, req.PaymentMethod, customerEmail, claims.Rate, "payment_provider_unavailable") {
 			return
 		}
 	}
@@ -195,12 +202,16 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
-func (s *Server) writeDegradedMobileBuy(w http.ResponseWriter, r *http.Request, amountBRL float64, asset, destAddress, paymentMethod, customerEmail string, lockedRate float64, reason string) bool {
+func (s *Server) writeDegradedMobileBuy(w http.ResponseWriter, r *http.Request, amountBRL float64, asset, destAddress, network, paymentMethod, customerEmail string, lockedRate float64, reason string) bool {
 	uid := userIDFromCtx(r)
 	asset = strings.ToUpper(strings.TrimSpace(firstNonEmptyStr(asset, "USDT")))
 	paymentMethod = strings.ToLower(strings.TrimSpace(firstNonEmptyStr(paymentMethod, "pix")))
 	destAddress = strings.TrimSpace(destAddress)
+	network = normalizeMobileTransferNetwork(firstNonEmptyStr(network, "BSC"))
 	if paymentMethod != "pix" || amountBRL <= 0 || !looksLikeEVMAddress(destAddress) {
+		return false
+	}
+	if network != "BSC" && network != "POLYGON" {
 		return false
 	}
 	if min := s.mobileBuyMinBRL(); min > 0 && amountBRL < min {
@@ -265,8 +276,8 @@ func (s *Server) writeDegradedMobileBuy(w http.ResponseWriter, r *http.Request, 
 		SourceAsset:        "BRL",
 		DestinationAsset:   asset,
 		SourceNetwork:      "FIAT",
-		DestinationNetwork: "BSC",
-		DestinationChainID: transactions.ChainID("BSC"),
+		DestinationNetwork: network,
+		DestinationChainID: transactions.ChainID(network),
 		SourceAmount:       totalFiat,
 		DestinationAmount:  cryptoAmount,
 		ExchangeRate:       rate,
@@ -301,7 +312,7 @@ func (s *Server) writeDegradedMobileBuy(w http.ResponseWriter, r *http.Request, 
 		"marketRate":           roundRateLocal(marketRate),
 		"cryptoAmount":         cryptoAmount,
 		"asset":                asset,
-		"network":              "BSC",
+		"network":              network,
 		"destAddress":          destAddress,
 		"feeBreakdown":         feeBreakdown,
 		"payment": map[string]any{
