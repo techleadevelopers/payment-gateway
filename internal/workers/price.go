@@ -32,13 +32,23 @@ type PriceSnapshot struct {
 
 type CoinGeckoResponse struct {
 	Tether struct {
-		Brl float64 `json:"brl"`
-		Usd float64 `json:"usd"`
-		Eur float64 `json:"eur"`
+		Brl          float64 `json:"brl"`
+		Usd          float64 `json:"usd"`
+		Eur          float64 `json:"eur"`
+		Brl24hChange float64 `json:"brl_24h_change"`
 	} `json:"tether"`
 	Bitcoin struct {
-		Usd float64 `json:"usd"`
+		Usd          float64 `json:"usd"`
+		Brl24hChange float64 `json:"brl_24h_change"`
 	} `json:"bitcoin"`
+	Ethereum struct {
+		Usd          float64 `json:"usd"`
+		Brl24hChange float64 `json:"brl_24h_change"`
+	} `json:"ethereum"`
+	Binancecoin struct {
+		Usd          float64 `json:"usd"`
+		Brl24hChange float64 `json:"brl_24h_change"`
+	} `json:"binancecoin"`
 }
 
 type BinanceTickerResponse struct {
@@ -143,7 +153,7 @@ func (pw *PriceWorker) fetchPrice() {
 
 func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]float64, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin&vs_currencies=brl,usd,eur", nil)
+		"https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin,ethereum,binancecoin&vs_currencies=brl,usd,eur&include_24hr_change=true", nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -169,11 +179,19 @@ func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]flo
 		"USD":            data.Tether.Usd,
 		"EUR":            data.Tether.Eur,
 		"BTCUSDT":        data.Bitcoin.Usd / data.Tether.Usd,
+		"ETHUSDT":        data.Ethereum.Usd / data.Tether.Usd,
+		"BNBUSDT":        data.Binancecoin.Usd / data.Tether.Usd,
 		"EURUSD":         data.Tether.Usd / data.Tether.Eur,
 		"USDTBRL":        data.Tether.Brl,
 		"USDTUSD":        data.Tether.Usd,
 		"USDTEUR":        data.Tether.Eur,
 		"BTCUSDT_SOURCE": data.Bitcoin.Usd,
+		"ETHUSDT_SOURCE": data.Ethereum.Usd,
+		"BNBUSDT_SOURCE": data.Binancecoin.Usd,
+		"USDT_CHANGE24H": data.Tether.Brl24hChange,
+		"BTC_CHANGE24H":  data.Bitcoin.Brl24hChange,
+		"ETH_CHANGE24H":  data.Ethereum.Brl24hChange,
+		"BNB_CHANGE24H":  data.Binancecoin.Brl24hChange,
 	}
 
 	if prices["BRL"] <= 0 || prices["USD"] <= 0 {
@@ -188,6 +206,14 @@ func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]flo
 		delete(prices, "BTCUSDT")
 		delete(prices, "BTCUSDT_SOURCE")
 	}
+	if data.Ethereum.Usd <= 0 {
+		delete(prices, "ETHUSDT")
+		delete(prices, "ETHUSDT_SOURCE")
+	}
+	if data.Binancecoin.Usd <= 0 {
+		delete(prices, "BNBUSDT")
+		delete(prices, "BNBUSDT_SOURCE")
+	}
 	return prices, "coingecko", nil
 }
 
@@ -196,6 +222,8 @@ func (pw *PriceWorker) fetchBinancePrices(ctx context.Context) (map[string]float
 		"BRL":     "USDTBRL",
 		"USDTBRL": "USDTBRL",
 		"BTCUSDT": "BTCUSDT",
+		"ETHUSDT": "ETHUSDT",
+		"BNBUSDT": "BNBUSDT",
 		"EURUSD":  "EURUSDT",
 	}
 	prices := map[string]float64{"USD": 1, "USDTUSD": 1}
@@ -207,6 +235,15 @@ func (pw *PriceWorker) fetchBinancePrices(ctx context.Context) (map[string]float
 			continue
 		}
 		prices[key] = price
+		if symbol == "BTCUSDT" {
+			prices["BTCUSDT_SOURCE"] = price
+		}
+		if symbol == "ETHUSDT" {
+			prices["ETHUSDT_SOURCE"] = price
+		}
+		if symbol == "BNBUSDT" {
+			prices["BNBUSDT_SOURCE"] = price
+		}
 		if symbol == "EURUSDT" && price > 0 {
 			prices["EUR"] = 1 / price
 			prices["USDTEUR"] = 1 / price
