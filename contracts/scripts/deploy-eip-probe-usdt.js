@@ -38,22 +38,66 @@ function firstEnv(...keys) {
   return "";
 }
 
-function firstRPC() {
+function normalizeNetworkLabel(value) {
+  return (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+}
+
+function networkDefaults(networkLabel) {
+  switch (normalizeNetworkLabel(networkLabel)) {
+    case "bsc-testnet":
+    case "bsctestnet":
+    case "bsc-test":
+      return {
+        label: "bsc-testnet",
+        expectedChainId: 97n,
+        rpcKeys: [
+          "BSC_TESTNET_RPC_URLS",
+          "BSC_TESTNET_RPC_URL",
+          "BNB_TESTNET_RPC_URLS",
+          "BNB_TESTNET_RPC_URL"
+        ],
+        fallbackRpc: "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+      };
+    case "polygon-amoy":
+    case "amoy":
+    case "polygonamoy":
+      return {
+        label: "polygon-amoy",
+        expectedChainId: 80002n,
+        rpcKeys: [
+          "POLYGON_AMOY_RPC_URLS",
+          "POLYGON_AMOY_RPC_URL",
+          "POLYGON_TESTNET_RPC_URLS",
+          "POLYGON_TESTNET_RPC_URL"
+        ],
+        fallbackRpc: "https://polygon-amoy-bor-rpc.publicnode.com"
+      };
+    default:
+      return {
+        label: networkLabel || "probe",
+        expectedChainId: 0n,
+        rpcKeys: [
+          "EIP_PROBE_RPC_URLS",
+          "RPC_URLS",
+          "RPC_URL",
+          "RPC1",
+          "RPC2",
+          "RPC3",
+          "RPC4",
+          "RPCN"
+        ],
+        fallbackRpc: ""
+      };
+  }
+}
+
+function firstRPC(networkLabel) {
   const explicit = argValue("rpc");
-  const value = explicit || firstEnv(
-    "EIP_PROBE_RPC_URLS",
-    "POLYGON_AMOY_RPC_URLS",
-    "POLYGON_AMOY_RPC_URL",
-    "BNB_TESTNET_RPC_URLS",
-    "BSC_TESTNET_RPC_URL",
-    "BSC_RPC_URLS",
-    "RPC1",
-    "RPC2",
-    "RPC3",
-    "RPC4",
-    "RPCN",
-    "RPC_URL"
-  );
+  const defaults = networkDefaults(networkLabel);
+  const value = explicit || firstEnv(...defaults.rpcKeys) || defaults.fallbackRpc;
   return value.split(",").map((item) => item.trim()).filter(Boolean)[0] || "";
 }
 
@@ -121,7 +165,9 @@ async function main() {
   loadEnvFile(path.join(__dirname, "..", "..", ".env"));
   loadEnvFile(path.join(__dirname, "..", ".env"));
 
-  const rpc = firstRPC();
+  const networkLabel = argValue("network") || process.env.EIP_PROBE_NETWORK || "probe";
+  const networkConfig = networkDefaults(networkLabel);
+  const rpc = firstRPC(networkLabel);
   if (!rpc) {
     throw new Error("EIP_PROBE_RPC_URLS or another RPC env var is required");
   }
@@ -136,18 +182,22 @@ async function main() {
   const symbol = process.env.EIP_PROBE_TOKEN_SYMBOL || "USDT";
   const version = process.env.EIP_PROBE_TOKEN_VERSION || "1";
   const mintAmount = ethers.parseUnits(process.env.EIP_PROBE_MINT_AMOUNT || "1000", 6);
-  const networkLabel = argValue("network") || process.env.EIP_PROBE_NETWORK || "probe";
   const recipients = probeWalletAddresses();
 
   const provider = new ethers.JsonRpcProvider(rpc);
   const deployer = new ethers.Wallet(deployerKey, provider);
   const network = await provider.getNetwork();
+  if (networkConfig.expectedChainId !== 0n && network.chainId !== networkConfig.expectedChainId) {
+    throw new Error(
+      `RPC chainId ${network.chainId} does not match ${networkConfig.label} expected chainId ${networkConfig.expectedChainId}`
+    );
+  }
   const balance = await provider.getBalance(deployer.address);
   if (balance === 0n) {
     throw new Error(`deployer ${deployer.address} has zero native balance on chain ${network.chainId}`);
   }
 
-  console.log("network:", networkLabel);
+  console.log("network:", networkConfig.label);
   console.log("chainId:", network.chainId.toString());
   console.log("deployer:", deployer.address);
   console.log("deployerNativeWei:", balance.toString());
@@ -164,6 +214,27 @@ async function main() {
   const tokenAddress = await token.getAddress();
   console.log("MockUSDT3009:", tokenAddress);
 
+  const deploymentsDir = path.join(__dirname, "..", "deployments");
+  fs.mkdirSync(deploymentsDir, { recursive: true });
+  const deploymentRecord = {
+    contract: "MockUSDT3009",
+    network: networkConfig.label,
+    chainId: network.chainId.toString(),
+    address: tokenAddress,
+    deployer: deployer.address,
+    deployTx: deployTx.hash,
+    token: {
+      name,
+      symbol,
+      version,
+      decimals: 6
+    },
+    deployedAt: new Date().toISOString()
+  };
+  const deploymentPath = path.join(deploymentsDir, `mock-usdt-${networkConfig.label}.json`);
+  fs.writeFileSync(deploymentPath, `${JSON.stringify(deploymentRecord, null, 2)}\n`);
+  console.log("deploymentRecord:", deploymentPath);
+
   if (recipients.length === 0) {
     console.log("no EIP_PROBE_WALLET_PRIVATE_KEYS/EIP_PROBE_MINT_TO recipients found; skipping mint");
   }
@@ -177,6 +248,13 @@ async function main() {
   console.log("env suggestions:");
   console.log(`EIP_PROBE_ASSET=${symbol}`);
   console.log(`EIP_PROBE_TOKEN_CONTRACT=${tokenAddress}`);
+  if (networkConfig.expectedChainId === 97n) {
+    console.log(`BSC_CHAIN_ID=${network.chainId.toString()}`);
+    console.log(`BSC_USDT_CONTRACT=${tokenAddress}`);
+  } else if (networkConfig.expectedChainId === 80002n) {
+    console.log(`POLYGON_CHAIN_ID=${network.chainId.toString()}`);
+    console.log(`POLYGON_USDT_CONTRACT=${tokenAddress}`);
+  }
   console.log(`EIP_PROBE_TOKEN_NAME=${name}`);
   console.log(`EIP_PROBE_TOKEN_SYMBOL=${symbol}`);
   console.log(`EIP_PROBE_TOKEN_VERSION=${version}`);
