@@ -265,18 +265,18 @@ func (s *Server) handleNFCCaptureAuthorization(w http.ResponseWriter, r *http.Re
 	}
 	addServerTiming(r.Context(), "terminal_auth", time.Since(stage))
 	stage = time.Now()
-	auth, err := s.db.CaptureNFCAuthorization(r.Context(), id)
+	capture, err := s.db.CaptureNFCAuthorization(r.Context(), id)
 	addServerTiming(r.Context(), "ledger_capture", time.Since(stage))
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": "NFC_CAPTURE_FAILED"})
 		return
 	}
-	if auth == nil {
+	if capture == nil || capture.Authorization == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "authorization not found"})
 		return
 	}
-	s.publishNFCEvent("nfc.capture.completed", auth)
-	writeJSON(w, http.StatusOK, nfcAuthorizationView(auth))
+	s.publishNFCEvent("nfc.capture.completed", capture.Authorization, capture.Settlement)
+	writeJSON(w, http.StatusOK, nfcAuthorizationView(capture.Authorization, capture.Settlement))
 }
 
 func (s *Server) handleNFCReverseAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -430,7 +430,11 @@ func (s *Server) authorizeNFCTerminal(w http.ResponseWriter, r *http.Request, me
 	return nil, false
 }
 
-func nfcAuthorizationView(a *database.NFCAuthorization) map[string]any {
+func nfcAuthorizationView(a *database.NFCAuthorization, settlements ...*database.MerchantSettlement) map[string]any {
+	var settlement *database.MerchantSettlement
+	if len(settlements) > 0 {
+		settlement = settlements[0]
+	}
 	out := map[string]any{
 		"authorization_id":    a.ID,
 		"token_id":            a.TokenID,
@@ -453,7 +457,7 @@ func nfcAuthorizationView(a *database.NFCAuthorization) map[string]any {
 		"rail":                "chainfx_tap",
 		"scheme":              "chainfx_own_closed_loop",
 		"card_network":        "none",
-		"settlement":          nfcSettlementView(a),
+		"settlement":          nfcSettlementView(a, settlement),
 	}
 	if a.ExternalRef != "" {
 		out["external_ref"] = a.ExternalRef
@@ -464,42 +468,55 @@ func nfcAuthorizationView(a *database.NFCAuthorization) map[string]any {
 	return out
 }
 
-func (s *Server) publishNFCEvent(eventType string, a *database.NFCAuthorization) {
+func (s *Server) publishNFCEvent(eventType string, a *database.NFCAuthorization, settlements ...*database.MerchantSettlement) {
 	if s == nil || s.workers == nil || s.workers.Bus == nil || a == nil {
 		return
+	}
+	var settlement *database.MerchantSettlement
+	if len(settlements) > 0 {
+		settlement = settlements[0]
+	}
+	payload := map[string]any{
+		"authorization_id":          a.ID,
+		"wallet_address":            a.Wallet,
+		"network":                   a.Network,
+		"merchant_id":               a.MerchantID,
+		"terminal_id":               a.TerminalID,
+		"external_ref":              a.ExternalRef,
+		"amount_brl_minor":          a.AmountBRLMinor,
+		"merchant_amount_brl_minor": a.AmountBRLMinor,
+		"chainfx_fee_brl_minor":     a.FeeBRLMinor,
+		"total_debit_brl_minor":     a.TotalBRLMinor,
+		"fee_bps":                   a.FeeBps,
+		"required_usdt_micro":       a.RequiredUSDTMic,
+		"rail":                      "chainfx_tap",
+		"scheme":                    "chainfx_own_closed_loop",
+		"card_network":              "none",
+		"fiat_settlement_rail":      "efi_pix_send",
+		"merchant_settlement_mode":  "manual",
+	}
+	if settlement != nil {
+		payload["settlement_id"] = settlement.ID
+		payload["settlement_status"] = settlement.Status
+		payload["provider"] = settlement.Provider
+		payload["provider_reference"] = settlement.ProviderReference
+		payload["retry_count"] = settlement.RetryCount
+		payload["merchant_settlement_mode"] = "manual_or_automatic_worker"
 	}
 	s.workers.Bus.Publish(workers.Event{
 		Type:    eventType,
 		OrderID: a.ID,
-		Payload: map[string]any{
-			"authorization_id":          a.ID,
-			"wallet_address":            a.Wallet,
-			"network":                   a.Network,
-			"merchant_id":               a.MerchantID,
-			"terminal_id":               a.TerminalID,
-			"external_ref":              a.ExternalRef,
-			"amount_brl_minor":          a.AmountBRLMinor,
-			"merchant_amount_brl_minor": a.AmountBRLMinor,
-			"chainfx_fee_brl_minor":     a.FeeBRLMinor,
-			"total_debit_brl_minor":     a.TotalBRLMinor,
-			"fee_bps":                   a.FeeBps,
-			"required_usdt_micro":       a.RequiredUSDTMic,
-			"rail":                      "chainfx_tap",
-			"scheme":                    "chainfx_own_closed_loop",
-			"card_network":              "none",
-			"fiat_settlement_rail":      "efi_pix",
-			"merchant_settlement_mode":  "manual_or_worker",
-		},
+		Payload: payload,
 	})
 }
 
-func nfcSettlementView(a *database.NFCAuthorization) map[string]any {
+func nfcSettlementView(a *database.NFCAuthorization, settlement *database.MerchantSettlement) map[string]any {
 	mode := "not_applicable"
 	switch a.Status {
 	case database.NFCStatusApproved:
 		mode = "hold_active"
 	case database.NFCStatusCaptured:
-		mode = "efi_pix_pending_or_manual"
+		mode = "merchant_settlement_pending"
 	case database.NFCStatusReversed:
 		mode = "reversed_no_fiat_settlement"
 	case database.NFCStatusExpired:
@@ -509,13 +526,22 @@ func nfcSettlementView(a *database.NFCAuthorization) map[string]any {
 	case database.NFCStatusDeclined:
 		mode = "declined"
 	}
-	return map[string]any{
-		"fiat_rail":                "efi_pix",
+	out := map[string]any{
+		"fiat_rail":                "efi_pix_send",
 		"crypto_source_asset":      "USDT",
 		"crypto_debit_source":      "nfc_internal_usdt_ledger",
 		"merchant_settlement_mode": mode,
 		"card_network":             "none",
 	}
+	if settlement != nil {
+		out["settlement_id"] = settlement.ID
+		out["settlement_status"] = settlement.Status
+		out["provider"] = settlement.Provider
+		out["provider_reference"] = settlement.ProviderReference
+		out["txid"] = settlement.TXID
+		out["retry_count"] = settlement.RetryCount
+	}
+	return out
 }
 
 func nfcBalanceView(b *database.NFCBalance) map[string]any {
