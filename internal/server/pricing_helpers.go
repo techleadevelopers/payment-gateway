@@ -80,6 +80,48 @@ func (s *Server) buyRate(marketRate float64) float64 {
 	return roundRate(money.AddBps(money.RateFromFloat(marketRate), spreadBps).Float64())
 }
 
+func buyAssetSupported(asset string) bool {
+	switch strings.ToUpper(strings.TrimSpace(asset)) {
+	case "USDT", "BTC", "BNB":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) buyAssetMarketRate(fiatCurrency, asset string) float64 {
+	if s == nil || s.workers == nil || s.workers.PriceWorker == nil {
+		return 0
+	}
+	fiatCurrency = strings.ToUpper(strings.TrimSpace(defaultString(fiatCurrency, "BRL")))
+	asset = strings.ToUpper(strings.TrimSpace(defaultString(asset, "USDT")))
+	if fiatCurrency != "BRL" {
+		return s.workers.PriceWorker.GetPrice(fiatCurrency)
+	}
+	usdtBRL := s.workers.PriceWorker.GetPrice("BRL")
+	switch asset {
+	case "USDT":
+		return usdtBRL
+	case "BTC":
+		btcUSD := s.workers.PriceWorker.GetPrice("BTCUSDT_SOURCE")
+		if btcUSD <= 0 {
+			btcUSD = s.workers.PriceWorker.GetPrice("BTCUSDT")
+		}
+		if btcUSD > 0 && usdtBRL > 0 {
+			return btcUSD * usdtBRL
+		}
+	case "BNB":
+		bnbUSD := s.workers.PriceWorker.GetPrice("BNBUSDT_SOURCE")
+		if bnbUSD <= 0 {
+			bnbUSD = s.workers.PriceWorker.GetPrice("BNBUSDT")
+		}
+		if bnbUSD > 0 && usdtBRL > 0 {
+			return bnbUSD * usdtBRL
+		}
+	}
+	return 0
+}
+
 func (s *Server) feePolicy(fiatCurrency string, rate float64) map[string]any {
 	fixedFiat := s.cfg.FeeFixedUsd
 	perUsdtFiat := s.cfg.FeePerUsdtUsd
