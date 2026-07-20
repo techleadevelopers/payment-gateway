@@ -15,6 +15,7 @@ import (
 
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
+	"payment-gateway/internal/metrics"
 )
 
 func (s *Server) withPublicSurfaceGuards(next http.Handler) http.Handler {
@@ -337,6 +338,7 @@ type serverTimingWriter struct {
 	start   time.Time
 	timings *requestTimings
 	wrote   bool
+	status  int
 }
 
 func (w *serverTimingWriter) WriteHeader(status int) {
@@ -344,6 +346,7 @@ func (w *serverTimingWriter) WriteHeader(status int) {
 		total := time.Since(w.start)
 		w.Header().Set("Server-Timing", serverTimingHeader(w.timings, total))
 		w.wrote = true
+		w.status = status
 	}
 	w.ResponseWriter.WriteHeader(status)
 }
@@ -369,7 +372,18 @@ func (s *Server) withServerTiming(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		timings := &requestTimings{stages: make(map[string]time.Duration)}
 		ctx := context.WithValue(r.Context(), serverTimingContextKey{}, timings)
-		next.ServeHTTP(&serverTimingWriter{ResponseWriter: w, start: time.Now(), timings: timings}, r.WithContext(ctx))
+		start := time.Now()
+		rec := &serverTimingWriter{ResponseWriter: w, start: start, timings: timings}
+		next.ServeHTTP(rec, r.WithContext(ctx))
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		route := metrics.RoutePattern(r.Method, r.URL.Path, r.Pattern)
+		metrics.ObserveHTTPRequest(r.Method, route, status, time.Since(start))
+		for stage, duration := range timings.snapshot() {
+			metrics.ObserveHTTPStage(r.Method, route, stage, duration)
+		}
 	})
 }
 
@@ -388,6 +402,19 @@ func addServerTiming(ctx context.Context, name string, duration time.Duration) {
 	timings.mu.Lock()
 	timings.stages[name] += duration
 	timings.mu.Unlock()
+}
+
+func (t *requestTimings) snapshot() map[string]time.Duration {
+	out := map[string]time.Duration{}
+	if t == nil {
+		return out
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for k, v := range t.stages {
+		out[k] = v
+	}
+	return out
 }
 
 func serverTimingHeader(timings *requestTimings, total time.Duration) string {
