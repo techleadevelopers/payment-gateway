@@ -158,6 +158,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/order/{id}/payout", s.handlePayout)
 	mux.HandleFunc("POST /api/pix/webhook", s.handlePixWebhook)
 	mux.HandleFunc("POST /api/pix/webhook/buy", s.handlePixWebhookBuy)
+	mux.HandleFunc("POST /api/efi/pix/send/webhook", s.handleEfiPixSendWebhook)
 	mux.HandleFunc("POST /api/efi/charges/webhook/buy", s.handleEfiChargesWebhookBuy)
 	mux.HandleFunc("POST /api/nfc/provision", s.handleNFCProvision)
 	mux.HandleFunc("POST /api/nfc/authorize", s.handleNFCAuthorize)
