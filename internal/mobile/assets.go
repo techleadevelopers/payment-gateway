@@ -286,4 +286,3 @@ func mobileAssetChange24h(pw interface{ GetPrice(string) float64 }, symbol strin
 	}
 	return 0
 }
-
