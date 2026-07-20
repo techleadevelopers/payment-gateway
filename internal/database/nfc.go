@@ -14,6 +14,7 @@ import (
 )
 
 var ErrNFCIdempotencyPayloadMismatch = errors.New("nfc: idempotency payload mismatch")
+var ErrNFCLiquidityUnavailable = errors.New("nfc: efi treasury liquidity unavailable")
 
 const (
 	NFCStatusApproved        = "approved"
@@ -54,46 +55,50 @@ type NFCFundingInput struct {
 }
 
 type NFCAuthorizeInput struct {
-	ID              string
-	IdempotencyKey  string
-	TokenID         string
-	TokenHash       string
-	Wallet          string
-	Network         string
-	MerchantID      string
-	TerminalID      string
-	ExternalRef     string
-	AmountBRLMinor  int64
-	FeeBRLMinor     int64
-	TotalBRLMinor   int64
-	FeeBps          int
-	USDTRate        float64
-	RequiredUSDTMic int64
-	HoldExpiresAt   time.Time
+	ID                     string
+	IdempotencyKey         string
+	TokenID                string
+	TokenHash              string
+	Wallet                 string
+	Network                string
+	MerchantID             string
+	TerminalID             string
+	ExternalRef            string
+	AmountBRLMinor         int64
+	FeeBRLMinor            int64
+	TotalBRLMinor          int64
+	FeeBps                 int
+	USDTRate               float64
+	RequiredUSDTMic        int64
+	HoldExpiresAt          time.Time
+	LiquidityPolicyEnabled bool
+	TreasurySnapshotMaxAge time.Duration
 }
 
 type NFCAuthorization struct {
-	ID              string     `json:"id"`
-	IdempotencyKey  string     `json:"-"`
-	TokenID         string     `json:"token_id"`
-	Wallet          string     `json:"wallet_address"`
-	Network         string     `json:"network"`
-	MerchantID      string     `json:"merchant_id"`
-	TerminalID      string     `json:"terminal_id"`
-	ExternalRef     string     `json:"external_ref,omitempty"`
-	AmountBRLMinor  int64      `json:"amount_brl_minor"`
-	FeeBRLMinor     int64      `json:"fee_brl_minor"`
-	TotalBRLMinor   int64      `json:"total_brl_minor"`
-	FeeBps          int        `json:"fee_bps"`
-	USDTRate        float64    `json:"usdt_rate"`
-	RequiredUSDTMic int64      `json:"required_usdt_micro"`
-	Status          string     `json:"status"`
-	ResponseCode    string     `json:"response_code"`
-	Reason          string     `json:"reason,omitempty"`
-	HoldExpiresAt   *time.Time `json:"hold_expires_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	Idempotent      bool       `json:"idempotent,omitempty"`
+	ID                   string     `json:"id"`
+	IdempotencyKey       string     `json:"-"`
+	TokenID              string     `json:"token_id"`
+	Wallet               string     `json:"wallet_address"`
+	Network              string     `json:"network"`
+	MerchantID           string     `json:"merchant_id"`
+	TerminalID           string     `json:"terminal_id"`
+	ExternalRef          string     `json:"external_ref,omitempty"`
+	AmountBRLMinor       int64      `json:"amount_brl_minor"`
+	FeeBRLMinor          int64      `json:"fee_brl_minor"`
+	TotalBRLMinor        int64      `json:"total_brl_minor"`
+	FeeBps               int        `json:"fee_bps"`
+	USDTRate             float64    `json:"usdt_rate"`
+	RequiredUSDTMic      int64      `json:"required_usdt_micro"`
+	Status               string     `json:"status"`
+	ResponseCode         string     `json:"response_code"`
+	Reason               string     `json:"reason,omitempty"`
+	HoldExpiresAt        *time.Time `json:"hold_expires_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	Idempotent           bool       `json:"idempotent,omitempty"`
+	BRLReservationID     string     `json:"brl_reservation_id,omitempty"`
+	BRLReservationStatus string     `json:"brl_reservation_status,omitempty"`
 }
 
 type MerchantSettlement struct {
@@ -144,13 +149,16 @@ type NFCSettlementReconciliationIssue struct {
 
 type NFCSettlementOperationalSnapshot struct {
 	Counts                     map[string]int64 `json:"counts"`
+	AnomalyCounts              map[string]int64 `json:"anomaly_counts"`
 	QueueAgeSeconds            float64          `json:"queue_age_seconds"`
 	SubmitLatencySeconds       float64          `json:"submit_latency_seconds"`
 	ConfirmationLatencySeconds float64          `json:"confirmation_latency_seconds"`
 	EndToEndSeconds            float64          `json:"end_to_end_seconds"`
+	TreasurySnapshotAgeSeconds float64          `json:"treasury_snapshot_age_seconds"`
 	PendingBRL                 float64          `json:"pending_brl"`
 	SubmittedBRL               float64          `json:"submitted_brl"`
 	ConfirmedBRL               float64          `json:"confirmed_brl"`
+	ReservedBRL                float64          `json:"reserved_brl"`
 	EfiBalanceBRL              float64          `json:"efi_balance_brl"`
 	EfiMinBufferBRL            float64          `json:"efi_min_buffer_brl"`
 	EfiAvailableRealBRL        float64          `json:"efi_available_real_brl"`
@@ -406,6 +414,22 @@ FOR UPDATE`, strings.ToLower(in.Wallet), normalizeNFCNetwork(in.Network)).Scan(&
 		return nil, false, fmt.Errorf("nfc: balance lookup: %w", err)
 	}
 
+	var reservationID string
+	var reservationSnapshotID int64
+	if in.LiquidityPolicyEnabled {
+		reservationSnapshotID, err = txCheckNFCLiquidity(ctx, tx, in.AmountBRLMinor, in.TreasurySnapshotMaxAge)
+		if err != nil {
+			status = NFCStatusDeclined
+			responseCode = "91"
+			reason = "efi_treasury_liquidity_unavailable"
+			auth, _, insertErr := txInsertNFCAuthorizationRow(ctx, tx, in, status, responseCode, reason, holdExpires)
+			if insertErr != nil {
+				return nil, false, insertErr
+			}
+			return auth, false, tx.Commit()
+		}
+	}
+
 	_, err = tx.ExecContext(ctx, `
 UPDATE nfc_wallet_balances
 SET available_usdt_micro = available_usdt_micro - $3,
@@ -421,7 +445,21 @@ WHERE wallet_address = $1 AND network = $2 AND asset = 'USDT'`,
 	responseCode = "00"
 	reason = "approved"
 	holdExpires = in.HoldExpiresAt.UTC()
-	return txInsertNFCAuthorization(ctx, tx, in, status, responseCode, reason, holdExpires)
+	auth, _, err := txInsertNFCAuthorizationRow(ctx, tx, in, status, responseCode, reason, holdExpires)
+	if err != nil {
+		return nil, false, err
+	}
+	if in.LiquidityPolicyEnabled {
+		reservationID, err = txInsertNFCLiquidityReservation(ctx, tx, auth.ID, in.MerchantID, in.TerminalID, in.AmountBRLMinor, reservationSnapshotID)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	auth.BRLReservationID = reservationID
+	if reservationID != "" {
+		auth.BRLReservationStatus = "ACTIVE"
+	}
+	return auth, false, tx.Commit()
 }
 
 func (db *DB) GetNFCAuthorization(ctx context.Context, id string) (*NFCAuthorization, error) {
@@ -501,6 +539,9 @@ UPDATE nfc_authorizations
 SET status='expired', reason='hold_expired', expired_at=NOW(), updated_at=NOW()
 WHERE id=$1 AND status='approved'`, auth.ID); err != nil {
 			return nil, fmt.Errorf("nfc: expire authorization %s: %w", auth.ID, err)
+		}
+		if err := txReleaseNFCLiquidityReservation(ctx, tx, auth.ID); err != nil {
+			return nil, err
 		}
 		auth.Status = NFCStatusExpired
 		auth.Reason = "hold_expired"
@@ -584,6 +625,11 @@ WHERE id=$1 AND status='approved'`, timestampColumn)
 	} else if rows != 1 {
 		return nil, fmt.Errorf("nfc: authorization %s changed before %s", id, finalStatus)
 	}
+	if finalStatus == NFCStatusReversed {
+		if err := txReleaseNFCLiquidityReservation(ctx, tx, auth.ID); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("nfc: commit %s: %w", finalStatus, err)
 	}
@@ -648,6 +694,9 @@ WHERE id=$1 AND status='approved'`, auth.ID)
 		return nil, fmt.Errorf("nfc: verify authorization update for capture: %w", err)
 	} else if rows != 1 {
 		return nil, fmt.Errorf("nfc: authorization %s changed before capture", id)
+	}
+	if err := txConsumeNFCLiquidityReservation(ctx, tx, auth.ID); err != nil {
+		return nil, err
 	}
 
 	settlement, err := txCreateMerchantSettlementForCapture(ctx, tx, auth)
@@ -969,6 +1018,9 @@ func classifyMerchantProviderStatus(status string) string {
 }
 
 func (db *DB) ReconcileNFCMerchantSettlements(ctx context.Context, efiBalanceBRL, minBufferBRL float64) (*NFCSettlementReconciliationReport, error) {
+	if _, err := db.StoreNFCTreasurySnapshot(ctx, "efi", int64(efiBalanceBRL*100+0.5), int64(minBufferBRL*100+0.5), "manual_config"); err != nil {
+		return nil, err
+	}
 	issues, err := db.detectNFCSettlementIssues(ctx)
 	if err != nil {
 		return nil, err
@@ -983,8 +1035,38 @@ func (db *DB) ReconcileNFCMerchantSettlements(ctx context.Context, efiBalanceBRL
 	return &NFCSettlementReconciliationReport{Issues: issues, Snapshot: snapshot}, nil
 }
 
+func (db *DB) StoreNFCTreasurySnapshot(ctx context.Context, provider string, availableBRLMinor, minBufferBRLMinor int64, source string) (int64, error) {
+	provider = strings.TrimSpace(firstNonEmptyDB(provider, "efi"))
+	source = strings.TrimSpace(firstNonEmptyDB(source, "manual_config"))
+	var reserved, projected int64
+	if err := db.SQL.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(amount_brl_minor),0)
+FROM nfc_brl_reservations
+WHERE status='ACTIVE'`).Scan(&reserved); err != nil {
+		return 0, fmt.Errorf("nfc treasury snapshot: reservations: %w", err)
+	}
+	if err := db.SQL.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(amount_brl_minor),0)
+FROM merchant_settlements
+WHERE status IN ('PENDING','PROCESSING','SUBMITTED','SUBMISSION_UNKNOWN','RETRYABLE','MANUAL_REQUIRED')`).Scan(&projected); err != nil {
+		return 0, fmt.Errorf("nfc treasury snapshot: projected outflow: %w", err)
+	}
+	effective := availableBRLMinor - reserved - projected - minBufferBRLMinor
+	var id int64
+	if err := db.SQL.QueryRowContext(ctx, `
+INSERT INTO nfc_treasury_snapshots
+  (provider, available_brl_minor, reserved_brl_minor, projected_outflow_brl_minor,
+   minimum_buffer_brl_minor, effective_available_brl_minor, observed_at, source)
+VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)
+RETURNING id`,
+		provider, availableBRLMinor, reserved, projected, minBufferBRLMinor, effective, source).Scan(&id); err != nil {
+		return 0, fmt.Errorf("nfc treasury snapshot: insert: %w", err)
+	}
+	return id, nil
+}
+
 func (db *DB) NFCSettlementOperationalSnapshot(ctx context.Context, efiBalanceBRL, minBufferBRL float64) (NFCSettlementOperationalSnapshot, error) {
-	snapshot := NFCSettlementOperationalSnapshot{Counts: map[string]int64{}, EfiBalanceBRL: efiBalanceBRL, EfiMinBufferBRL: minBufferBRL}
+	snapshot := NFCSettlementOperationalSnapshot{Counts: map[string]int64{}, AnomalyCounts: map[string]int64{}, EfiBalanceBRL: efiBalanceBRL, EfiMinBufferBRL: minBufferBRL}
 	rows, err := db.SQL.QueryContext(ctx, `
 SELECT status, COUNT(*)
 FROM merchant_settlements
@@ -1027,7 +1109,42 @@ SELECT
   COALESCE(SUM(amount_brl_minor) FILTER (WHERE status IN ('SUBMITTED','SUBMISSION_UNKNOWN','PROCESSING')), 0)::float8 / 100,
   COALESCE(SUM(amount_brl_minor) FILTER (WHERE status = 'CONFIRMED'), 0)::float8 / 100
 FROM merchant_settlements`).Scan(&snapshot.PendingBRL, &snapshot.SubmittedBRL, &snapshot.ConfirmedBRL)
-	snapshot.EfiAvailableRealBRL = efiBalanceBRL - snapshot.PendingBRL - snapshot.SubmittedBRL - minBufferBRL
+	_ = db.SQL.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(amount_brl_minor), 0)::float8 / 100
+FROM nfc_brl_reservations
+WHERE status='ACTIVE'`).Scan(&snapshot.ReservedBRL)
+	var latestAvailableMinor, latestMinBufferMinor, latestEffectiveMinor int64
+	var latestObserved sql.NullTime
+	if err := db.SQL.QueryRowContext(ctx, `
+SELECT available_brl_minor, minimum_buffer_brl_minor, effective_available_brl_minor, observed_at
+FROM nfc_treasury_snapshots
+WHERE provider='efi'
+ORDER BY observed_at DESC, id DESC
+LIMIT 1`).Scan(&latestAvailableMinor, &latestMinBufferMinor, &latestEffectiveMinor, &latestObserved); err == nil {
+		snapshot.EfiBalanceBRL = float64(latestAvailableMinor) / 100
+		snapshot.EfiMinBufferBRL = float64(latestMinBufferMinor) / 100
+		snapshot.EfiAvailableRealBRL = float64(latestEffectiveMinor) / 100
+		if latestObserved.Valid {
+			snapshot.TreasurySnapshotAgeSeconds = time.Since(latestObserved.Time.UTC()).Seconds()
+		}
+	} else {
+		snapshot.EfiAvailableRealBRL = efiBalanceBRL - snapshot.PendingBRL - snapshot.SubmittedBRL - snapshot.ReservedBRL - minBufferBRL
+	}
+	anomalyRows, err := db.SQL.QueryContext(ctx, `
+SELECT anomaly_type, COUNT(*)
+FROM nfc_settlement_reconciliation_anomalies
+WHERE status='OPEN'
+GROUP BY anomaly_type`)
+	if err == nil {
+		defer anomalyRows.Close()
+		for anomalyRows.Next() {
+			var anomalyType string
+			var count int64
+			if scanErr := anomalyRows.Scan(&anomalyType, &count); scanErr == nil {
+				snapshot.AnomalyCounts[anomalyType] = count
+			}
+		}
+	}
 	return snapshot, nil
 }
 
@@ -1155,6 +1272,94 @@ WHERE authorization_id = $1`
 	return settlement, err
 }
 
+func txCheckNFCLiquidity(ctx context.Context, tx *sql.Tx, amountBRLMinor int64, maxAge time.Duration) (int64, error) {
+	if amountBRLMinor <= 0 {
+		return 0, fmt.Errorf("nfc liquidity: invalid reservation amount")
+	}
+	if maxAge <= 0 {
+		maxAge = 120 * time.Second
+	}
+	var locked bool
+	if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtext('nfc:efi:treasury'))`).Scan(&locked); err != nil {
+		return 0, fmt.Errorf("nfc liquidity: advisory lock: %w", err)
+	}
+	if !locked {
+		return 0, fmt.Errorf("%w: treasury reservation lock busy", ErrNFCLiquidityUnavailable)
+	}
+	var snapshotID, available, minBuffer int64
+	var observedAt time.Time
+	err := tx.QueryRowContext(ctx, `
+SELECT id, available_brl_minor, minimum_buffer_brl_minor, observed_at
+FROM nfc_treasury_snapshots
+WHERE provider='efi'
+ORDER BY observed_at DESC, id DESC
+LIMIT 1
+FOR UPDATE`).Scan(&snapshotID, &available, &minBuffer, &observedAt)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("%w: treasury snapshot missing", ErrNFCLiquidityUnavailable)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("nfc liquidity: snapshot lookup: %w", err)
+	}
+	if time.Since(observedAt.UTC()) > maxAge {
+		return 0, fmt.Errorf("%w: treasury snapshot stale", ErrNFCLiquidityUnavailable)
+	}
+	var reserved, projected int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(amount_brl_minor),0)
+FROM nfc_brl_reservations
+WHERE status='ACTIVE'`).Scan(&reserved); err != nil {
+		return 0, fmt.Errorf("nfc liquidity: reservations: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(amount_brl_minor),0)
+FROM merchant_settlements
+WHERE status IN ('PENDING','PROCESSING','SUBMITTED','SUBMISSION_UNKNOWN','RETRYABLE','MANUAL_REQUIRED')`).Scan(&projected); err != nil {
+		return 0, fmt.Errorf("nfc liquidity: projected outflow: %w", err)
+	}
+	effective := available - reserved - projected - minBuffer
+	if effective < amountBRLMinor {
+		return 0, fmt.Errorf("%w: effective_available_brl_minor=%d amount_brl_minor=%d", ErrNFCLiquidityUnavailable, effective, amountBRLMinor)
+	}
+	return snapshotID, nil
+}
+
+func txInsertNFCLiquidityReservation(ctx context.Context, tx *sql.Tx, authorizationID, merchantID, terminalID string, amountBRLMinor, snapshotID int64) (string, error) {
+	reservationID := "nfc_res_" + NewAccessToken()[:24]
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO nfc_brl_reservations
+  (id, authorization_id, merchant_id, terminal_id, amount_brl_minor, status, source_snapshot_id)
+VALUES ($1,$2,$3,$4,$5,'ACTIVE',$6)
+ON CONFLICT (authorization_id) DO NOTHING`,
+		reservationID, strings.TrimSpace(authorizationID), strings.TrimSpace(merchantID), strings.TrimSpace(terminalID), amountBRLMinor, snapshotID)
+	if err != nil {
+		return "", fmt.Errorf("nfc liquidity: reserve: %w", err)
+	}
+	return reservationID, nil
+}
+
+func txConsumeNFCLiquidityReservation(ctx context.Context, tx *sql.Tx, authorizationID string) error {
+	if _, err := tx.ExecContext(ctx, `
+UPDATE nfc_brl_reservations
+SET status='CONSUMED', consumed_at=NOW(), updated_at=NOW()
+WHERE authorization_id=$1 AND status='ACTIVE'`,
+		strings.TrimSpace(authorizationID)); err != nil {
+		return fmt.Errorf("nfc liquidity: consume reservation: %w", err)
+	}
+	return nil
+}
+
+func txReleaseNFCLiquidityReservation(ctx context.Context, tx *sql.Tx, authorizationID string) error {
+	if _, err := tx.ExecContext(ctx, `
+UPDATE nfc_brl_reservations
+SET status='RELEASED', released_at=NOW(), updated_at=NOW()
+WHERE authorization_id=$1 AND status='ACTIVE'`,
+		strings.TrimSpace(authorizationID)); err != nil {
+		return fmt.Errorf("nfc liquidity: release reservation: %w", err)
+	}
+	return nil
+}
+
 func scanMerchantSettlement(row scanner) (*MerchantSettlement, error) {
 	var s MerchantSettlement
 	var claimedAt, submittedAt, confirmedAt, failedAt sql.NullTime
@@ -1183,6 +1388,14 @@ func scanMerchantSettlement(row scanner) (*MerchantSettlement, error) {
 }
 
 func txInsertNFCAuthorization(ctx context.Context, tx *sql.Tx, in NFCAuthorizeInput, status, responseCode, reason string, holdExpires any) (*NFCAuthorization, bool, error) {
+	auth, idempotent, err := txInsertNFCAuthorizationRow(ctx, tx, in, status, responseCode, reason, holdExpires)
+	if err != nil {
+		return nil, false, err
+	}
+	return auth, idempotent, tx.Commit()
+}
+
+func txInsertNFCAuthorizationRow(ctx context.Context, tx *sql.Tx, in NFCAuthorizeInput, status, responseCode, reason string, holdExpires any) (*NFCAuthorization, bool, error) {
 	if in.ID == "" {
 		in.ID = NewID()
 	}
@@ -1205,7 +1418,7 @@ RETURNING id, idempotency_key, token_id, wallet_address, network, merchant_id, t
 	if err != nil {
 		return nil, false, fmt.Errorf("nfc: insert authorization: %w", err)
 	}
-	return auth, false, tx.Commit()
+	return auth, false, nil
 }
 
 func txGetNFCAuthorizationByIdempotency(ctx context.Context, tx *sql.Tx, terminalID, key string) (*NFCAuthorization, error) {
