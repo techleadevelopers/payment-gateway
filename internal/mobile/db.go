@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -778,6 +779,85 @@ func (q *mobileQueries) TagBuyOrderUser(ctx context.Context, orderID, userID str
 	_, err := q.sql.ExecContext(ctx,
 		"UPDATE buy_orders SET user_id=$1::uuid WHERE id=$2::uuid AND user_id IS NULL", userID, orderID)
 	return err
+}
+
+func (q *mobileQueries) GetBuyOrderByUser(ctx context.Context, orderID, userID string) (map[string]any, error) {
+	row := q.sql.QueryRowContext(ctx, `
+                SELECT id, COALESCE(access_token, ''), request_id, status,
+                       amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
+                       COALESCE(fiat_currency, 'BRL'), COALESCE(payment_method, 'pix'), provider_payment_id,
+                       COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
+                       crypto_amount::float8, asset, dest_address, rate_locked::float8, rate_lock_expires_at,
+                       COALESCE(pix_payload, '{}'::jsonb), tx_hash_out, error, paid_at, settled_at, delivered_at, created_at, updated_at
+                  FROM buy_orders
+                 WHERE id=$1::uuid AND user_id=$2::uuid`, orderID, userID)
+	var id, accessToken, status, fiatCurrency, paymentMethod, asset, destAddress string
+	var requestID, providerPaymentID, txHashOut, errMsg sql.NullString
+	var amountBRL, amountFiat, feeBRL, payoutBRL, cryptoAmount, rateLocked float64
+	var rateLockExpiresAt, createdAt, updatedAt time.Time
+	var pixPayload []byte
+	var paidAt, settledAt, deliveredAt sql.NullTime
+	if err := row.Scan(&id, &accessToken, &requestID, &status, &amountBRL, &amountFiat, &fiatCurrency, &paymentMethod, &providerPaymentID,
+		&feeBRL, &payoutBRL, &cryptoAmount, &asset, &destAddress, &rateLocked, &rateLockExpiresAt, &pixPayload, &txHashOut, &errMsg,
+		&paidAt, &settledAt, &deliveredAt, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var payment map[string]any
+	_ = json.Unmarshal(pixPayload, &payment)
+	out := map[string]any{
+		"id":                   id,
+		"order_id":             id,
+		"kind":                 "buy",
+		"accessToken":          accessToken,
+		"status":               status,
+		"amount_brl":           amountBRL,
+		"amountBRL":            amountBRL,
+		"amount_fiat":          amountFiat,
+		"amountFiat":           amountFiat,
+		"fiat_currency":        fiatCurrency,
+		"payment_method":       paymentMethod,
+		"fee_brl":              feeBRL,
+		"feeBRL":               feeBRL,
+		"payout_brl":           payoutBRL,
+		"payoutBRL":            payoutBRL,
+		"crypto_amount":        cryptoAmount,
+		"cryptoAmount":         cryptoAmount,
+		"asset":                asset,
+		"dest_address":         destAddress,
+		"destAddress":          destAddress,
+		"rate_locked":          rateLocked,
+		"rateLocked":           rateLocked,
+		"rate_lock_expires_at": rateLockExpiresAt,
+		"pix_payload":          payment,
+		"payment":              payment,
+		"created_at":           createdAt,
+		"updated_at":           updatedAt,
+	}
+	if requestID.Valid {
+		out["request_id"] = requestID.String
+	}
+	if providerPaymentID.Valid {
+		out["provider_payment_id"] = providerPaymentID.String
+	}
+	if txHashOut.Valid {
+		out["tx_hash_out"] = txHashOut.String
+	}
+	if errMsg.Valid {
+		out["error"] = errMsg.String
+	}
+	if paidAt.Valid {
+		out["paid_at"] = paidAt.Time
+	}
+	if settledAt.Valid {
+		out["settled_at"] = settledAt.Time
+	}
+	if deliveredAt.Valid {
+		out["delivered_at"] = deliveredAt.Time
+	}
+	return out, nil
 }
 
 func (q *mobileQueries) CancelOrder(ctx context.Context, orderID, userID string) error {
