@@ -144,17 +144,19 @@ type Config struct {
 	M2MDepositAddresses    string  // comma-separated unique deposit addresses for pending M2M intents
 
 	// Closed-loop NFC wallet-to-terminal rail.
-	NFCEnabled         bool
-	NFCTokenSecret     string
-	NFCTokenTTLSeconds int
-	NFCHoldTTLSeconds  int
-	NFCMaxAmountBRL    float64
-	NFCTerminals       string
-	NFCPriceMaxAgeSec  int
-	NFCFeeBps          int
-	NFCSettlementMode  string
-	NFCEfiMinBufferBRL float64
-	NFCEfiBalanceBRL   float64
+	NFCEnabled                   bool
+	NFCTokenSecret               string
+	NFCTokenTTLSeconds           int
+	NFCHoldTTLSeconds            int
+	NFCMaxAmountBRL              float64
+	NFCTerminals                 string
+	NFCPriceMaxAgeSec            int
+	NFCFeeBps                    int
+	NFCSettlementMode            string
+	NFCEfiMinBufferBRL           float64
+	NFCEfiBalanceBRL             float64
+	NFCLiquidityPolicyEnabled    bool
+	NFCTreasurySnapshotMaxAgeSec int
 
 	// EIP-712 typed intents for MCP/mobile/stablecoin rails.
 	EIP712DomainName        string
@@ -323,45 +325,47 @@ func LoadConfig() *Config {
 		CapabilityOCRURL:    strings.TrimRight(getEnv("CAPABILITY_OCR_URL", ""), "/"),
 		CapabilityOCRAPIKey: getEnv("CAPABILITY_OCR_API_KEY", ""),
 
-		M2MPixFeeBps:            getEnvAsInt("M2M_PIX_FEE_BPS", 1000),
-		M2MCreditFeeBps:         getEnvAsInt("M2M_CREDIT_FEE_BPS", 1900),
-		M2MDepositTolerancePct:  getEnvAsFloat("M2M_DEPOSIT_TOLERANCE_PCT", 0.005),
-		M2MMaxDailyOutflowBRL:   getEnvAsFloat("M2M_MAX_DAILY_OUTFLOW_BRL", 50000),
-		M2MDepositAddresses:     getEnv("M2M_DEPOSIT_ADDRESSES", ""),
-		NFCEnabled:              getEnvAsBool("NFC_ENABLED", true),
-		NFCTokenSecret:          getEnv("NFC_TOKEN_SECRET", getEnv("LGPD_SECRET", getEnv("WEBHOOK_SECRET", ""))),
-		NFCTokenTTLSeconds:      getEnvAsInt("NFC_TOKEN_TTL_SEC", 120),
-		NFCHoldTTLSeconds:       getEnvAsInt("NFC_HOLD_TTL_SEC", 900),
-		NFCMaxAmountBRL:         getEnvAsFloat("NFC_MAX_AMOUNT_BRL", 500),
-		NFCTerminals:            getEnv("NFC_TERMINALS", ""),
-		NFCPriceMaxAgeSec:       getEnvAsInt("NFC_PRICE_MAX_AGE_SEC", 180),
-		NFCFeeBps:               getEnvAsInt("NFC_FEE_BPS", 400),
-		NFCSettlementMode:       strings.ToLower(getEnv("NFC_SETTLEMENT_MODE", "manual")),
-		NFCEfiMinBufferBRL:      getEnvAsFloat("NFC_EFI_MIN_BUFFER_BRL", 10000),
-		NFCEfiBalanceBRL:        getEnvAsFloat("NFC_EFI_BALANCE_BRL", 0),
-		EIP712DomainName:        getEnv("EIP712_DOMAIN_NAME", "ChainFX"),
-		EIP712DomainVersion:     getEnv("EIP712_DOMAIN_VERSION", "1"),
-		EIP712ChainID:           int64(getEnvAsInt("EIP712_CHAIN_ID", 56)),
-		EIP712VerifyingContract: getEnv("EIP712_VERIFYING_CONTRACT", firstNonEmptyConfig(getEnv("TREASURY_HOT", ""), getEnv("SELL_WALLET_ADDRESS", "0x7e3BF3FDfeF16040CE3ec60A663381766d3dB375"))),
-		EIPProbeEnabled:         getEnvAsBool("EIP_PROBE_ENABLED", true),
-		EIPProbeRealRun:         getEnvAsBool("EIP_PROBE_REAL_RUN", false),
-		EIPProbeAllowMainnet:    getEnvAsBool("EIP_PROBE_ALLOW_MAINNET", false),
-		EIPProbeNetwork:         strings.ToLower(getEnv("EIP_PROBE_NETWORK", getEnv("SIGNER_NETWORK", "bsc"))),
-		EIPProbeRPCUrls:         getEnv("EIP_PROBE_RPC_URLS", firstNonEmptyConfig(getEnv("POLYGON_AMOY_RPC_URLS", ""), getEnv("BNB_TESTNET_RPC_URLS", ""), getBscRpcUrls(), getPolygonRpcUrls())),
-		EIPProbeRelayerPrivKey:  getEnv("EIP_PROBE_RELAYER_PRIVATE_KEY", getEnv("PAYMASTER_PRIV_KEY", "")),
-		EIPProbeWalletPrivKeys:  getEnv("EIP_PROBE_WALLET_PRIVATE_KEYS", ""),
-		EIPProbeUSDTContract:    getEnv("EIP_PROBE_USDT_CONTRACT", getEnv("USDT_TESTNET_CONTRACT", "")),
-		EIPProbeAsset:           strings.ToUpper(getEnv("EIP_PROBE_ASSET", "USDT")),
-		EIPProbeRail:            strings.ToLower(getEnv("EIP_PROBE_RAIL", "")),
-		EIPProbeTokenContract:   getEnv("EIP_PROBE_TOKEN_CONTRACT", firstNonEmptyConfig(getEnv("EIP_PROBE_USDT_CONTRACT", ""), getEnv("USDT_TESTNET_CONTRACT", ""))),
-		EIPProbeTokenName:       getEnv("EIP_PROBE_TOKEN_NAME", "Tether USD"),
-		EIPProbeTokenSymbol:     strings.ToUpper(getEnv("EIP_PROBE_TOKEN_SYMBOL", getEnv("EIP_PROBE_ASSET", "USDT"))),
-		EIPProbeTokenVersion:    getEnv("EIP_PROBE_TOKEN_VERSION", "1"),
-		EIPProbeAmountRaw:       getEnv("EIP_PROBE_AMOUNT_RAW", "10000"),
-		EIPProbeConfirmTimeout:  getEnvAsInt("EIP_PROBE_CONFIRM_TIMEOUT_SEC", 45),
-		EIPProbeExpectedGas3009: uint64(getEnvAsInt("EIP_PROBE_EXPECTED_GAS_EIP3009", 90000)),
-		BSCMinConfirmations:     getEnvAsUint64("BSC_MIN_CONFIRMATIONS", 6),
-		PolygonMinConfirmations: getEnvAsUint64("POLYGON_MIN_CONFIRMATIONS", 128),
+		M2MPixFeeBps:                 getEnvAsInt("M2M_PIX_FEE_BPS", 1000),
+		M2MCreditFeeBps:              getEnvAsInt("M2M_CREDIT_FEE_BPS", 1900),
+		M2MDepositTolerancePct:       getEnvAsFloat("M2M_DEPOSIT_TOLERANCE_PCT", 0.005),
+		M2MMaxDailyOutflowBRL:        getEnvAsFloat("M2M_MAX_DAILY_OUTFLOW_BRL", 50000),
+		M2MDepositAddresses:          getEnv("M2M_DEPOSIT_ADDRESSES", ""),
+		NFCEnabled:                   getEnvAsBool("NFC_ENABLED", true),
+		NFCTokenSecret:               getEnv("NFC_TOKEN_SECRET", getEnv("LGPD_SECRET", getEnv("WEBHOOK_SECRET", ""))),
+		NFCTokenTTLSeconds:           getEnvAsInt("NFC_TOKEN_TTL_SEC", 120),
+		NFCHoldTTLSeconds:            getEnvAsInt("NFC_HOLD_TTL_SEC", 900),
+		NFCMaxAmountBRL:              getEnvAsFloat("NFC_MAX_AMOUNT_BRL", 500),
+		NFCTerminals:                 getEnv("NFC_TERMINALS", ""),
+		NFCPriceMaxAgeSec:            getEnvAsInt("NFC_PRICE_MAX_AGE_SEC", 180),
+		NFCFeeBps:                    getEnvAsInt("NFC_FEE_BPS", 400),
+		NFCSettlementMode:            strings.ToLower(getEnv("NFC_SETTLEMENT_MODE", "manual")),
+		NFCEfiMinBufferBRL:           getEnvAsFloat("NFC_EFI_MIN_BUFFER_BRL", 10000),
+		NFCEfiBalanceBRL:             getEnvAsFloat("NFC_EFI_BALANCE_BRL", 0),
+		NFCLiquidityPolicyEnabled:    getEnvAsBool("NFC_LIQUIDITY_POLICY_ENABLED", false),
+		NFCTreasurySnapshotMaxAgeSec: getEnvAsInt("NFC_TREASURY_SNAPSHOT_MAX_AGE_SEC", 120),
+		EIP712DomainName:             getEnv("EIP712_DOMAIN_NAME", "ChainFX"),
+		EIP712DomainVersion:          getEnv("EIP712_DOMAIN_VERSION", "1"),
+		EIP712ChainID:                int64(getEnvAsInt("EIP712_CHAIN_ID", 56)),
+		EIP712VerifyingContract:      getEnv("EIP712_VERIFYING_CONTRACT", firstNonEmptyConfig(getEnv("TREASURY_HOT", ""), getEnv("SELL_WALLET_ADDRESS", "0x7e3BF3FDfeF16040CE3ec60A663381766d3dB375"))),
+		EIPProbeEnabled:              getEnvAsBool("EIP_PROBE_ENABLED", true),
+		EIPProbeRealRun:              getEnvAsBool("EIP_PROBE_REAL_RUN", false),
+		EIPProbeAllowMainnet:         getEnvAsBool("EIP_PROBE_ALLOW_MAINNET", false),
+		EIPProbeNetwork:              strings.ToLower(getEnv("EIP_PROBE_NETWORK", getEnv("SIGNER_NETWORK", "bsc"))),
+		EIPProbeRPCUrls:              getEnv("EIP_PROBE_RPC_URLS", firstNonEmptyConfig(getEnv("POLYGON_AMOY_RPC_URLS", ""), getEnv("BNB_TESTNET_RPC_URLS", ""), getBscRpcUrls(), getPolygonRpcUrls())),
+		EIPProbeRelayerPrivKey:       getEnv("EIP_PROBE_RELAYER_PRIVATE_KEY", getEnv("PAYMASTER_PRIV_KEY", "")),
+		EIPProbeWalletPrivKeys:       getEnv("EIP_PROBE_WALLET_PRIVATE_KEYS", ""),
+		EIPProbeUSDTContract:         getEnv("EIP_PROBE_USDT_CONTRACT", getEnv("USDT_TESTNET_CONTRACT", "")),
+		EIPProbeAsset:                strings.ToUpper(getEnv("EIP_PROBE_ASSET", "USDT")),
+		EIPProbeRail:                 strings.ToLower(getEnv("EIP_PROBE_RAIL", "")),
+		EIPProbeTokenContract:        getEnv("EIP_PROBE_TOKEN_CONTRACT", firstNonEmptyConfig(getEnv("EIP_PROBE_USDT_CONTRACT", ""), getEnv("USDT_TESTNET_CONTRACT", ""))),
+		EIPProbeTokenName:            getEnv("EIP_PROBE_TOKEN_NAME", "Tether USD"),
+		EIPProbeTokenSymbol:          strings.ToUpper(getEnv("EIP_PROBE_TOKEN_SYMBOL", getEnv("EIP_PROBE_ASSET", "USDT"))),
+		EIPProbeTokenVersion:         getEnv("EIP_PROBE_TOKEN_VERSION", "1"),
+		EIPProbeAmountRaw:            getEnv("EIP_PROBE_AMOUNT_RAW", "10000"),
+		EIPProbeConfirmTimeout:       getEnvAsInt("EIP_PROBE_CONFIRM_TIMEOUT_SEC", 45),
+		EIPProbeExpectedGas3009:      uint64(getEnvAsInt("EIP_PROBE_EXPECTED_GAS_EIP3009", 90000)),
+		BSCMinConfirmations:          getEnvAsUint64("BSC_MIN_CONFIRMATIONS", 6),
+		PolygonMinConfirmations:      getEnvAsUint64("POLYGON_MIN_CONFIRMATIONS", 128),
 
 		GasStationEnabled:          getEnvAsBool("GAS_STATION_ENABLED", false),
 		GasStationSurchargeBps:     getEnvAsInt("GAS_STATION_SURCHARGE_BPS", 1000),
