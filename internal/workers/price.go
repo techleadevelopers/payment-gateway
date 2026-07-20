@@ -56,6 +56,12 @@ type BinanceTickerResponse struct {
 	Price  string `json:"price"`
 }
 
+type Binance24hTickerResponse struct {
+	Symbol             string `json:"symbol"`
+	LastPrice          string `json:"lastPrice"`
+	PriceChangePercent string `json:"priceChangePercent"`
+}
+
 func NewPriceWorker(bus *EventBus) *PriceWorker {
 	return &PriceWorker{
 		bus:    bus,
@@ -229,20 +235,29 @@ func (pw *PriceWorker) fetchBinancePrices(ctx context.Context) (map[string]float
 	prices := map[string]float64{"USD": 1, "USDTUSD": 1}
 
 	for key, symbol := range symbols {
-		price, err := pw.fetchBinanceTicker(ctx, symbol)
+		price, change24h, err := pw.fetchBinance24hTicker(ctx, symbol)
 		if err != nil {
 			slog.Warn("Ticker Binance indisponivel", "symbol", symbol, "error", err)
-			continue
+			price, err = pw.fetchBinanceTicker(ctx, symbol)
+			if err != nil {
+				continue
+			}
 		}
 		prices[key] = price
+		if symbol == "USDTBRL" {
+			prices["USDT_CHANGE24H"] = change24h
+		}
 		if symbol == "BTCUSDT" {
 			prices["BTCUSDT_SOURCE"] = price
+			prices["BTC_CHANGE24H"] = change24h
 		}
 		if symbol == "ETHUSDT" {
 			prices["ETHUSDT_SOURCE"] = price
+			prices["ETH_CHANGE24H"] = change24h
 		}
 		if symbol == "BNBUSDT" {
 			prices["BNBUSDT_SOURCE"] = price
+			prices["BNB_CHANGE24H"] = change24h
 		}
 		if symbol == "EURUSDT" && price > 0 {
 			prices["EUR"] = 1 / price
@@ -253,6 +268,40 @@ func (pw *PriceWorker) fetchBinancePrices(ctx context.Context) (map[string]float
 		return nil, "", fmt.Errorf("fallback Binance sem USDTBRL")
 	}
 	return prices, "binance", nil
+}
+
+func (pw *PriceWorker) fetchBinance24hTicker(ctx context.Context, symbol string) (float64, float64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://api.binance.com/api/v3/ticker/24hr?symbol="+symbol, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	req.Header.Set("User-Agent", "PaymentGateway/1.0")
+
+	resp, err := pw.client.Do(req)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("binance status %d", resp.StatusCode)
+	}
+
+	var data Binance24hTickerResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return 0, 0, err
+	}
+
+	price, err := strconv.ParseFloat(data.LastPrice, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	change24h, err := strconv.ParseFloat(data.PriceChangePercent, 64)
+	if err != nil {
+		return price, 0, nil
+	}
+	return price, change24h, nil
 }
 
 func (pw *PriceWorker) fetchBinanceTicker(ctx context.Context, symbol string) (float64, error) {
