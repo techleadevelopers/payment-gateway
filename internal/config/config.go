@@ -92,9 +92,11 @@ type Config struct {
 	SignerHmacSecret        string
 	BscRpcUrls              string
 	BscUsdtContract         string
+	BscChainID              int64
 	BscTreasuryContract     string
 	PolygonRpcUrls          string
 	PolygonUsdtContract     string
+	PolygonChainID          int64
 	PolygonTreasuryContract string
 	EnableSweepWorker       bool
 	EnableSweepStub         bool
@@ -282,9 +284,11 @@ func LoadConfig() *Config {
 		SignerHmacSecret:        getEnv("SIGNER_HMAC_SECRET", ""),
 		BscRpcUrls:              getBscRpcUrls(),
 		BscUsdtContract:         getEnv("BSC_USDT_CONTRACT", getEnv("BSC_TOKEN_CONTRACT", "")),
+		BscChainID:              int64(getEnvAsInt("BSC_CHAIN_ID", 56)),
 		BscTreasuryContract:     getEnv("BSC_TREASURY_CONTRACT", ""),
 		PolygonRpcUrls:          getPolygonRpcUrls(),
 		PolygonUsdtContract:     getEnv("POLYGON_USDT_CONTRACT", getEnv("POLYGON_TOKEN_CONTRACT", "")),
+		PolygonChainID:          int64(getEnvAsInt("POLYGON_CHAIN_ID", 137)),
 		PolygonTreasuryContract: getEnv("POLYGON_TREASURY_CONTRACT", ""),
 		EnableSweepWorker:       getEnvAsBool("ENABLE_SWEEP_WORKER", false),
 		EnableSweepStub:         getEnvAsBool("ENABLE_SWEEP_STUB", false),
@@ -490,7 +494,7 @@ func getBscRpcUrls() string {
 	var urls []string
 	seen := map[string]bool{}
 	for _, key := range []string{
-		"BSC_RPC_URLS", "RPC_URLS", "RPC_URL",
+		"BSC_RPC_URLS", "BSC_TESTNET_RPC_URLS", "BSC_TESTNET_RPC", "BNB_TESTNET_RPC_URLS", "BNB_TESTNET_RPC", "RPC_URLS", "RPC_URL",
 		"RPC1", "RPC2", "RPC3", "RPC4", "RPCN",
 		"ALCHEMY_BSC_RPC_URL_1", "ALCHEMY_BSC_RPC_URL_2", "ALCHEMY_BSC_RPC_URL", "ALCHEMY_BSC_FALLBACK_RPC_URL",
 	} {
@@ -507,7 +511,7 @@ func getBscRpcUrls() string {
 func getPolygonRpcUrls() string {
 	var urls []string
 	seen := map[string]bool{}
-	for _, key := range []string{"POLYGON_RPC_URLS", "POLYGON_RPC_URL", "ALCHEMY_POLYGON_RPC_URL_1", "ALCHEMY_POLYGON_RPC_URL_2", "ALCHEMY_POLYGON_RPC_URL", "ALCHEMY_POLYGON_FALLBACK_RPC_URL"} {
+	for _, key := range []string{"POLYGON_RPC_URLS", "POLYGON_RPC_URL", "POLYGON_AMOY_RPC_URLS", "POLYGON_AMOY_RPC", "ALCHEMY_POLYGON_RPC_URL_1", "ALCHEMY_POLYGON_RPC_URL_2", "ALCHEMY_POLYGON_RPC_URL", "ALCHEMY_POLYGON_FALLBACK_RPC_URL"} {
 		for _, url := range splitConfigCSV(getEnv(key, "")) {
 			if !seen[url] {
 				urls = append(urls, url)
