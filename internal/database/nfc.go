@@ -50,6 +50,9 @@ type NFCAuthorizeInput struct {
 	TerminalID      string
 	ExternalRef     string
 	AmountBRLMinor  int64
+	FeeBRLMinor     int64
+	TotalBRLMinor   int64
+	FeeBps          int
 	USDTRate        float64
 	RequiredUSDTMic int64
 	HoldExpiresAt   time.Time
@@ -65,6 +68,9 @@ type NFCAuthorization struct {
 	TerminalID      string     `json:"terminal_id"`
 	ExternalRef     string     `json:"external_ref,omitempty"`
 	AmountBRLMinor  int64      `json:"amount_brl_minor"`
+	FeeBRLMinor     int64      `json:"fee_brl_minor"`
+	TotalBRLMinor   int64      `json:"total_brl_minor"`
+	FeeBps          int        `json:"fee_bps"`
 	USDTRate        float64    `json:"usdt_rate"`
 	RequiredUSDTMic int64      `json:"required_usdt_micro"`
 	Status          string     `json:"status"`
@@ -342,7 +348,8 @@ WHERE wallet_address = $1 AND network = $2 AND asset = 'USDT'`,
 func (db *DB) GetNFCAuthorization(ctx context.Context, id string) (*NFCAuthorization, error) {
 	const q = `
 SELECT id, idempotency_key, token_id, wallet_address, network, merchant_id, terminal_id, COALESCE(external_ref,''),
-       amount_brl_minor, usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
+       amount_brl_minor, COALESCE(fee_brl_minor,0), COALESCE(total_brl_minor, amount_brl_minor), COALESCE(fee_bps,0),
+       usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
        hold_expires_at, created_at, updated_at
 FROM nfc_authorizations
 WHERE id = $1`
@@ -373,7 +380,8 @@ func (db *DB) ExpireNFCHolds(ctx context.Context, limit int) ([]*NFCAuthorizatio
 
 	rows, err := tx.QueryContext(ctx, `
 SELECT id, idempotency_key, token_id, wallet_address, network, merchant_id, terminal_id, COALESCE(external_ref,''),
-       amount_brl_minor, usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
+       amount_brl_minor, COALESCE(fee_brl_minor,0), COALESCE(total_brl_minor, amount_brl_minor), COALESCE(fee_bps,0),
+       usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
        hold_expires_at, created_at, updated_at
 FROM nfc_authorizations
 WHERE status = 'approved'
@@ -510,16 +518,18 @@ func txInsertNFCAuthorization(ctx context.Context, tx *sql.Tx, in NFCAuthorizeIn
 	const q = `
 INSERT INTO nfc_authorizations
   (id, idempotency_key, token_id, token_hash, wallet_address, network, merchant_id, terminal_id, external_ref,
-   amount_brl_minor, usdt_rate, required_usdt_micro, status, response_code, reason, hold_expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+   amount_brl_minor, fee_brl_minor, total_brl_minor, fee_bps, usdt_rate, required_usdt_micro, status, response_code, reason, hold_expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 RETURNING id, idempotency_key, token_id, wallet_address, network, merchant_id, terminal_id, COALESCE(external_ref,''),
-          amount_brl_minor, usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
+          amount_brl_minor, COALESCE(fee_brl_minor,0), COALESCE(total_brl_minor, amount_brl_minor), COALESCE(fee_bps,0),
+          usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
           hold_expires_at, created_at, updated_at`
 	auth, err := scanNFCAuthorization(tx.QueryRowContext(ctx, q,
 		in.ID, strings.TrimSpace(in.IdempotencyKey), in.TokenID, in.TokenHash,
 		strings.ToLower(strings.TrimSpace(in.Wallet)), normalizeNFCNetwork(in.Network),
 		strings.TrimSpace(in.MerchantID), strings.TrimSpace(in.TerminalID), nullableString(strings.TrimSpace(in.ExternalRef)),
-		in.AmountBRLMinor, in.USDTRate, in.RequiredUSDTMic, status, responseCode, reason, holdExpires,
+		in.AmountBRLMinor, in.FeeBRLMinor, firstNonZeroInt64(in.TotalBRLMinor, in.AmountBRLMinor), in.FeeBps,
+		in.USDTRate, in.RequiredUSDTMic, status, responseCode, reason, holdExpires,
 	))
 	if err != nil {
 		return nil, false, fmt.Errorf("nfc: insert authorization: %w", err)
@@ -530,7 +540,8 @@ RETURNING id, idempotency_key, token_id, wallet_address, network, merchant_id, t
 func txGetNFCAuthorizationByIdempotency(ctx context.Context, tx *sql.Tx, terminalID, key string) (*NFCAuthorization, error) {
 	const q = `
 SELECT id, idempotency_key, token_id, wallet_address, network, merchant_id, terminal_id, COALESCE(external_ref,''),
-       amount_brl_minor, usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
+       amount_brl_minor, COALESCE(fee_brl_minor,0), COALESCE(total_brl_minor, amount_brl_minor), COALESCE(fee_bps,0),
+       usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
        hold_expires_at, created_at, updated_at
 FROM nfc_authorizations
 WHERE terminal_id = $1 AND idempotency_key = $2
@@ -552,13 +563,17 @@ func sameNFCAuthorizationPayload(a *NFCAuthorization, in NFCAuthorizeInput) bool
 		strings.TrimSpace(a.TerminalID) == strings.TrimSpace(in.TerminalID) &&
 		strings.TrimSpace(a.ExternalRef) == strings.TrimSpace(in.ExternalRef) &&
 		a.AmountBRLMinor == in.AmountBRLMinor &&
+		a.FeeBRLMinor == in.FeeBRLMinor &&
+		a.TotalBRLMinor == firstNonZeroInt64(in.TotalBRLMinor, in.AmountBRLMinor) &&
+		a.FeeBps == in.FeeBps &&
 		a.RequiredUSDTMic == in.RequiredUSDTMic
 }
 
 func txGetNFCAuthorizationByID(ctx context.Context, tx *sql.Tx, id string) (*NFCAuthorization, error) {
 	const q = `
 SELECT id, idempotency_key, token_id, wallet_address, network, merchant_id, terminal_id, COALESCE(external_ref,''),
-       amount_brl_minor, usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
+       amount_brl_minor, COALESCE(fee_brl_minor,0), COALESCE(total_brl_minor, amount_brl_minor), COALESCE(fee_bps,0),
+       usdt_rate::float8, required_usdt_micro, status, response_code, COALESCE(reason,''),
        hold_expires_at, created_at, updated_at
 FROM nfc_authorizations
 WHERE id = $1
@@ -574,7 +589,8 @@ func scanNFCAuthorization(row scanner) (*NFCAuthorization, error) {
 	var a NFCAuthorization
 	var hold sql.NullTime
 	err := row.Scan(&a.ID, &a.IdempotencyKey, &a.TokenID, &a.Wallet, &a.Network, &a.MerchantID, &a.TerminalID, &a.ExternalRef,
-		&a.AmountBRLMinor, &a.USDTRate, &a.RequiredUSDTMic, &a.Status, &a.ResponseCode, &a.Reason, &hold, &a.CreatedAt, &a.UpdatedAt)
+		&a.AmountBRLMinor, &a.FeeBRLMinor, &a.TotalBRLMinor, &a.FeeBps,
+		&a.USDTRate, &a.RequiredUSDTMic, &a.Status, &a.ResponseCode, &a.Reason, &hold, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -582,6 +598,15 @@ func scanNFCAuthorization(row scanner) (*NFCAuthorization, error) {
 		a.HoldExpiresAt = &hold.Time
 	}
 	return &a, nil
+}
+
+func firstNonZeroInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func scanNFCBalance(row scanner) (*NFCBalance, error) {
