@@ -270,6 +270,84 @@ func (s *Server) handlePixWebhookBuy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (s *Server) handleEfiPixSendWebhook(w http.ResponseWriter, r *http.Request) {
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	secret := defaultString(s.cfg.PixWebhookSecret, s.cfg.WebhookSecret)
+	if secret == "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "PIX_WEBHOOK_SECRET nao configurado - endpoint desabilitado"})
+		return
+	}
+	signature := firstNonEmpty(r.Header.Get("x-efi-signature"), r.Header.Get("x-chainfx-signature"))
+	queryHMAC := r.URL.Query().Get("hmac")
+	if signature != "" && !validHMAC(secret, raw, signature) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "assinatura invalida"})
+		return
+	}
+	if signature == "" && queryHMAC != "" && !hmac.Equal([]byte(queryHMAC), []byte(secret)) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "hmac invalido"})
+		return
+	}
+	if signature == "" && queryHMAC == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "webhook sem autenticacao adicional"})
+		return
+	}
+
+	var req struct {
+		IDEnvio     string `json:"idEnvio"`
+		E2EID       string `json:"e2eId"`
+		EndToEndID  string `json:"endToEndId"`
+		Status      string `json:"status"`
+		PixEnviados []struct {
+			IDEnvio    string `json:"idEnvio"`
+			E2EID      string `json:"e2eId"`
+			EndToEndID string `json:"endToEndId"`
+			Status     string `json:"status"`
+		} `json:"pixEnviados"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload invalido"})
+		return
+	}
+	if len(req.PixEnviados) > 0 {
+		req.IDEnvio = firstNonEmpty(req.IDEnvio, req.PixEnviados[0].IDEnvio)
+		req.E2EID = firstNonEmpty(req.E2EID, req.PixEnviados[0].E2EID, req.PixEnviados[0].EndToEndID)
+		req.Status = firstNonEmpty(req.Status, req.PixEnviados[0].Status)
+	}
+	req.E2EID = firstNonEmpty(req.E2EID, req.EndToEndID)
+	if req.IDEnvio == "" && req.E2EID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload sem idEnvio/e2eId"})
+		return
+	}
+	if req.Status == "" {
+		req.Status = "SUBMITTED"
+	}
+	duplicate, settlement, err := s.db.ApplyMerchantSettlementProviderEvent(r.Context(), "efi", req.IDEnvio, req.E2EID, req.Status, map[string]any{
+		"source":   "webhook",
+		"idEnvio":  req.IDEnvio,
+		"e2eId":    req.E2EID,
+		"status":   req.Status,
+		"requestId": requestID(r),
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if settlement == nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "unmatched": true})
+		return
+	}
+	if settlement.Status == database.MerchantSettlementStatusConfirmed && s.workers != nil && s.workers.Bus != nil {
+		s.workers.Bus.Publish(workers.Event{Type: "nfc.settlement.confirmed", OrderID: settlement.AuthorizationID, Payload: map[string]any{
+			"settlement_id":      settlement.ID,
+			"provider_reference": settlement.ProviderReference,
+			"provider_status":    settlement.ProviderStatus,
+			"duplicate":          duplicate,
+			"source":             "webhook",
+		}})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": duplicate, "settlement_id": settlement.ID, "status": settlement.Status})
+}
+
 // handlePixWebhookBuyViaPSP parses raw through the wired PSP Router and applies
 // every normalised PixWebhookPayload as an independent buy-order settlement.
 // It never mutates HTTP state itself — callers write the returned status/body —
