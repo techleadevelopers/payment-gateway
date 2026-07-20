@@ -47,7 +47,7 @@ module.exports = {
       accounts
     },
     polygonAmoy: {
-      url: polygonAmoyRpc || "https://rpc-amoy.polygon.technology/",
+      url: polygonAmoyRpc || "https://polygon-amoy-bor-rpc.publicnode.com",
       chainId: 80002,
       accounts
     }
