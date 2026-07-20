@@ -152,6 +152,38 @@ type NFCSettlementSnapshot struct {
 	ReconciliationDuration     float64
 }
 
+func ObserveHTTPRequest(method, route string, status int, duration time.Duration) {
+	global.observeHTTP(method, route, status, duration)
+}
+
+func ObserveHTTPStage(method, route, stage string, duration time.Duration) {
+	global.observeHTTPStage(method, route, stage, duration)
+}
+
+func RoutePattern(method, path, muxPattern string) string {
+	muxPattern = strings.TrimSpace(muxPattern)
+	if muxPattern != "" {
+		if i := strings.IndexByte(muxPattern, ' '); i >= 0 {
+			return strings.TrimSpace(muxPattern[i+1:])
+		}
+		return muxPattern
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "unknown"
+	}
+	if path == "/" {
+		return "/"
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i, part := range parts {
+		if dynamicRouteSegment(part) {
+			parts[i] = "{id}"
+		}
+	}
+	return "/" + strings.Join(parts, "/")
+}
+
 func SetNFCSettlementSnapshot(snapshot NFCSettlementSnapshot) {
 	global.mu.Lock()
 	defer global.mu.Unlock()
@@ -207,8 +239,30 @@ type registry struct {
 	nfcSettlement NFCSettlementSnapshot
 	onchainFloors map[string]uint64     // network → min confirmations
 	opLog         []overpaymentLogEntry // ring buffer, max 1 000 entries
+	httpDurations map[httpMetricKey]*histogram
+	httpStages    map[httpStageMetricKey]*histogram
 	startedAt     time.Time
 }
+
+type httpMetricKey struct {
+	Method string
+	Route  string
+	Status string
+}
+
+type httpStageMetricKey struct {
+	Method string
+	Route  string
+	Stage  string
+}
+
+type histogram struct {
+	Buckets []uint64
+	Count   uint64
+	Sum     float64
+}
+
+var httpDurationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 
 type overpaymentLogEntry struct {
 	IntentID   string
@@ -219,8 +273,136 @@ type overpaymentLogEntry struct {
 func newRegistry() *registry {
 	return &registry{
 		onchainFloors: make(map[string]uint64),
+		httpDurations: make(map[httpMetricKey]*histogram),
+		httpStages:    make(map[httpStageMetricKey]*histogram),
 		startedAt:     time.Now(),
 	}
+}
+
+func (reg *registry) observeHTTP(method, route string, status int, duration time.Duration) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	route = sanitizeMetricLabel(route, "unknown")
+	statusClass := "unknown"
+	if status > 0 {
+		statusClass = fmt.Sprintf("%dxx", status/100)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	key := httpMetricKey{Method: method, Route: route, Status: statusClass}
+	h := reg.httpDurations[key]
+	if h == nil {
+		h = &histogram{Buckets: make([]uint64, len(httpDurationBuckets))}
+		reg.httpDurations[key] = h
+	}
+	h.observe(duration.Seconds())
+}
+
+func (reg *registry) observeHTTPStage(method, route, stage string, duration time.Duration) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	route = sanitizeMetricLabel(route, "unknown")
+	stage = sanitizeMetricLabel(stage, "unknown")
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	key := httpStageMetricKey{Method: method, Route: route, Stage: stage}
+	h := reg.httpStages[key]
+	if h == nil {
+		h = &histogram{Buckets: make([]uint64, len(httpDurationBuckets))}
+		reg.httpStages[key] = h
+	}
+	h.observe(duration.Seconds())
+}
+
+func (h *histogram) observe(seconds float64) {
+	for i, bucket := range httpDurationBuckets {
+		if seconds <= bucket {
+			h.Buckets[i]++
+		}
+	}
+	h.Count++
+	h.Sum += seconds
+}
+
+func (h *histogram) clone() histogram {
+	if h == nil {
+		return histogram{}
+	}
+	out := histogram{Count: h.Count, Sum: h.Sum}
+	out.Buckets = append([]uint64(nil), h.Buckets...)
+	return out
+}
+
+func sanitizeMetricLabel(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	if len(value) > 160 {
+		return value[:160]
+	}
+	return value
+}
+
+func dynamicRouteSegment(segment string) bool {
+	segment = strings.TrimSpace(segment)
+	if segment == "" {
+		return false
+	}
+	lower := strings.ToLower(segment)
+	if strings.HasPrefix(lower, "0x") && len(segment) == 42 {
+		return true
+	}
+	if len(segment) >= 18 {
+		return true
+	}
+	digits := 0
+	hexish := 0
+	for _, r := range segment {
+		if r >= '0' && r <= '9' {
+			digits++
+			hexish++
+			continue
+		}
+		if (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') || r == '-' || r == '_' {
+			hexish++
+		}
+	}
+	return digits == len(segment) || (len(segment) >= 8 && hexish == len(segment))
+}
+
+func writeHistogram(b *strings.Builder, name string, labels map[string]string, h histogram) {
+	for i, bucket := range httpDurationBuckets {
+		labels["le"] = fmt.Sprintf("%g", bucket)
+		fmt.Fprintf(b, "%s_bucket%s %d\n", name, formatLabels(labels), h.Buckets[i])
+	}
+	labels["le"] = "+Inf"
+	fmt.Fprintf(b, "%s_bucket%s %d\n", name, formatLabels(labels), h.Count)
+	delete(labels, "le")
+	fmt.Fprintf(b, "%s_sum%s %.6f\n", name, formatLabels(labels), h.Sum)
+	fmt.Fprintf(b, "%s_count%s %d\n", name, formatLabels(labels), h.Count)
+}
+
+func formatLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	order := []string{"method", "route", "status", "stage", "le"}
+	parts := make([]string, 0, len(labels))
+	seen := make(map[string]bool, len(labels))
+	for _, key := range order {
+		value, ok := labels[key]
+		if !ok {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf(`%s=%q`, key, value))
+		seen[key] = true
+	}
+	for key, value := range labels {
+		if seen[key] {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf(`%s=%q`, key, value))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func (reg *registry) appendOverpaymentEvent(intentID string, excess float64) {
@@ -254,11 +436,39 @@ func (reg *registry) render() string {
 	for k, v := range nfcSettlement.AnomalyCounts {
 		nfcAnomalies[k] = v
 	}
+	httpDurations := make(map[httpMetricKey]histogram, len(reg.httpDurations))
+	for k, v := range reg.httpDurations {
+		httpDurations[k] = v.clone()
+	}
+	httpStages := make(map[httpStageMetricKey]histogram, len(reg.httpStages))
+	for k, v := range reg.httpStages {
+		httpStages[k] = v.clone()
+	}
 	reg.mu.RUnlock()
 
 	uptimeSec := time.Since(reg.startedAt).Seconds()
 
 	var b strings.Builder
+
+	b.WriteString("# HELP chainfx_http_request_duration_seconds HTTP request duration by route, method and status class.\n")
+	b.WriteString("# TYPE chainfx_http_request_duration_seconds histogram\n")
+	for key, h := range httpDurations {
+		writeHistogram(&b, "chainfx_http_request_duration_seconds", map[string]string{
+			"method": key.Method,
+			"route":  key.Route,
+			"status": key.Status,
+		}, h)
+	}
+
+	b.WriteString("# HELP chainfx_http_stage_duration_seconds HTTP handler stage duration by route and method.\n")
+	b.WriteString("# TYPE chainfx_http_stage_duration_seconds histogram\n")
+	for key, h := range httpStages {
+		writeHistogram(&b, "chainfx_http_stage_duration_seconds", map[string]string{
+			"method": key.Method,
+			"route":  key.Route,
+			"stage":  key.Stage,
+		}, h)
+	}
 
 	// ── chainfx_m2m_overpayment_total ──────────────────────────────────────
 	b.WriteString("# HELP chainfx_m2m_overpayment_total Total on-chain deposits exceeding the required M2M intent amount.\n")
