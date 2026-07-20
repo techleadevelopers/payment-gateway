@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"payment-gateway/internal/database"
+	"payment-gateway/internal/metrics"
 	"payment-gateway/internal/money"
 	"payment-gateway/internal/nfc"
 	"payment-gateway/internal/workers"
@@ -184,22 +185,24 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 
 	stage = time.Now()
 	auth, idempotent, err := s.db.AuthorizeNFCPayment(r.Context(), database.NFCAuthorizeInput{
-		ID:              "nfc_auth_" + database.NewAccessToken()[:24],
-		IdempotencyKey:  req.IdempotencyKey,
-		TokenID:         claims.TokenID,
-		TokenHash:       nfc.TokenHash(req.Token),
-		Wallet:          claims.Wallet,
-		Network:         claims.Network,
-		MerchantID:      req.MerchantID,
-		TerminalID:      req.TerminalID,
-		ExternalRef:     req.ExternalRef,
-		AmountBRLMinor:  int64(amount),
-		FeeBRLMinor:     int64(feeBRL),
-		TotalBRLMinor:   int64(totalBRL),
-		FeeBps:          feeBps,
-		USDTRate:        price.Price,
-		RequiredUSDTMic: int64(required),
-		HoldExpiresAt:   time.Now().UTC().Add(time.Duration(s.cfg.NFCHoldTTLSeconds) * time.Second),
+		ID:                     "nfc_auth_" + database.NewAccessToken()[:24],
+		IdempotencyKey:         req.IdempotencyKey,
+		TokenID:                claims.TokenID,
+		TokenHash:              nfc.TokenHash(req.Token),
+		Wallet:                 claims.Wallet,
+		Network:                claims.Network,
+		MerchantID:             req.MerchantID,
+		TerminalID:             req.TerminalID,
+		ExternalRef:            req.ExternalRef,
+		AmountBRLMinor:         int64(amount),
+		FeeBRLMinor:            int64(feeBRL),
+		TotalBRLMinor:          int64(totalBRL),
+		FeeBps:                 feeBps,
+		USDTRate:               price.Price,
+		RequiredUSDTMic:        int64(required),
+		HoldExpiresAt:          time.Now().UTC().Add(time.Duration(s.cfg.NFCHoldTTLSeconds) * time.Second),
+		LiquidityPolicyEnabled: s.cfg.NFCLiquidityPolicyEnabled,
+		TreasurySnapshotMaxAge: time.Duration(s.cfg.NFCTreasurySnapshotMaxAgeSec) * time.Second,
 	})
 	addServerTiming(r.Context(), "db_transaction", time.Since(stage))
 	if err != nil {
@@ -207,10 +210,18 @@ func (s *Server) handleNFCAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "idempotency key replayed with different payload", "code": "NFC_IDEMPOTENCY_PAYLOAD_MISMATCH"})
 			return
 		}
+		if errors.Is(err, database.ErrNFCLiquidityUnavailable) {
+			metrics.IncNFCLiquidityRejection()
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "NFC treasury liquidity unavailable", "code": "NFC_LIQUIDITY_UNAVAILABLE", "response_code": "91"})
+			return
+		}
 		writeError(w, err)
 		return
 	}
 	auth.Idempotent = idempotent
+	if auth.Status == database.NFCStatusDeclined && auth.Reason == "efi_treasury_liquidity_unavailable" {
+		metrics.IncNFCLiquidityRejection()
+	}
 	statusCode := http.StatusOK
 	if auth.Status == database.NFCStatusApproved {
 		statusCode = http.StatusAccepted
@@ -464,6 +475,10 @@ func nfcAuthorizationView(a *database.NFCAuthorization, settlements ...*database
 	}
 	if a.HoldExpiresAt != nil {
 		out["hold_expires_at"] = *a.HoldExpiresAt
+	}
+	if a.BRLReservationID != "" {
+		out["brl_reservation_id"] = a.BRLReservationID
+		out["brl_reservation_status"] = a.BRLReservationStatus
 	}
 	return out
 }
