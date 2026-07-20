@@ -18,6 +18,68 @@ import (
 
 // handleMobileBuy — POST /api/mobile/order/buy
 // Delegates to the existing POST /api/buy handler internally.
+func (s *Server) handleMobileBuyQuote(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AmountBRL float64 `json:"amount_brl"`
+		Asset     string  `json:"asset"`
+	}
+	if err := decodeJSON(r, &req); err != nil || req.AmountBRL <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amount_brl obrigatorio"})
+		return
+	}
+	asset := strings.ToUpper(firstNonEmptyStr(req.Asset, "USDT"))
+	if asset != "USDT" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset nao suportado nesta fase"})
+		return
+	}
+	if min := s.mobileBuyMinBRL(); min > 0 && req.AmountBRL < min {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("valor minimo %.2f BRL", min)})
+		return
+	}
+	if s != nil && s.cfg != nil && s.cfg.OrderMaxBrl > 0 && req.AmountBRL > s.cfg.OrderMaxBrl {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("valor maximo %.2f BRL", s.cfg.OrderMaxBrl)})
+		return
+	}
+	marketRate := 0.0
+	if pw := s.PriceCache(); pw != nil {
+		marketRate = pw.GetPrice("BRL")
+	}
+	if marketRate <= 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao indisponivel"})
+		return
+	}
+	rate := s.mobileBuyRate(marketRate)
+	if rate <= 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao indisponivel"})
+		return
+	}
+	fee, feeBreakdown := s.mobileBuyFee(req.AmountBRL)
+	totalFiat := roundMoney(req.AmountBRL + fee)
+	cryptoAmount := roundCrypto(req.AmountBRL / rate)
+	expiresAt := time.Now().UTC().Add(time.Duration(s.mobileRateLockSec()) * time.Second)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"quote_id":       "buyq_" + strings.ReplaceAll(database.NewID(), "-", ""),
+		"side":           "buy",
+		"asset":          asset,
+		"fiat":           "BRL",
+		"amount_brl":     req.AmountBRL,
+		"subtotal_brl":   req.AmountBRL,
+		"fee_brl":        fee,
+		"feeFiat":        fee,
+		"total_brl":      totalFiat,
+		"totalFiat":      totalFiat,
+		"crypto_amount":  cryptoAmount,
+		"cryptoAmount":   cryptoAmount,
+		"receive_amount": cryptoAmount,
+		"rate":           rate,
+		"market_rate":    roundRateLocal(marketRate),
+		"marketRate":     roundRateLocal(marketRate),
+		"feeBreakdown":   feeBreakdown,
+		"expires_at":     expiresAt,
+		"expiresAt":      expiresAt,
+	})
+}
+
 func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	uid := userIDFromCtx(r)
 	var req struct {
