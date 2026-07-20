@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"payment-gateway/internal/config"
+
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -53,5 +55,53 @@ func TestERC20TransferCalldata(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(data), strings.TrimPrefix(strings.ToLower(to.Hex()), "0x")) {
 		t.Fatalf("recipient missing from calldata: %s", data)
+	}
+}
+
+func TestMobileTransferTokenUsesConfiguredChainID(t *testing.T) {
+	s := &Server{cfg: &config.Config{
+		BscUsdtContract:     "0x0000000000000000000000000000000000000001",
+		PolygonUsdtContract: "0x0000000000000000000000000000000000000002",
+		BscChainID:          97,
+		PolygonChainID:      80002,
+	}}
+
+	_, _, bscChainID, err := s.mobileTransferToken("USDT", "BSC")
+	if err != nil {
+		t.Fatalf("unexpected BSC error: %v", err)
+	}
+	if bscChainID != 97 {
+		t.Fatalf("BSC chainID = %d, want 97", bscChainID)
+	}
+
+	_, _, polygonChainID, err := s.mobileTransferToken("USDT", "POLYGON")
+	if err != nil {
+		t.Fatalf("unexpected Polygon error: %v", err)
+	}
+	if polygonChainID != 80002 {
+		t.Fatalf("Polygon chainID = %d, want 80002", polygonChainID)
+	}
+}
+
+func TestMobileTransferTokenDefaultsToMainnetChainID(t *testing.T) {
+	s := &Server{cfg: &config.Config{
+		BscUsdtContract:     "0x0000000000000000000000000000000000000001",
+		PolygonUsdtContract: "0x0000000000000000000000000000000000000002",
+	}}
+
+	_, _, bscChainID, err := s.mobileTransferToken("USDT", "BSC")
+	if err != nil {
+		t.Fatalf("unexpected BSC error: %v", err)
+	}
+	if bscChainID != 56 {
+		t.Fatalf("BSC chainID = %d, want 56", bscChainID)
+	}
+
+	_, _, polygonChainID, err := s.mobileTransferToken("USDT", "POLYGON")
+	if err != nil {
+		t.Fatalf("unexpected Polygon error: %v", err)
+	}
+	if polygonChainID != 137 {
+		t.Fatalf("Polygon chainID = %d, want 137", polygonChainID)
 	}
 }
