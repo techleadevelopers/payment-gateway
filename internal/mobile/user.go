@@ -234,3 +234,31 @@ func (s *Server) handleRemoveDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+func (s *Server) handleGetMembership(w http.ResponseWriter, r *http.Request) {
+	uid := userIDFromCtx(r)
+	user, err := mobileDB(s.db).GetUserByID(r.Context(), uid)
+	if err != nil || user == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "usuario nao encontrado"})
+		return
+	}
+	devices, _ := mobileDB(s.db).ListDevices(r.Context(), uid)
+	kycStatus := string(user.KYCStatus)
+	tier := "VIP 0"
+	level := "Basico"
+	if kycStatus == "approved" {
+		level = "Verificado"
+		tier = "VIP 1"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"uid":                  user.ID,
+		"tier":                 tier,
+		"level":                level,
+		"safeguard_enabled":    true,
+		"kyc_status":           kycStatus,
+		"devices_active_count": len(devices),
+		"pin_configured":       user.PinHash != nil && strings.TrimSpace(*user.PinHash) != "",
+		"biometry_enabled":     user.BiometryEnabled,
+		"two_factor_enabled":   user.TwoFactorEnabled,
+	})
+}
