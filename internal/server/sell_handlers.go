@@ -15,7 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-const sellDepositTTL = 8 * time.Minute
+const sellDepositTTL = 5 * time.Minute
 
 func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	markLegacyRoute(w, r, "/sell")
