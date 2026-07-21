@@ -11,7 +11,7 @@ import (
 
 func TestMobileWrapHandlesCORSPreflight(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "https://chatgpt.com")
-	s := New(&config.Config{}, nil, nil)
+	s := New(&config.Config{}, nil, nil, nil)
 	handler := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("mobile preflight should not delegate to existing handler")
 	}))
@@ -44,7 +44,7 @@ func TestMobileWrapHandlesCORSPreflight(t *testing.T) {
 
 func TestMobileCORSAllowsProductionAdminOrigin(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "https://chatgpt.com")
-	s := New(&config.Config{}, nil, nil)
+	s := New(&config.Config{}, nil, nil, nil)
 	handler := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("mobile preflight should not delegate to existing handler")
 	}))
@@ -65,7 +65,7 @@ func TestMobileCORSAllowsProductionAdminOrigin(t *testing.T) {
 
 func TestMobileCORSRejectsUnknownOriginWhenRestricted(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "https://chatgpt.com")
-	s := New(&config.Config{}, nil, nil)
+	s := New(&config.Config{}, nil, nil, nil)
 	handler := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("mobile preflight should not delegate to existing handler")
 	}))
@@ -85,7 +85,7 @@ func TestMobileCORSRejectsUnknownOriginWhenRestricted(t *testing.T) {
 
 func TestMobileCORSRejectsWildcardUnknownOriginInProduction(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "*")
-	s := New(&config.Config{Environment: "production"}, nil, nil)
+	s := New(&config.Config{Environment: "production"}, nil, nil, nil)
 	handler := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("mobile preflight should not delegate to existing handler")
 	}))

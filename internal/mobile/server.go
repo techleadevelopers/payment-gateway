@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"payment-gateway/internal/bitcoin"
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
 	"payment-gateway/internal/metrics"
@@ -67,18 +68,21 @@ type Server struct {
 	mcfg    *MobileConfig
 	db      *database.DB
 	workers *workers.WorkerManager
+	btcSvc  *bitcoin.Service // nil when BTC_ENABLED=false
 	hub     *wsHub
 	cacheMu sync.RWMutex
 	cache   map[string]mobileCacheEntry
 }
 
 // New creates a new mobile Server.
-func New(cfg *config.Config, db *database.DB, wm *workers.WorkerManager) *Server {
+// btcSvc may be nil — the BTC endpoints will respond with 503 BTC_DISABLED.
+func New(cfg *config.Config, db *database.DB, wm *workers.WorkerManager, btcSvc *bitcoin.Service) *Server {
 	s := &Server{
 		cfg:     cfg,
 		mcfg:    loadMobileConfig(),
 		db:      db,
 		workers: wm,
+		btcSvc:  btcSvc,
 		hub:     newWsHub(),
 		cache:   make(map[string]mobileCacheEntry),
 	}
@@ -314,6 +318,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Support
 	mux.HandleFunc("POST /api/mobile/support/tickets", s.requireAuth(s.handleCreateSupportTicket))
+
+	// ── Bitcoin (BTC rail independente) ──────────────────────────────────────
+	// Todos os endpoints respondem com 503 BTC_DISABLED quando BTC_ENABLED=false.
+	mux.HandleFunc("GET /api/mobile/btc/address", s.requireAuth(s.handleBTCAddress))
+	mux.HandleFunc("GET /api/mobile/btc/balance", s.requireAuth(s.handleBTCBalance))
+	mux.HandleFunc("GET /api/mobile/btc/fee-estimate", s.requireAuth(s.handleBTCFeeEstimate))
+	mux.HandleFunc("GET /api/mobile/btc/transactions", s.requireAuth(s.handleBTCTransactions))
+	mux.HandleFunc("GET /api/mobile/btc/transactions/{id}", s.requireAuth(s.handleBTCGetTransaction))
+	mux.HandleFunc("POST /api/mobile/btc/send", s.requireAuth(s.requireIdempotency("mobile.btc.send", s.handleBTCSend)))
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

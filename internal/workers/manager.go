@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"payment-gateway/internal/bitcoin"
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
 	"payment-gateway/internal/email"
@@ -40,9 +41,12 @@ type WorkerManager struct {
 	NFCReconcileWorker  *NFCSettlementReconciliationWorker
 	PaymasterService    *paymaster.Service
 	PSPRouter           *psp.Router // optional; set by cmd/api/main.go before StartAll when Efí is configured
-	db                  *database.DB
-	cfg                 *config.Config
-	wg                  sync.WaitGroup
+	// BTC rail — nil when BTC_ENABLED=false or when the BTC config is absent.
+	BTCSvc    *bitcoin.Service
+	BTCWorker *bitcoin.BTCWorker
+	db        *database.DB
+	cfg       *config.Config
+	wg        sync.WaitGroup
 }
 
 func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service, pool *rpc.Pool) *WorkerManager {
@@ -52,6 +56,14 @@ func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service
 	if pool != nil {
 		paymasterSvc = paymaster.NewService(cfg, db, pool)
 	}
+
+	// BTC rail — nil-safe: NewService returns (nil, nil) when BTC_ENABLED=false.
+	btcSvc, err := bitcoin.NewService(db)
+	if err != nil {
+		slog.Warn("btc: falha ao inicializar serviço Bitcoin, rail desabilitada", "error", err)
+		btcSvc = nil
+	}
+	btcWorker := bitcoin.NewBTCWorker(btcSvc)
 
 	return &WorkerManager{
 		Bus:                 bus,
@@ -69,6 +81,8 @@ func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service
 		NFCSettlementWorker: NewNFCMerchantSettlementWorker(bus, db, cfg),
 		NFCReconcileWorker:  NewNFCSettlementReconciliationWorker(db, cfg),
 		PaymasterService:    paymasterSvc,
+		BTCSvc:              btcSvc,
+		BTCWorker:           btcWorker,
 		db:                  db,
 		cfg:                 cfg,
 	}
@@ -81,6 +95,9 @@ func (wm *WorkerManager) StartAll(ctx context.Context) {
 	workerCount := 14 // base workers + KYC + AutoSweeper + Paymaster + NFC expiration + NFC settlement + reconciliation
 	if wm.PSPRouter != nil {
 		workerCount++ // + PSP health probe
+	}
+	if wm.BTCWorker != nil {
+		workerCount++ // + BTC deposit scanner + confirmation tracker
 	}
 	wm.wg.Add(workerCount)
 
@@ -160,6 +177,13 @@ func (wm *WorkerManager) StartAll(ctx context.Context) {
 		go func() {
 			defer wm.wg.Done()
 			wm.runPSPHealthProbe(ctx)
+		}()
+	}
+
+	if wm.BTCWorker != nil {
+		go func() {
+			defer wm.wg.Done()
+			wm.BTCWorker.Start(ctx)
 		}()
 	}
 
