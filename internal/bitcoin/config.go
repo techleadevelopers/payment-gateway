@@ -33,7 +33,7 @@ type Config struct {
 	MinConfirmations     int
 	DepositScanInterval  time.Duration
 	TxScanInterval       time.Duration
-	FeePolicy            string // normal | economy | priority
+	FeePolicy            string // normal | economy | fast
 	FeeTargetBlocks      int
 	MinFeeRateSatVB      int64
 	MaxFeeRateSatVB      int64
@@ -41,6 +41,9 @@ type Config struct {
 	MaxSendSats          int64 // 0 = sem limite
 	DailySendLimitSats   int64 // 0 = sem limite
 	HotWalletReserveSats int64
+	// Feature flags de segurança operacional
+	WithdrawalsEnabled bool // BTC_WITHDRAWALS_ENABLED — false por padrão (opt-in explícito)
+	EmergencyLockdown  bool // BTC_EMERGENCY_LOCKDOWN  — bloqueia novos envios sem parar workers de confirmação
 }
 
 // LoadBTCConfig lê variáveis de ambiente e retorna a configuração BTC.
@@ -88,6 +91,9 @@ func LoadBTCConfig() (*Config, error) {
 		MaxSendSats:          int64(btcEnvInt("BTC_MAX_SEND_SATS", 0)),
 		DailySendLimitSats:   int64(btcEnvInt("BTC_DAILY_SEND_LIMIT_SATS", 0)),
 		HotWalletReserveSats: int64(btcEnvInt("BTC_HOT_WALLET_RESERVE_SATS", 0)),
+		// Segurança operacional — ambos false por padrão (opt-in explícito)
+		WithdrawalsEnabled: btcEnvBool("BTC_WITHDRAWALS_ENABLED", false),
+		EmergencyLockdown:  btcEnvBool("BTC_EMERGENCY_LOCKDOWN", false),
 	}
 
 	// Segurança: mainnet exige configuração explícita

@@ -101,3 +101,67 @@ CREATE INDEX IF NOT EXISTS idx_btc_transactions_user_network
 CREATE INDEX IF NOT EXISTS idx_btc_transactions_status_network
     ON btc_transactions (network, status)
     WHERE status IN ('broadcast','pending');
+
+-- ─── btc_transaction_inputs ──────────────────────────────────
+-- Registra cada UTXO usado como input em uma transação BTC.
+-- Permite auditoria completa de double-spend e reconciliação.
+
+CREATE TABLE IF NOT EXISTS btc_transaction_inputs (
+    id             TEXT    PRIMARY KEY,
+    transaction_id TEXT    NOT NULL REFERENCES btc_transactions(id),
+    utxo_id        TEXT    NOT NULL REFERENCES btc_utxos(id),
+    txid           TEXT    NOT NULL,   -- txid do UTXO gasto
+    vout           INTEGER NOT NULL,
+    value_sats     BIGINT  NOT NULL CHECK (value_sats > 0),
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_btc_tx_input UNIQUE (transaction_id, txid, vout)
+);
+
+CREATE INDEX IF NOT EXISTS idx_btc_tx_inputs_transaction
+    ON btc_transaction_inputs (transaction_id);
+
+-- ─── btc_transaction_outputs ─────────────────────────────────
+-- Registra cada output de uma transação BTC:
+-- destino principal, change e tipo de output.
+
+CREATE TABLE IF NOT EXISTS btc_transaction_outputs (
+    id             TEXT    PRIMARY KEY,
+    transaction_id TEXT    NOT NULL REFERENCES btc_transactions(id),
+    vout           INTEGER NOT NULL,
+    address        TEXT    NOT NULL,
+    value_sats     BIGINT  NOT NULL CHECK (value_sats >= 0),
+    output_type    TEXT    NOT NULL DEFAULT 'destination'
+                           CHECK (output_type IN ('destination','change','fee_bump')),
+    script_pub_key TEXT    NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_btc_tx_output UNIQUE (transaction_id, vout)
+);
+
+CREATE INDEX IF NOT EXISTS idx_btc_tx_outputs_transaction
+    ON btc_transaction_outputs (transaction_id);
+
+-- ─── btc_wallet_state ────────────────────────────────────────
+-- Estado global da rail BTC por rede:
+--   next_derivation_index — próximo índice HD a ser alocado
+--   last_scanned_block    — último bloco processado pelo deposit scanner
+--   last_scan_at          — timestamp do último scan bem-sucedido
+--   scanner_status        — 'idle' | 'running' | 'error'
+-- Uma linha por rede, inserida na primeira inicialização.
+
+CREATE TABLE IF NOT EXISTS btc_wallet_state (
+    network               TEXT        PRIMARY KEY
+                                      CHECK (network IN ('mainnet','testnet','signet','regtest')),
+    next_derivation_index INTEGER     NOT NULL DEFAULT 0,
+    last_scanned_block    BIGINT      NOT NULL DEFAULT 0,
+    last_scan_at          TIMESTAMPTZ,
+    scanner_status        TEXT        NOT NULL DEFAULT 'idle'
+                                      CHECK (scanner_status IN ('idle','running','error')),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Inicializa as quatro redes com estado zero (idempotente).
+INSERT INTO btc_wallet_state (network) VALUES
+    ('mainnet'), ('testnet'), ('signet'), ('regtest')
+ON CONFLICT (network) DO NOTHING;

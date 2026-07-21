@@ -173,6 +173,23 @@ func (s *Server) handleBTCSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── Feature flags de segurança operacional ────────────────────────────────
+	cfg := svc.Config()
+	if cfg.EmergencyLockdown {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"code":    "BTC_EMERGENCY_LOCKDOWN",
+			"message": "envios Bitcoin temporariamente suspensos por lockdown operacional",
+		})
+		return
+	}
+	if !cfg.WithdrawalsEnabled {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"code":    "BTC_WITHDRAWALS_DISABLED",
+			"message": "saques Bitcoin não estão habilitados neste ambiente (BTC_WITHDRAWALS_ENABLED=false)",
+		})
+		return
+	}
+
 	var body struct {
 		ToAddress  string `json:"to_address"`
 		AmountSats int64  `json:"amount_sats"`
