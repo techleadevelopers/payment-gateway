@@ -127,6 +127,11 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	// Invalidate caches so any in-flight token is rejected immediately.
+	s.invalidateUserActiveCache(uid)
+	s.cacheMu.Lock()
+	delete(s.cache, "nfc_wallet:"+uid)
+	s.cacheMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"deleted": true,
