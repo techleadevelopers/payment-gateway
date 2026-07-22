@@ -81,6 +81,11 @@ type contextKey string
 
 const ctxUserID contextKey = "uid"
 
+// userActiveCacheTTL is the TTL for the in-memory "is user active" cache.
+// Short enough to propagate account deletions (30 s), long enough to avoid a
+// DB round-trip on every authenticated request.
+const userActiveCacheTTL = 30 * time.Second
+
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -94,15 +99,34 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if s.db != nil {
-			active, err := mobileDB(s.db).IsUserActive(r.Context(), claims.Sub)
-			if err != nil || !active {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "usuario nao encontrado ou conta excluida"})
-				return
+			cacheKey := "user_active:" + claims.Sub
+			if cached, ok := s.getMobileCache(cacheKey); ok {
+				if active, _ := cached.(bool); !active {
+					writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "usuario nao encontrado ou conta excluida"})
+					return
+				}
+			} else {
+				active, err := mobileDB(s.db).IsUserActive(r.Context(), claims.Sub)
+				if err != nil || !active {
+					// Cache negative result briefly to avoid hammering DB on bad tokens.
+					s.setMobileCache(cacheKey, false, 5*time.Second)
+					writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "usuario nao encontrado ou conta excluida"})
+					return
+				}
+				s.setMobileCache(cacheKey, true, userActiveCacheTTL)
 			}
 		}
 		ctx := context.WithValue(r.Context(), ctxUserID, claims.Sub)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// invalidateUserActiveCache removes the cached active status for a user,
+// e.g. after logout or account deletion so the next request re-checks the DB.
+func (s *Server) invalidateUserActiveCache(userID string) {
+	s.cacheMu.Lock()
+	delete(s.cache, "user_active:"+userID)
+	s.cacheMu.Unlock()
 }
 
 func userIDFromCtx(r *http.Request) string {
@@ -240,12 +264,10 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "usuário não encontrado"})
 		return
 	}
-	user, err = s.ensureUserWallet(r.Context(), user)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "erro ao criar carteira do usuario"})
-		return
-	}
 	// C-05: validate refresh token against the stored server-side digest.
+	// ensureUserWallet is intentionally NOT called here — token refresh only
+	// needs to verify the session and issue new tokens; wallet state is
+	// unchanged between requests and creating it here adds unnecessary latency.
 	// Without this check a revoked token (after logout or password change)
 	// remains valid for its full 7-day TTL — anyone with the token can still
 	// obtain new access tokens even after the user has logged out.
@@ -272,6 +294,8 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	uid := userIDFromCtx(r)
 	_ = mobileDB(s.db).ClearRefreshToken(r.Context(), uid)
+	// Invalidate the cached active status so subsequent requests re-check the DB.
+	s.invalidateUserActiveCache(uid)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
