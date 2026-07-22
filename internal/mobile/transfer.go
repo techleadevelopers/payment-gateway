@@ -21,7 +21,8 @@ import (
 
 const (
 	bscUSDCContractMobile     = "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
-	polygonUSDCContractMobile = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+	// Native USDC on Polygon (Circle, 2024+). The former 0x2791… was bridged USDC.e (deprecated).
+	polygonUSDCContractMobile = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
 	defaultPolygonUSDTMobile  = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
 )
 
@@ -206,31 +207,43 @@ func (s *Server) handleWalletTransferQuote(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	rpcURL := s.mobileTransferRPCURL(network)
-	if rpcURL == "" {
+	rpcURLs := s.mobileTransferRPCURLs(network)
+	if len(rpcURLs) == 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": network + " RPC nao configurado para cotacao de transferencia"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	client, err := ethclient.DialContext(ctx, rpcURL)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "falha ao conectar RPC " + network})
-		return
-	}
-	defer client.Close()
+
 	from := common.HexToAddress(*user.WalletAddress)
 	recipient := common.HexToAddress(to)
 	tokenAddress := common.HexToAddress(token)
 	data := common.FromHex(erc20TransferCalldata(recipient, rawAmount))
-	gasPrice, err := client.SuggestGasPrice(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "falha ao estimar gas price"})
-		return
+
+	// Try each RPC URL in order — failover so a down primary node does not block
+	// fee estimation for all users (mirrors sendCustodialMobileERC20Transfer).
+	var gasPrice *big.Int
+	var gasLimit uint64
+	var quoteRPCErr error
+	for _, rpcURL := range rpcURLs {
+		var c *ethclient.Client
+		c, quoteRPCErr = ethclient.DialContext(ctx, rpcURL)
+		if quoteRPCErr != nil {
+			continue
+		}
+		gasPrice, quoteRPCErr = c.SuggestGasPrice(ctx)
+		if quoteRPCErr != nil {
+			c.Close()
+			continue
+		}
+		gasLimit, quoteRPCErr = c.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &tokenAddress, Value: big.NewInt(0), Data: data})
+		c.Close()
+		if quoteRPCErr == nil {
+			break
+		}
 	}
-	gasLimit, err := client.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &tokenAddress, Value: big.NewInt(0), Data: data})
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "falha ao estimar gas"})
+	if quoteRPCErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "falha ao estimar gas: todos os RPCs indisponiveis"})
 		return
 	}
 	if gasLimit < 65_000 {
@@ -284,15 +297,26 @@ func (s *Server) sendCustodialMobileERC20Transfer(ctx context.Context, encrypted
 		return "", fmt.Errorf("chave custodial nao corresponde a wallet do usuario")
 	}
 
-	rpcURL := s.mobileTransferRPCURL(network)
-	if rpcURL == "" {
+	rpcURLs := s.mobileTransferRPCURLs(network)
+	if len(rpcURLs) == 0 {
 		return "", fmt.Errorf("%s RPC nao configurado para transferencia mobile", network)
 	}
 	txCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	client, err := ethclient.DialContext(txCtx, rpcURL)
-	if err != nil {
-		return "", fmt.Errorf("falha ao conectar RPC %s: %w", network, err)
+
+	// Try each RPC URL in order — failover when the primary node is down.
+	var client *ethclient.Client
+	var dialErr error
+	for _, rpcURL := range rpcURLs {
+		c, err := ethclient.DialContext(txCtx, rpcURL)
+		if err == nil {
+			client = c
+			break
+		}
+		dialErr = fmt.Errorf("RPC %s: %w", rpcURL, err)
+	}
+	if client == nil {
+		return "", fmt.Errorf("falha ao conectar RPC %s: %w", network, dialErr)
 	}
 	defer client.Close()
 
@@ -389,16 +413,38 @@ func (s *Server) mobileTransferChainID(network string) int {
 	}
 }
 
+// mobileTransferRPCURL returns the first configured RPC URL for backward compatibility.
 func (s *Server) mobileTransferRPCURL(network string) string {
-	if s == nil || s.cfg == nil {
+	urls := s.mobileTransferRPCURLs(network)
+	if len(urls) == 0 {
 		return ""
+	}
+	return urls[0]
+}
+
+// mobileTransferRPCURLs returns all CSV-separated RPC URLs for the network,
+// enabling the caller to iterate and failover when the primary node is unavailable.
+func (s *Server) mobileTransferRPCURLs(network string) []string {
+	if s == nil || s.cfg == nil {
+		return nil
 	}
 	switch network {
 	case "POLYGON":
-		return firstCSVValue(s.cfg.PolygonRpcUrls)
+		return allCSVValues(s.cfg.PolygonRpcUrls)
 	default:
-		return firstCSVValue(s.cfg.BscRpcUrls)
+		return allCSVValues(s.cfg.BscRpcUrls)
 	}
+}
+
+// allCSVValues splits a comma-separated string and returns all non-empty values.
+func allCSVValues(raw string) []string {
+	var out []string
+	for _, value := range strings.Split(raw, ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func mobileTransferNativeSymbol(network string) string {
