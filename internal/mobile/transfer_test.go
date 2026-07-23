@@ -105,3 +105,42 @@ func TestMobileTransferTokenDefaultsToMainnetChainID(t *testing.T) {
 		t.Fatalf("Polygon chainID = %d, want 137", polygonChainID)
 	}
 }
+
+func TestMobileTransferTokenSupportsNewEVMUSDCNetworks(t *testing.T) {
+	s := &Server{cfg: &config.Config{
+		BaseUsdcContract:     "0x0000000000000000000000000000000000000003",
+		BaseChainID:          84531,
+		ArbitrumUsdcContract: "0x0000000000000000000000000000000000000004",
+		ArbitrumChainID:      421614,
+		EthereumUsdcContract: "0x0000000000000000000000000000000000000005",
+		EthereumChainID:      11155111,
+	}}
+
+	tests := []struct {
+		network string
+		want    int
+	}{
+		{"BASE", 84531},
+		{"ARBITRUM", 421614},
+		{"ETHEREUM", 11155111},
+	}
+	for _, tt := range tests {
+		t.Run(tt.network, func(t *testing.T) {
+			token, decimals, chainID, err := s.mobileTransferToken("USDC", tt.network)
+			if err != nil {
+				t.Fatalf("mobileTransferToken: %v", err)
+			}
+			if token == "" || decimals != 6 || chainID != tt.want {
+				t.Fatalf("token=%q decimals=%d chainID=%d, want configured USDC/6/%d", token, decimals, chainID, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeMobileTransferNetworkRejectsNonEVMRails(t *testing.T) {
+	for _, network := range []string{"BITCOIN", "SOLANA", "APTOS"} {
+		if got := normalizeMobileTransferNetwork(network); got != "" {
+			t.Fatalf("normalizeMobileTransferNetwork(%q)=%q, want empty", network, got)
+		}
+	}
+}
