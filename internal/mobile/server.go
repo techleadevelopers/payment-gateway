@@ -66,18 +66,18 @@ func loadMobileConfig() *MobileConfig {
 
 // Server is the mobile API server.
 type Server struct {
-	cfg        *config.Config
-	mcfg       *MobileConfig
-	db         *database.DB
-	workers    *workers.WorkerManager
-	btcSvc     *bitcoin.Service // nil when BTC_ENABLED=false
-	hub        *wsHub
-	cacheMu    sync.RWMutex
-	cache      map[string]mobileCacheEntry
+	cfg     *config.Config
+	mcfg    *MobileConfig
+	db      *database.DB
+	workers *workers.WorkerManager
+	btcSvc  *bitcoin.Service // nil when BTC_ENABLED=false
+	hub     *wsHub
+	cacheMu sync.RWMutex
+	cache   map[string]mobileCacheEntry
 	// Persistent RPC pools — created once at startup, reused across all requests.
 	// Creating a new pool per request was the #1 source of unnecessary latency
 	// because each NewPool call allocates circuit-breakers and dials fresh connections.
-	bscPool    *rpcpool.Pool // nil when BSC_RPC_URLS is not configured
+	bscPool     *rpcpool.Pool // nil when BSC_RPC_URLS is not configured
 	polygonPool *rpcpool.Pool // nil when POLYGON_RPC_URLS is not configured
 }
 
@@ -274,6 +274,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// ── DCA ───────────────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/mobile/dca/create", s.requireAuth(s.requireIdempotency("mobile.dca.create", s.handleDCACreate)))
+	mux.HandleFunc("GET /api/mobile/dca/dashboard", s.requireAuth(s.handleDCADashboard))
 	mux.HandleFunc("GET /api/mobile/dca/strategies", s.requireAuth(s.handleDCAList))
 	mux.HandleFunc("PUT /api/mobile/dca/{id}", s.requireAuth(s.handleDCAUpdate))
 	mux.HandleFunc("DELETE /api/mobile/dca/{id}", s.requireAuth(s.handleDCADelete))
