@@ -12,7 +12,7 @@ import (
 
 func TestResolveLiquidityPairRequiresContractsForEVMTokens(t *testing.T) {
 	cfg := &config.Config{
-		LiquidityAllowedPairs: "AVAX:BSC,AVAX:POLYGON:0x0000000000000000000000000000000000000001:18,BNB:BSC,BTC:BITCOIN",
+		LiquidityAllowedPairs: "AVAX:BSC,AVAX:POLYGON:0x0000000000000000000000000000000000000001:18,BNB:BSC::18,BTC:BITCOIN::8",
 	}
 
 	if _, ok := resolveLiquidityPair(cfg, "AVAX", "BSC"); ok {
@@ -31,8 +31,12 @@ func TestResolveLiquidityPairRequiresContractsForEVMTokens(t *testing.T) {
 	if _, ok := resolveLiquidityPair(cfg, "BNB", "BSC"); !ok {
 		t.Fatal("expected native BNB/BSC to be allowed without contract")
 	}
-	if _, ok := resolveLiquidityPair(cfg, "BTC", "BITCOIN"); !ok {
+	btc, ok := resolveLiquidityPair(cfg, "BTC", "BITCOIN")
+	if !ok {
 		t.Fatal("expected native BTC/BITCOIN to be allowed without contract")
+	}
+	if btc.ContractAddress != "" || btc.Decimals != 8 {
+		t.Fatalf("unexpected BTC/BITCOIN pair: %+v", btc)
 	}
 }
 
