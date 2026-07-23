@@ -59,6 +59,7 @@ type BuyOrder struct {
 	PayoutBRL         float64         `json:"payout_brl"`
 	CryptoAmount      float64         `json:"crypto_amount"`
 	Asset             string          `json:"asset"`
+	Network           string          `json:"network"`
 	DestAddress       string          `json:"dest_address"`
 	RateLocked        float64         `json:"rate_locked"`
 	RateLockExpiresAt time.Time       `json:"rate_lock_expires_at"`
@@ -87,6 +88,7 @@ type BuyOrderInput struct {
 	PayoutBRL         float64
 	CryptoAmount      float64
 	Asset             string
+	Network           string
 	DestAddress       string
 	RateLocked        float64
 	RateLockExpiresAt time.Time
@@ -679,11 +681,15 @@ func (db *DB) CreateBuyOrder(ctx context.Context, buy BuyOrderInput) (*BuyOrder,
 	if buy.AccessToken == "" {
 		buy.AccessToken = NewAccessToken()
 	}
+	network := strings.ToUpper(strings.TrimSpace(buy.Network))
+	if network == "" {
+		network = "BSC"
+	}
 	_, err = db.SQL.ExecContext(ctx, `
-                INSERT INTO buy_orders (id, access_token, request_id, status, amount_brl, amount_fiat, fiat_currency, payment_method, provider_payment_id, fee_brl, payout_brl, crypto_amount, asset, dest_address, rate_locked, rate_lock_expires_at, pix_payload)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+                INSERT INTO buy_orders (id, access_token, request_id, status, amount_brl, amount_fiat, fiat_currency, payment_method, provider_payment_id, fee_brl, payout_brl, crypto_amount, asset, network, dest_address, rate_locked, rate_lock_expires_at, pix_payload)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		id, buy.AccessToken, nullableString(buy.RequestID), buy.Status, buy.AmountBRL, buy.AmountFiat, buy.FiatCurrency, buy.PaymentMethod, nullableString(buy.ProviderPaymentID),
-		buy.FeeBRL, buy.PayoutBRL, buy.CryptoAmount, buy.Asset, buy.DestAddress, buy.RateLocked, buy.RateLockExpiresAt, rawPayload)
+		buy.FeeBRL, buy.PayoutBRL, buy.CryptoAmount, buy.Asset, network, buy.DestAddress, buy.RateLocked, buy.RateLockExpiresAt, rawPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -762,7 +768,7 @@ func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
                 SELECT id, COALESCE(access_token, ''), request_id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
                        COALESCE(fiat_currency, 'BRL'), COALESCE(payment_method, 'pix'), provider_payment_id,
                        COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
-                       crypto_amount::float8, asset, dest_address, rate_locked::float8, rate_lock_expires_at,
+                       crypto_amount::float8, asset, COALESCE(network, 'BSC'), dest_address, rate_locked::float8, rate_lock_expires_at,
                        COALESCE(pix_payload, '{}'::jsonb), tx_hash_out, error, paid_at, settled_at, delivered_at, created_at, updated_at
                 FROM buy_orders WHERE id = $1`, id)
 	var buy BuyOrder
@@ -770,7 +776,7 @@ func (db *DB) GetBuyOrder(ctx context.Context, id string) (*BuyOrder, error) {
 	var paidAt, settledAt, deliveredAt sql.NullTime
 	if err := row.Scan(&buy.ID, &buy.AccessToken, &requestID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
 		&buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
-		&buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &paidAt, &settledAt, &deliveredAt, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
+		&buy.Network, &buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &paidAt, &settledAt, &deliveredAt, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -963,7 +969,7 @@ func (db *DB) ListAdminTransactions(ctx context.Context, limit int) ([]AdminTran
                                crypto_amount,
                                asset,
                                dest_address AS address,
-                               'BSC' AS network,
+                               COALESCE(network, 'BSC') AS network,
                                rate_locked,
                                provider_payment_id,
                                tx_hash_out AS tx_hash,
@@ -1195,7 +1201,7 @@ func (db *DB) ListPendingBuys(ctx context.Context) ([]BuyOrder, error) {
                 SELECT id, COALESCE(access_token, ''), request_id, status, amount_brl::float8, COALESCE(amount_fiat, amount_brl)::float8,
                        COALESCE(fiat_currency, 'BRL'), COALESCE(payment_method, 'pix'), provider_payment_id,
                        COALESCE(fee_brl,0)::float8, COALESCE(payout_brl,0)::float8,
-                       crypto_amount::float8, asset, dest_address, rate_locked::float8, rate_lock_expires_at,
+                       crypto_amount::float8, asset, COALESCE(network, 'BSC'), dest_address, rate_locked::float8, rate_lock_expires_at,
                        COALESCE(pix_payload, '{}'::jsonb), tx_hash_out, error, paid_at, settled_at, delivered_at, created_at, updated_at
                 FROM buy_orders
                WHERE status IN ('pago_fiat','pago_pix')
@@ -1211,7 +1217,7 @@ func (db *DB) ListPendingBuys(ctx context.Context) ([]BuyOrder, error) {
 		var paidAt, settledAt, deliveredAt sql.NullTime
 		if err := rows.Scan(&buy.ID, &buy.AccessToken, &requestID, &buy.Status, &buy.AmountBRL, &buy.AmountFiat, &buy.FiatCurrency, &buy.PaymentMethod, &providerPaymentID,
 			&buy.FeeBRL, &buy.PayoutBRL, &buy.CryptoAmount, &buy.Asset,
-			&buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &paidAt, &settledAt, &deliveredAt, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
+			&buy.Network, &buy.DestAddress, &buy.RateLocked, &buy.RateLockExpiresAt, &buy.PixPayload, &txHashOut, &errMsg, &paidAt, &settledAt, &deliveredAt, &buy.CreatedAt, &buy.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if requestID.Valid {
@@ -1511,6 +1517,7 @@ CREATE TABLE IF NOT EXISTS buy_orders (
   payout_brl NUMERIC(18,2),
   crypto_amount NUMERIC(28,8) NOT NULL,
   asset VARCHAR(16) NOT NULL DEFAULT 'USDT',
+  network TEXT NOT NULL DEFAULT 'BSC',
   dest_address TEXT NOT NULL,
   rate_locked NUMERIC(28,8) NOT NULL,
   rate_lock_expires_at TIMESTAMPTZ NOT NULL,
@@ -1534,6 +1541,7 @@ ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+ALTER TABLE buy_orders ADD COLUMN IF NOT EXISTS network TEXT NOT NULL DEFAULT 'BSC';
 UPDATE buy_orders SET amount_fiat = amount_brl WHERE amount_fiat IS NULL;
 UPDATE buy_orders SET access_token = encode(gen_random_bytes(32), 'hex') WHERE access_token IS NULL OR access_token = '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_orders_access_token ON buy_orders (access_token);
