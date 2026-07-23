@@ -16,7 +16,22 @@ import (
 )
 
 func (s *Server) handleSolanaAddress(w http.ResponseWriter, r *http.Request) {
-	s.handleDerivedRailAddress(w, r, "SOLANA", "sol_wallet_addresses", deriveSolanaAddress)
+	svc := s.solanaSvcOrErr(w)
+	if svc == nil {
+		return
+	}
+	addr, err := svc.GetOrCreateAddress(r.Context(), userIDFromCtx(r))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "SOL_ADDRESS_ERROR", "message": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"address":        addr.Address,
+		"wallet_address": addr.Address,
+		"network":        "SOLANA",
+		"custody":        "server_derived",
+		"created_at":     addr.CreatedAt,
+	})
 }
 
 func (s *Server) handleAptosAddress(w http.ResponseWriter, r *http.Request) {
