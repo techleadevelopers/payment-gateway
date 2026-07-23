@@ -99,6 +99,10 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		DestAddress                 string         `json:"dest_address"`
 		Network                     string         `json:"network"`
 		PaymentMethod               string         `json:"payment_method"` // "pix" | "card"
+		PaymentToken                string         `json:"payment_token"`
+		CardBrand                   string         `json:"card_brand"`
+		Installments                int            `json:"installments"`
+		BillingAddress              map[string]any `json:"billing_address"`
 		CPF                         string         `json:"cpf"`
 		CustomerName                string         `json:"customer_name"`
 		CustomerEmail               string         `json:"customer_email"`
@@ -121,6 +125,12 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 			BirthDate string         `json:"birthDate"`
 			Address   map[string]any `json:"address"`
 		} `json:"customer"`
+		Card struct {
+			PaymentToken   string         `json:"paymentToken"`
+			Brand          string         `json:"brand"`
+			Installments   int            `json:"installments"`
+			BillingAddress map[string]any `json:"billingAddress"`
+		} `json:"card"`
 		QuoteID string `json:"quote_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.AmountBRL <= 0 || req.DestAddress == "" {
@@ -197,6 +207,20 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		"paymentMethod": req.PaymentMethod,
 		"quoteId":       req.QuoteID,
 		"rateLocked":    claims.Rate,
+		"paymentToken":  firstNonEmptyStr(req.PaymentToken, req.Card.PaymentToken),
+		"cardBrand":     firstNonEmptyStr(req.CardBrand, req.Card.Brand),
+		"installments":  firstPositiveIntMobile(req.Installments, req.Card.Installments, 1),
+		"billingAddress": firstNonNilAddress(
+			req.BillingAddress,
+			req.Card.BillingAddress,
+			customerAddress,
+		),
+		"card": map[string]any{
+			"paymentToken":   firstNonEmptyStr(req.PaymentToken, req.Card.PaymentToken),
+			"brand":          firstNonEmptyStr(req.CardBrand, req.Card.Brand),
+			"installments":   firstPositiveIntMobile(req.Installments, req.Card.Installments, 1),
+			"billingAddress": firstNonNilAddress(req.BillingAddress, req.Card.BillingAddress, customerAddress),
+		},
 		"customer": map[string]any{
 			"name":      customerName,
 			"email":     customerEmail,
