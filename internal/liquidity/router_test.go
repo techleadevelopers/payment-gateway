@@ -117,6 +117,43 @@ func TestRouterRejectsMismatchedProviderQuote(t *testing.T) {
 	}
 }
 
+func TestRouterRejectsMismatchedDestinationQuote(t *testing.T) {
+	router := NewRouter(quoteProvider{name: "wrong-dest", quote: Quote{
+		Asset:         "SOL",
+		Network:       "SOLANA",
+		DestAddress:   "8dQ7uLxkVQ2mN4wH3rP9tB6sC1zY5aE7gF2hJ3kL4mN5",
+		TotalCostBRL:  100,
+		CryptoAmount:  1,
+		TokenDecimals: 9,
+	}})
+
+	_, _, err := router.BestQuote(context.Background(), Request{
+		OrderID:       "buy-sol",
+		Asset:         "SOL",
+		Network:       "SOLANA",
+		DestAddress:   "5Q7uLxkVQ2mN4wH3rP9tB6sC1zY5aE7gF2hJ3kL4mN5A",
+		CryptoAmount:  1,
+		TokenDecimals: 9,
+	})
+	if !errors.Is(err, ErrNoProviderQuote) {
+		t.Fatalf("expected ErrNoProviderQuote, got %v", err)
+	}
+}
+
+func TestRouterRejectsTokenContractMismatchIncludingNativePairs(t *testing.T) {
+	router := NewRouter(
+		quoteProvider{name: "native-with-contract", quote: Quote{Asset: "ETH", Network: "BASE", TokenContract: "0x0000000000000000000000000000000000000001", TotalCostBRL: 100, CryptoAmount: 0.01, TokenDecimals: 18}},
+		quoteProvider{name: "wrong-usdc-contract", quote: Quote{Asset: "USDC", Network: "BASE", TokenContract: "0x0000000000000000000000000000000000000002", TotalCostBRL: 100, CryptoAmount: 10, TokenDecimals: 6}},
+	)
+
+	if _, _, err := router.BestQuote(context.Background(), Request{Asset: "ETH", Network: "BASE", CryptoAmount: 0.01, TokenDecimals: 18}); !errors.Is(err, ErrNoProviderQuote) {
+		t.Fatalf("native pair should reject provider contract, got %v", err)
+	}
+	if _, _, err := router.BestQuote(context.Background(), Request{Asset: "USDC", Network: "BASE", TokenContract: "0x0000000000000000000000000000000000000001", CryptoAmount: 10, TokenDecimals: 6}); !errors.Is(err, ErrNoProviderQuote) {
+		t.Fatalf("ERC20 pair should reject wrong contract, got %v", err)
+	}
+}
+
 func TestRouterRejectsMismatchedExecution(t *testing.T) {
 	router := NewRouter(executableProvider{
 		quoteProvider: quoteProvider{name: "partner-a", quote: Quote{Asset: "SOL", Network: "SOLANA", TotalCostBRL: 100, CryptoAmount: 1}},
