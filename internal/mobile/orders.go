@@ -23,14 +23,16 @@ func (s *Server) handleMobileBuyQuote(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AmountBRL float64 `json:"amount_brl"`
 		Asset     string  `json:"asset"`
+		Network   string  `json:"network"`
 	}
 	if err := decodeJSON(r, &req); err != nil || req.AmountBRL <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "amount_brl obrigatorio"})
 		return
 	}
 	asset := strings.ToUpper(firstNonEmptyStr(req.Asset, "USDT"))
-	if !mobileTradeAssetSupported(asset) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset nao suportado nesta fase"})
+	network := normalizeMobileBuyNetwork(firstNonEmptyStr(req.Network, "BSC"))
+	if !s.mobileLiquidityPairSupported(asset, network) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "par asset/network nao suportado para compra"})
 		return
 	}
 	if min := s.mobileBuyMinBRL(); min > 0 && req.AmountBRL < min {
@@ -58,6 +60,7 @@ func (s *Server) handleMobileBuyQuote(w http.ResponseWriter, r *http.Request) {
 	quoteID, err := s.issueMobileQuote(mobileQuoteClaims{
 		Side:      "buy",
 		Asset:     asset,
+		Network:   network,
 		Amount:    req.AmountBRL,
 		Rate:      rate,
 		Fee:       fee,
@@ -72,6 +75,7 @@ func (s *Server) handleMobileBuyQuote(w http.ResponseWriter, r *http.Request) {
 		"quote_id":       quoteID,
 		"side":           "buy",
 		"asset":          asset,
+		"network":        network,
 		"fiat":           "BRL",
 		"amount_brl":     req.AmountBRL,
 		"subtotal_brl":   req.AmountBRL,
@@ -143,17 +147,17 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 	if req.PaymentMethod == "" {
 		req.PaymentMethod = "pix"
 	}
-	network := normalizeMobileTransferNetwork(firstNonEmptyStr(req.Network, "BSC"))
-	if network != "BSC" && network != "POLYGON" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC ou POLYGON"})
+	network := normalizeMobileBuyNetwork(firstNonEmptyStr(req.Network, "BSC"))
+	if network == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC, POLYGON ou BITCOIN"})
 		return
 	}
 	req.Asset = strings.ToUpper(firstNonEmptyStr(req.Asset, "USDT"))
-	if !mobileTradeAssetSupported(req.Asset) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset nao suportado nesta fase"})
+	if !s.mobileLiquidityPairSupported(req.Asset, network) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "par asset/network nao suportado para compra"})
 		return
 	}
-	claims, err := s.verifyMobileQuote(req.QuoteID, "buy", req.Asset, req.AmountBRL, time.Now())
+	claims, err := s.verifyMobileQuote(req.QuoteID, "buy", req.Asset, req.AmountBRL, time.Now(), network)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": "MOBILE_QUOTE_INVALID"})
 		return
@@ -268,7 +272,7 @@ func (s *Server) writeDegradedMobileBuy(w http.ResponseWriter, r *http.Request, 
 	asset = strings.ToUpper(strings.TrimSpace(firstNonEmptyStr(asset, "USDT")))
 	paymentMethod = strings.ToLower(strings.TrimSpace(firstNonEmptyStr(paymentMethod, "pix")))
 	destAddress = strings.TrimSpace(destAddress)
-	network = normalizeMobileTransferNetwork(firstNonEmptyStr(network, "BSC"))
+	network = normalizeMobileBuyNetwork(firstNonEmptyStr(network, "BSC"))
 	if paymentMethod != "pix" || amountBRL <= 0 || !looksLikeEVMAddress(destAddress) {
 		return false
 	}
@@ -532,7 +536,7 @@ func (s *Server) handleMobileSell(w http.ResponseWriter, r *http.Request) {
 
 func mobileTradeAssetSupported(asset string) bool {
 	switch strings.ToUpper(strings.TrimSpace(asset)) {
-	case "USDT", "BTC", "BNB":
+	case "USDT", "BTC", "BNB", "ETH", "LINK", "AVAX":
 		return true
 	default:
 		return false
