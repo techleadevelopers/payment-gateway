@@ -46,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/sell/{id}/manual-pix-paid", s.handleAdminSellManualPixPaid)
 	mux.HandleFunc("GET /api/admin/wallets", s.handleAdminWallets)
 	mux.HandleFunc("POST /api/admin/signer/probe", s.handleAdminSignerProbe)
+	mux.HandleFunc("POST /api/admin/liquidity/bingx/probe", s.handleAdminBingXProbe)
 	mux.HandleFunc("POST /api/admin/mobile-test/purge", s.handleAdminMobileTestPurge)
 	mux.HandleFunc("POST /api/agents/market-analysis", s.handleAgentMarketAnalysis)
 	mux.HandleFunc("POST /api/agents/recommend", s.handleAgentRecommend)
