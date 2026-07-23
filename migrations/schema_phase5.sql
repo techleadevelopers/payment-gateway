@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS dca_strategies (
   id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id        UUID          NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   token_symbol   VARCHAR(16)   NOT NULL,
+  network        TEXT          NOT NULL DEFAULT 'BSC',
   amount_brl     NUMERIC(18,2) NOT NULL,
   frequency      VARCHAR(16)   NOT NULL DEFAULT 'weekly',
   active         BOOLEAN       NOT NULL DEFAULT true,
@@ -136,7 +137,9 @@ CREATE TABLE IF NOT EXISTS dca_strategies (
   updated_at     TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 
+ALTER TABLE dca_strategies ADD COLUMN IF NOT EXISTS network TEXT NOT NULL DEFAULT 'BSC';
 CREATE INDEX IF NOT EXISTS idx_dca_user   ON dca_strategies(user_id);
+CREATE INDEX IF NOT EXISTS idx_dca_user_network ON dca_strategies(user_id, token_symbol, network);
 CREATE INDEX IF NOT EXISTS idx_dca_active ON dca_strategies(active, next_execution) WHERE active = true;
 
 -- ─── Webhook Subscriptions ────────────────────────────────────────────────────
