@@ -47,6 +47,12 @@ type Config struct {
 	BuyNetworkFeeBrl          float64
 	BuyMinFeeBrl              float64
 	BuyRateSpreadBps          int
+	LiquidityRouterEnabled    bool
+	LiquidityQuoteTimeoutMs   int
+	LiquidityAllowedAssets    string
+	LiquidityAllowedNetworks  string
+	LiquidityProviderURLs     string
+	LiquidityProviderAPIKey   string
 	SellRateBps               int
 	SellSpreadMinBps          int
 	SellSpreadMaxBps          int
@@ -248,6 +254,12 @@ func LoadConfig() *Config {
 		BuyNetworkFeeBrl:          getEnvAsFloat("FEE_BUY_NETWORK_BRL", getEnvAsFloat("FEE_BUY_TIER_1_FIXED", getEnvAsFloat("FEE_BUY_TIER_FIXED", 1.99))),
 		BuyMinFeeBrl:              getEnvAsFloat("FEE_BUY_MIN_TOTAL", getEnvAsFloat("FEE_MIN_BRL", 4.99)),
 		BuyRateSpreadBps:          getEnvPercentAsBps("FEE_BUY_SPREAD_PERCENT", getEnvAsInt("FEE_BUY_SPREAD_BPS", 100)),
+		LiquidityRouterEnabled:    getEnvAsBool("LIQUIDITY_ROUTER_ENABLED", false),
+		LiquidityQuoteTimeoutMs:   getEnvAsInt("LIQUIDITY_QUOTE_TIMEOUT_MS", 2500),
+		LiquidityAllowedAssets:    strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_ASSETS", "USDT,BTC,BNB")),
+		LiquidityAllowedNetworks:  strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_NETWORKS", "BSC,POLYGON,BITCOIN")),
+		LiquidityProviderURLs:     getEnv("LIQUIDITY_PROVIDER_URLS", ""),
+		LiquidityProviderAPIKey:   getEnv("LIQUIDITY_PROVIDER_API_KEY", ""),
 		SellRateBps:               getEnvAsInt("SELL_RATE_BPS", 0),
 		SellSpreadMinBps:          getEnvPercentAsBps("FEE_SELL_SPREAD_MIN", getEnvAsInt("FEE_SELL_SPREAD_MIN_BPS", 800)),
 		SellSpreadMaxBps:          getEnvPercentAsBps("FEE_SELL_SPREAD_MAX", getEnvAsInt("FEE_SELL_SPREAD_MAX_BPS", 1000)),
