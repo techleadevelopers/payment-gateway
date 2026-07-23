@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"payment-gateway/internal/liquidity"
 	"payment-gateway/internal/privacy"
 
 	ethereum "github.com/ethereum/go-ethereum"
@@ -20,7 +21,7 @@ import (
 )
 
 const (
-	bscUSDCContractMobile     = "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
+	bscUSDCContractMobile = "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
 	// Native USDC on Polygon (Circle, 2024+). The former 0x2791… was bridged USDC.e (deprecated).
 	polygonUSDCContractMobile = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
 	defaultPolygonUSDTMobile  = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
@@ -73,7 +74,7 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 	network := normalizeMobileTransferNetwork(req.Network)
 	if network == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC ou POLYGON"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network EVM nao suportada ou desabilitada"})
 		return
 	}
 
@@ -194,7 +195,7 @@ func (s *Server) handleWalletTransferQuote(w http.ResponseWriter, r *http.Reques
 	}
 	network := normalizeMobileTransferNetwork(req.Network)
 	if network == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC ou POLYGON"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network EVM nao suportada ou desabilitada"})
 		return
 	}
 	token, decimals, chainID, err := s.mobileTransferToken(asset, network)
@@ -355,14 +356,14 @@ func (s *Server) sendCustodialMobileERC20Transfer(ctx context.Context, encrypted
 }
 
 func normalizeMobileTransferNetwork(network string) string {
-	switch strings.ToUpper(strings.TrimSpace(network)) {
-	case "", "BSC", "BINANCE", "BEP20":
-		return "BSC"
-	case "POL", "POLYGON", "MATIC":
-		return "POLYGON"
-	default:
+	normalized := liquidity.NormalizeNetwork(network)
+	if strings.TrimSpace(network) == "" {
+		normalized = "BSC"
+	}
+	if !liquidity.IsEVMNetwork(normalized) {
 		return ""
 	}
+	return normalized
 }
 
 func (s *Server) mobileTransferToken(asset, network string) (string, int, int, error) {
@@ -388,14 +389,33 @@ func (s *Server) mobileTransferToken(asset, network string) (string, int, int, e
 		case "USDC":
 			return polygonUSDCContractMobile, 6, s.mobileTransferChainID("POLYGON"), nil
 		}
+	case "BASE":
+		if asset == "USDC" && s.cfg != nil && common.IsHexAddress(s.cfg.BaseUsdcContract) {
+			return s.cfg.BaseUsdcContract, 6, s.mobileTransferChainID("BASE"), nil
+		}
+	case "ARBITRUM":
+		if asset == "USDC" && s.cfg != nil && common.IsHexAddress(s.cfg.ArbitrumUsdcContract) {
+			return s.cfg.ArbitrumUsdcContract, 6, s.mobileTransferChainID("ARBITRUM"), nil
+		}
+	case "ETHEREUM":
+		if asset == "USDC" && s.cfg != nil && common.IsHexAddress(s.cfg.EthereumUsdcContract) {
+			return s.cfg.EthereumUsdcContract, 6, s.mobileTransferChainID("ETHEREUM"), nil
+		}
 	}
 	return "", 0, 0, fmt.Errorf("asset/network nao suportado para transferencia mobile")
 }
 
 func (s *Server) mobileTransferChainID(network string) int {
 	if s == nil || s.cfg == nil {
-		if network == "POLYGON" {
+		switch network {
+		case "POLYGON":
 			return 137
+		case "BASE":
+			return 8453
+		case "ARBITRUM":
+			return 42161
+		case "ETHEREUM":
+			return 1
 		}
 		return 56
 	}
@@ -405,6 +425,21 @@ func (s *Server) mobileTransferChainID(network string) int {
 			return int(s.cfg.PolygonChainID)
 		}
 		return 137
+	case "BASE":
+		if s.cfg.BaseChainID > 0 {
+			return int(s.cfg.BaseChainID)
+		}
+		return 8453
+	case "ARBITRUM":
+		if s.cfg.ArbitrumChainID > 0 {
+			return int(s.cfg.ArbitrumChainID)
+		}
+		return 42161
+	case "ETHEREUM":
+		if s.cfg.EthereumChainID > 0 {
+			return int(s.cfg.EthereumChainID)
+		}
+		return 1
 	default:
 		if s.cfg.BscChainID > 0 {
 			return int(s.cfg.BscChainID)
@@ -431,6 +466,12 @@ func (s *Server) mobileTransferRPCURLs(network string) []string {
 	switch network {
 	case "POLYGON":
 		return allCSVValues(s.cfg.PolygonRpcUrls)
+	case "BASE":
+		return allCSVValues(s.cfg.BaseRpcUrls)
+	case "ARBITRUM":
+		return allCSVValues(s.cfg.ArbitrumRpcUrls)
+	case "ETHEREUM":
+		return allCSVValues(s.cfg.EthereumRpcUrls)
 	default:
 		return allCSVValues(s.cfg.BscRpcUrls)
 	}
@@ -453,6 +494,8 @@ func mobileTransferNativeSymbol(network string) string {
 		return "MATIC"
 	case "BSC":
 		return "BNB"
+	case "BASE", "ARBITRUM", "ETHEREUM":
+		return "ETH"
 	default:
 		return ""
 	}
