@@ -28,7 +28,7 @@ func (s *Server) handleDCACreate(w http.ResponseWriter, r *http.Request) {
 	tokenSymbol := strings.ToUpper(strings.TrimSpace(req.TokenSymbol))
 	network := normalizeMobileBuyNetwork(req.Network)
 	if network == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC, POLYGON ou BITCOIN"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network nao suportada para DCA"})
 		return
 	}
 	if !s.mobileLiquidityPairSupported(tokenSymbol, network) {
