@@ -23,6 +23,7 @@ type Quote struct {
 	ID                string     `json:"id"`
 	Side              string     `json:"side"`
 	Asset             string     `json:"asset"`
+	Network           string     `json:"network"`
 	FiatCurrency      string     `json:"fiatCurrency"`
 	PaymentMethod     string     `json:"paymentMethod"`
 	AmountMinor       int64      `json:"amountMinor"`
@@ -41,6 +42,7 @@ type QuoteInput struct {
 	ID                string
 	Side              string
 	Asset             string
+	Network           string
 	FiatCurrency      string
 	PaymentMethod     string
 	AmountMinor       int64
@@ -57,7 +59,9 @@ type QuoteConsumeInput struct {
 	ID           string
 	Side         string
 	Asset        string
+	Network      string
 	FiatCurrency string
+	PaymentMethod string
 	AmountMinor  int64
 	APIKeyHash   string
 }
@@ -91,11 +95,12 @@ func (db *DB) CreateQuote(ctx context.Context, in QuoteInput) (*Quote, error) {
 	}
 	_, err := db.SQL.ExecContext(ctx, `
 		INSERT INTO quotes (
-		  id, side, asset, fiat_currency, payment_method, amount_minor,
+		  id, side, asset, network, fiat_currency, payment_method, amount_minor,
 		  crypto_amount_units, rate, market_rate, fee_minor, expires_at,
 		  api_key_hash, body_hash
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		in.ID, normalizeDBLower(in.Side), strings.ToUpper(strings.TrimSpace(in.Asset)),
+		strings.ToUpper(strings.TrimSpace(in.Network)),
 		strings.ToUpper(strings.TrimSpace(in.FiatCurrency)), normalizeDBLower(in.PaymentMethod),
 		in.AmountMinor, in.CryptoAmountUnits, in.Rate, in.MarketRate, in.FeeMinor,
 		in.ExpiresAt.UTC(), nullableString(in.APIKeyHash), in.BodyHash)
@@ -228,7 +233,7 @@ func (db *DB) UpdateBuyOrderPayment(ctx context.Context, id, status, providerPay
 }
 
 func quoteSelectSQL() string {
-	return `SELECT id, side, asset, fiat_currency, payment_method, amount_minor, crypto_amount_units,
+	return `SELECT id, side, asset, COALESCE(network, ''), fiat_currency, payment_method, amount_minor, crypto_amount_units,
 	       rate::float8, COALESCE(market_rate, 0)::float8, fee_minor, expires_at, consumed_at,
 	       COALESCE(api_key_hash, ''), body_hash, created_at
 	FROM quotes`
@@ -237,7 +242,7 @@ func quoteSelectSQL() string {
 func scanQuote(row rowScanner) (*Quote, error) {
 	var q Quote
 	var consumed sql.NullTime
-	if err := row.Scan(&q.ID, &q.Side, &q.Asset, &q.FiatCurrency, &q.PaymentMethod, &q.AmountMinor,
+	if err := row.Scan(&q.ID, &q.Side, &q.Asset, &q.Network, &q.FiatCurrency, &q.PaymentMethod, &q.AmountMinor,
 		&q.CryptoAmountUnits, &q.Rate, &q.MarketRate, &q.FeeMinor, &q.ExpiresAt, &consumed,
 		&q.APIKeyHash, &q.BodyHash, &q.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
@@ -288,7 +293,9 @@ func quoteMatches(q *Quote, in QuoteConsumeInput) bool {
 	}
 	return strings.EqualFold(q.Side, in.Side) &&
 		strings.EqualFold(q.Asset, in.Asset) &&
+		(strings.TrimSpace(in.Network) == "" || strings.EqualFold(q.Network, in.Network)) &&
 		strings.EqualFold(q.FiatCurrency, in.FiatCurrency) &&
+		(strings.TrimSpace(in.PaymentMethod) == "" || strings.EqualFold(q.PaymentMethod, in.PaymentMethod)) &&
 		q.AmountMinor == in.AmountMinor &&
 		(strings.TrimSpace(q.APIKeyHash) == "" || strings.TrimSpace(q.APIKeyHash) == strings.TrimSpace(in.APIKeyHash))
 }
