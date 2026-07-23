@@ -181,7 +181,27 @@ func (s *Server) handleWalletBalance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	totalBRL := usdtValueBRL + bnbValueBRL + polyUSDTValueBRL + maticValueBRL + baseUSDCValueBRL + baseETHValueBRL + arbitrumUSDCValueBRL + arbitrumETHValueBRL + ethereumUSDCValueBRL + ethereumETHValueBRL + btcValueBRL
+	var solValueBRL float64
+	if s.solSvc != nil {
+		if solBal, solErr := s.solSvc.GetBalance(r.Context(), uid); solErr == nil {
+			solPrice := mobileAssetPriceBRL(s.PriceCache(), "SOL")
+			amountSOL := float64(solBal.Lamports) / 1e9
+			solValueBRL = amountSOL * solPrice
+			balances = append(balances, map[string]any{
+				"symbol":             "SOL",
+				"name":               "Solana",
+				"network":            "SOLANA",
+				"amount":             amountSOL,
+				"lamports":           solBal.Lamports,
+				"available_lamports": solBal.AvailableLamports,
+				"value_brl":          solValueBRL,
+				"price_brl":          solPrice,
+				"change_24h":         mobileAssetChange24h(s.PriceCache(), "SOL"),
+			})
+		}
+	}
+
+	totalBRL := usdtValueBRL + bnbValueBRL + polyUSDTValueBRL + maticValueBRL + baseUSDCValueBRL + baseETHValueBRL + arbitrumUSDCValueBRL + arbitrumETHValueBRL + ethereumUSDCValueBRL + ethereumETHValueBRL + btcValueBRL + solValueBRL
 	writeJSON(w, http.StatusOK, map[string]any{
 		"wallet_address": walletAddr,
 		"balances":       balances,
