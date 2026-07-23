@@ -47,6 +47,10 @@ func containsStrictCSVFold(raw, value string) bool {
 }
 
 func (bw *BuySendWorker) hotWalletDeliverySupported(pair liquidity.Pair) bool {
+	pair = liquidity.EnrichPair(pair)
+	if !strings.EqualFold(pair.Asset, "USDT") || !strings.EqualFold(pair.Network, "BSC") {
+		return false
+	}
 	network := strings.ToUpper(strings.TrimSpace(pair.Network))
 	signerNetwork := strings.ToUpper(strings.TrimSpace(bw.cfg.SignerNetwork))
 	if signerNetwork == "" || signerNetwork == "EVM" || signerNetwork == "BINANCE" || signerNetwork == "BEP20" {
@@ -103,6 +107,12 @@ func (bw *BuySendWorker) rpcURLsForLiquidityNetwork(network string) string {
 	switch strings.ToUpper(strings.TrimSpace(network)) {
 	case "POLYGON":
 		return bw.cfg.PolygonRpcUrls
+	case "BASE":
+		return bw.cfg.BaseRpcUrls
+	case "ARBITRUM":
+		return bw.cfg.ArbitrumRpcUrls
+	case "ETHEREUM":
+		return bw.cfg.EthereumRpcUrls
 	default:
 		return bw.cfg.BscRpcUrls
 	}
