@@ -13,64 +13,64 @@ import (
 
 // Config centraliza todas as variáveis do seu .env de forma tipada e segura
 type Config struct {
-	Environment               string
-	AllowSimulations          bool
-	DatabaseURL               string
-	AllowedOrigins            string
-	WebhookSecret             string
-	Port                      string
-	OrderMinBrl               float64
-	OrderMaxBrl               float64
-	RateLockSec               int
-	RateLimitWindowMs         int
-	RateLimitMax              int
-	RateLimitBackend          string
-	RedisURL                  string
-	PenaltyBoxEnabled         bool
-	PenaltyViolationLimit     int
-	PenaltyViolationWindowSec int
-	PenaltyBaseBanSec         int
-	PenaltyEscalatedBanSec    int
-	PenaltyMaxBanSec          int
-	OrderRateLimitWindowMs    int
-	OrderRateLimitMax         int
-	FeeBps                    int
-	FeeFixedUsd               float64
-	FeePerUsdtUsd             float64
-	FeeMinBrl                 float64
-	BuyTier1MinBrl            float64
-	BuyTier1MaxBrl            float64
-	BuyTier1Bps               int
-	BuyTier2MaxBrl            float64
-	BuyTier2Bps               int
-	BuyTier3Bps               int
-	BuyNetworkFeeBrl          float64
-	BuyMinFeeBrl              float64
-	BuyRateSpreadBps          int
-	LiquidityRouterEnabled    bool
-	LiquidityQuoteTimeoutMs   int
-	LiquidityAllowedPairs     string
-	LiquidityAllowedAssets    string
-	LiquidityAllowedNetworks  string
-	LiquidityRouterSkipAssets string
-	LiquidityProviderURLs     string
-	LiquidityProviderAPIKey   string
-	SellRateBps               int
-	SellSpreadMinBps          int
-	SellSpreadMaxBps          int
-	SellSpreadHighValueBrl    float64
-	SellUsdtBrlRate           float64
-	SellWalletAddress         string
-	BuyHotDerivationIndex     int
-	ChainFXLiveSecretKeys     string
-	ChainFXTestSecretKeys     string
-	ChainFXLivePublicKeys     string
-	ChainFXTestPublicKeys     string
-	ChainFXRequireAPIKey      bool
-	InternalAllowedCIDRs      string
-	AdminBootstrapEmail       string
-	AdminBootstrapPassword    string
-	AdminConsoleKey           string
+	Environment                   string
+	AllowSimulations              bool
+	DatabaseURL                   string
+	AllowedOrigins                string
+	WebhookSecret                 string
+	Port                          string
+	OrderMinBrl                   float64
+	OrderMaxBrl                   float64
+	RateLockSec                   int
+	RateLimitWindowMs             int
+	RateLimitMax                  int
+	RateLimitBackend              string
+	RedisURL                      string
+	PenaltyBoxEnabled             bool
+	PenaltyViolationLimit         int
+	PenaltyViolationWindowSec     int
+	PenaltyBaseBanSec             int
+	PenaltyEscalatedBanSec        int
+	PenaltyMaxBanSec              int
+	OrderRateLimitWindowMs        int
+	OrderRateLimitMax             int
+	FeeBps                        int
+	FeeFixedUsd                   float64
+	FeePerUsdtUsd                 float64
+	FeeMinBrl                     float64
+	BuyTier1MinBrl                float64
+	BuyTier1MaxBrl                float64
+	BuyTier1Bps                   int
+	BuyTier2MaxBrl                float64
+	BuyTier2Bps                   int
+	BuyTier3Bps                   int
+	BuyNetworkFeeBrl              float64
+	BuyMinFeeBrl                  float64
+	BuyRateSpreadBps              int
+	LiquidityRouterEnabled        bool
+	LiquidityQuoteTimeoutMs       int
+	LiquidityAllowedPairs         string
+	LiquidityAllowedAssets        string
+	LiquidityAllowedNetworks      string
+	LiquidityHotWalletFirstAssets string
+	LiquidityProviderURLs         string
+	LiquidityProviderAPIKey       string
+	SellRateBps                   int
+	SellSpreadMinBps              int
+	SellSpreadMaxBps              int
+	SellSpreadHighValueBrl        float64
+	SellUsdtBrlRate               float64
+	SellWalletAddress             string
+	BuyHotDerivationIndex         int
+	ChainFXLiveSecretKeys         string
+	ChainFXTestSecretKeys         string
+	ChainFXLivePublicKeys         string
+	ChainFXTestPublicKeys         string
+	ChainFXRequireAPIKey          bool
+	InternalAllowedCIDRs          string
+	AdminBootstrapEmail           string
+	AdminBootstrapPassword        string
+	AdminConsoleKey               string
 
 	// Regras de Limite e Fraude
 	PixMaxOrdersPer24h     int
@@ -222,64 +222,64 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		Environment:               getEnv("APP_ENV", getEnv("GO_ENV", "development")),
-		AllowSimulations:          getEnvAsBool("ALLOW_SIMULATIONS", true),
-		DatabaseURL:               getEnv("DATABASE_URL", ""),
-		AllowedOrigins:            getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://swapped-cryptocurrensy.vercel.app,https://www.chainfx.store,https://chainfx.store,https://chatgpt.com,https://chat.openai.com,https://codex.openai.com"),
-		WebhookSecret:             getEnv("WEBHOOK_SECRET", ""),
-		Port:                      getEnv("PORT", "8080"),
-		OrderMinBrl:               getEnvAsFloat("ORDER_MIN_BRL", 10.0),
-		OrderMaxBrl:               getEnvAsFloat("ORDER_MAX_BRL", 10000.0),
-		RateLockSec:               getEnvAsInt("RATE_LOCK_SEC", 300),
-		RateLimitWindowMs:         getEnvAsInt("RATE_LIMIT_WINDOW_MS", 60000),
-		RateLimitMax:              getEnvAsInt("RATE_LIMIT_MAX", 100),
-		RateLimitBackend:          strings.ToLower(getEnv("RATE_LIMIT_BACKEND", "memory")),
-		RedisURL:                  getEnv("REDIS_URL", ""),
-		PenaltyBoxEnabled:         getEnvAsBool("PENALTY_BOX_ENABLED", true),
-		PenaltyViolationLimit:     getEnvAsInt("PENALTY_BOX_VIOLATION_LIMIT", 10),
-		PenaltyViolationWindowSec: getEnvAsInt("PENALTY_BOX_VIOLATION_WINDOW_SEC", 120),
-		PenaltyBaseBanSec:         getEnvAsInt("PENALTY_BOX_BASE_BAN_SEC", 900),
-		PenaltyEscalatedBanSec:    getEnvAsInt("PENALTY_BOX_ESCALATED_BAN_SEC", 3600),
-		PenaltyMaxBanSec:          getEnvAsInt("PENALTY_BOX_MAX_BAN_SEC", 86400),
-		OrderRateLimitWindowMs:    getEnvAsInt("ORDER_RATE_LIMIT_WINDOW_MS", 60000),
-		OrderRateLimitMax:         getEnvAsInt("ORDER_RATE_LIMIT_MAX", 20),
-		FeeBps:                    getEnvAsInt("FEE_BPS", getEnvAsInt("TRANSACTION_FEE_BPS", 200)),
-		FeeFixedUsd:               getEnvAsFloat("FEE_FIXED_USD", getEnvAsFloat("TRANSACTION_FEE_FIXED_USD", 0)),
-		FeePerUsdtUsd:             getEnvAsFloat("FEE_PER_USDT_USD", 0.03),
-		FeeMinBrl:                 getEnvAsFloat("FEE_MIN_BRL", 0),
-		BuyTier1MinBrl:            getEnvAsFloat("FEE_BUY_TIER_1_MIN", 20),
-		BuyTier1MaxBrl:            getEnvAsFloat("FEE_BUY_TIER_1_MAX", 100),
-		BuyTier1Bps:               getEnvPercentAsBps("FEE_BUY_TIER_1_PERCENT", getEnvAsInt("FEE_BUY_TIER_1_BPS", 750)),
-		BuyTier2MaxBrl:            getEnvAsFloat("FEE_BUY_TIER_2_MAX", 500),
-		BuyTier2Bps:               getEnvPercentAsBps("FEE_BUY_TIER_2_PERCENT", getEnvAsInt("FEE_BUY_TIER_2_BPS", 550)),
-		BuyTier3Bps:               getEnvPercentAsBps("FEE_BUY_TIER_3_PERCENT", getEnvAsInt("FEE_BUY_TIER_3_BPS", 450)),
-		BuyNetworkFeeBrl:          getEnvAsFloat("FEE_BUY_NETWORK_BRL", getEnvAsFloat("FEE_BUY_TIER_1_FIXED", getEnvAsFloat("FEE_BUY_TIER_FIXED", 1.99))),
-		BuyMinFeeBrl:              getEnvAsFloat("FEE_BUY_MIN_TOTAL", getEnvAsFloat("FEE_MIN_BRL", 4.99)),
-		BuyRateSpreadBps:          getEnvPercentAsBps("FEE_BUY_SPREAD_PERCENT", getEnvAsInt("FEE_BUY_SPREAD_BPS", 100)),
-		LiquidityRouterEnabled:    getEnvAsBool("LIQUIDITY_ROUTER_ENABLED", false),
-		LiquidityQuoteTimeoutMs:   getEnvAsInt("LIQUIDITY_QUOTE_TIMEOUT_MS", 2500),
-		LiquidityAllowedPairs:     strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_PAIRS", "USDT:BSC,USDT:POLYGON,BTC:BITCOIN,BNB:BSC")),
-		LiquidityAllowedAssets:    strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_ASSETS", "USDT,BTC,BNB")),
-		LiquidityAllowedNetworks:  strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_NETWORKS", "BSC,POLYGON,BITCOIN")),
-		LiquidityRouterSkipAssets: strings.ToUpper(getEnv("LIQUIDITY_ROUTER_SKIP_ASSETS", "USDT")),
-		LiquidityProviderURLs:     getEnv("LIQUIDITY_PROVIDER_URLS", ""),
-		LiquidityProviderAPIKey:   getEnv("LIQUIDITY_PROVIDER_API_KEY", ""),
-		SellRateBps:               getEnvAsInt("SELL_RATE_BPS", 0),
-		SellSpreadMinBps:          getEnvPercentAsBps("FEE_SELL_SPREAD_MIN", getEnvAsInt("FEE_SELL_SPREAD_MIN_BPS", 800)),
-		SellSpreadMaxBps:          getEnvPercentAsBps("FEE_SELL_SPREAD_MAX", getEnvAsInt("FEE_SELL_SPREAD_MAX_BPS", 1000)),
-		SellSpreadHighValueBrl:    getEnvAsFloat("FEE_SELL_HIGH_VALUE_BRL", 1000),
-		SellUsdtBrlRate:           getEnvAsFloat("SELL_USDT_BRL_RATE", 0),
-		SellWalletAddress:         getEnv("SELL_WALLET_ADDRESS", "0x7e3BF3FDfeF16040CE3ec60A663381766d3dB375"),
-		BuyHotDerivationIndex:     getEnvAsInt("BUY_HOT_DERIVATION_INDEX", 0),
-		ChainFXLiveSecretKeys:     getEnv("CHAINFX_LIVE_SECRET_KEYS", ""),
-		ChainFXTestSecretKeys:     getEnv("CHAINFX_TEST_SECRET_KEYS", "sk_test_chainfx_local"),
-		ChainFXLivePublicKeys:     getEnv("CHAINFX_LIVE_PUBLIC_KEYS", ""),
-		ChainFXTestPublicKeys:     getEnv("CHAINFX_TEST_PUBLIC_KEYS", "pk_test_chainfx_local"),
-		ChainFXRequireAPIKey:      getEnvAsBool("CHAINFX_REQUIRE_API_KEY", false),
-		InternalAllowedCIDRs:      getEnv("INTERNAL_ALLOWED_CIDRS", "127.0.0.1/32,::1/128"),
-		AdminBootstrapEmail:       getEnv("ADMIN_BOOTSTRAP_EMAIL", "paulo@chainfx.com"),
-		AdminBootstrapPassword:    getEnv("ADMIN_BOOTSTRAP_PASSWORD", ""),
-		AdminConsoleKey:           getEnv("ADMIN_CONSOLE_KEY", ""),
+		Environment:                   getEnv("APP_ENV", getEnv("GO_ENV", "development")),
+		AllowSimulations:              getEnvAsBool("ALLOW_SIMULATIONS", true),
+		DatabaseURL:                   getEnv("DATABASE_URL", ""),
+		AllowedOrigins:                getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://swapped-cryptocurrensy.vercel.app,https://www.chainfx.store,https://chainfx.store,https://chatgpt.com,https://chat.openai.com,https://codex.openai.com"),
+		WebhookSecret:                 getEnv("WEBHOOK_SECRET", ""),
+		Port:                          getEnv("PORT", "8080"),
+		OrderMinBrl:                   getEnvAsFloat("ORDER_MIN_BRL", 10.0),
+		OrderMaxBrl:                   getEnvAsFloat("ORDER_MAX_BRL", 10000.0),
+		RateLockSec:                   getEnvAsInt("RATE_LOCK_SEC", 300),
+		RateLimitWindowMs:             getEnvAsInt("RATE_LIMIT_WINDOW_MS", 60000),
+		RateLimitMax:                  getEnvAsInt("RATE_LIMIT_MAX", 100),
+		RateLimitBackend:              strings.ToLower(getEnv("RATE_LIMIT_BACKEND", "memory")),
+		RedisURL:                      getEnv("REDIS_URL", ""),
+		PenaltyBoxEnabled:             getEnvAsBool("PENALTY_BOX_ENABLED", true),
+		PenaltyViolationLimit:         getEnvAsInt("PENALTY_BOX_VIOLATION_LIMIT", 10),
+		PenaltyViolationWindowSec:     getEnvAsInt("PENALTY_BOX_VIOLATION_WINDOW_SEC", 120),
+		PenaltyBaseBanSec:             getEnvAsInt("PENALTY_BOX_BASE_BAN_SEC", 900),
+		PenaltyEscalatedBanSec:        getEnvAsInt("PENALTY_BOX_ESCALATED_BAN_SEC", 3600),
+		PenaltyMaxBanSec:              getEnvAsInt("PENALTY_BOX_MAX_BAN_SEC", 86400),
+		OrderRateLimitWindowMs:        getEnvAsInt("ORDER_RATE_LIMIT_WINDOW_MS", 60000),
+		OrderRateLimitMax:             getEnvAsInt("ORDER_RATE_LIMIT_MAX", 20),
+		FeeBps:                        getEnvAsInt("FEE_BPS", getEnvAsInt("TRANSACTION_FEE_BPS", 200)),
+		FeeFixedUsd:                   getEnvAsFloat("FEE_FIXED_USD", getEnvAsFloat("TRANSACTION_FEE_FIXED_USD", 0)),
+		FeePerUsdtUsd:                 getEnvAsFloat("FEE_PER_USDT_USD", 0.03),
+		FeeMinBrl:                     getEnvAsFloat("FEE_MIN_BRL", 0),
+		BuyTier1MinBrl:                getEnvAsFloat("FEE_BUY_TIER_1_MIN", 20),
+		BuyTier1MaxBrl:                getEnvAsFloat("FEE_BUY_TIER_1_MAX", 100),
+		BuyTier1Bps:                   getEnvPercentAsBps("FEE_BUY_TIER_1_PERCENT", getEnvAsInt("FEE_BUY_TIER_1_BPS", 750)),
+		BuyTier2MaxBrl:                getEnvAsFloat("FEE_BUY_TIER_2_MAX", 500),
+		BuyTier2Bps:                   getEnvPercentAsBps("FEE_BUY_TIER_2_PERCENT", getEnvAsInt("FEE_BUY_TIER_2_BPS", 550)),
+		BuyTier3Bps:                   getEnvPercentAsBps("FEE_BUY_TIER_3_PERCENT", getEnvAsInt("FEE_BUY_TIER_3_BPS", 450)),
+		BuyNetworkFeeBrl:              getEnvAsFloat("FEE_BUY_NETWORK_BRL", getEnvAsFloat("FEE_BUY_TIER_1_FIXED", getEnvAsFloat("FEE_BUY_TIER_FIXED", 1.99))),
+		BuyMinFeeBrl:                  getEnvAsFloat("FEE_BUY_MIN_TOTAL", getEnvAsFloat("FEE_MIN_BRL", 4.99)),
+		BuyRateSpreadBps:              getEnvPercentAsBps("FEE_BUY_SPREAD_PERCENT", getEnvAsInt("FEE_BUY_SPREAD_BPS", 100)),
+		LiquidityRouterEnabled:        getEnvAsBool("LIQUIDITY_ROUTER_ENABLED", false),
+		LiquidityQuoteTimeoutMs:       getEnvAsInt("LIQUIDITY_QUOTE_TIMEOUT_MS", 2500),
+		LiquidityAllowedPairs:         strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_PAIRS", "USDT:BSC,USDT:POLYGON,BTC:BITCOIN,BNB:BSC")),
+		LiquidityAllowedAssets:        strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_ASSETS", "USDT,BTC,BNB")),
+		LiquidityAllowedNetworks:      strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_NETWORKS", "BSC,POLYGON,BITCOIN")),
+		LiquidityHotWalletFirstAssets: strings.ToUpper(getEnv("LIQUIDITY_ROUTER_HOT_WALLET_FIRST_ASSETS", getEnv("LIQUIDITY_ROUTER_SKIP_ASSETS", "USDT"))),
+		LiquidityProviderURLs:         getEnv("LIQUIDITY_PROVIDER_URLS", ""),
+		LiquidityProviderAPIKey:       getEnv("LIQUIDITY_PROVIDER_API_KEY", ""),
+		SellRateBps:                   getEnvAsInt("SELL_RATE_BPS", 0),
+		SellSpreadMinBps:              getEnvPercentAsBps("FEE_SELL_SPREAD_MIN", getEnvAsInt("FEE_SELL_SPREAD_MIN_BPS", 800)),
+		SellSpreadMaxBps:              getEnvPercentAsBps("FEE_SELL_SPREAD_MAX", getEnvAsInt("FEE_SELL_SPREAD_MAX_BPS", 1000)),
+		SellSpreadHighValueBrl:        getEnvAsFloat("FEE_SELL_HIGH_VALUE_BRL", 1000),
+		SellUsdtBrlRate:               getEnvAsFloat("SELL_USDT_BRL_RATE", 0),
+		SellWalletAddress:             getEnv("SELL_WALLET_ADDRESS", "0x7e3BF3FDfeF16040CE3ec60A663381766d3dB375"),
+		BuyHotDerivationIndex:         getEnvAsInt("BUY_HOT_DERIVATION_INDEX", 0),
+		ChainFXLiveSecretKeys:         getEnv("CHAINFX_LIVE_SECRET_KEYS", ""),
+		ChainFXTestSecretKeys:         getEnv("CHAINFX_TEST_SECRET_KEYS", "sk_test_chainfx_local"),
+		ChainFXLivePublicKeys:         getEnv("CHAINFX_LIVE_PUBLIC_KEYS", ""),
+		ChainFXTestPublicKeys:         getEnv("CHAINFX_TEST_PUBLIC_KEYS", "pk_test_chainfx_local"),
+		ChainFXRequireAPIKey:          getEnvAsBool("CHAINFX_REQUIRE_API_KEY", false),
+		InternalAllowedCIDRs:          getEnv("INTERNAL_ALLOWED_CIDRS", "127.0.0.1/32,::1/128"),
+		AdminBootstrapEmail:           getEnv("ADMIN_BOOTSTRAP_EMAIL", "paulo@chainfx.com"),
+		AdminBootstrapPassword:        getEnv("ADMIN_BOOTSTRAP_PASSWORD", ""),
+		AdminConsoleKey:               getEnv("ADMIN_CONSOLE_KEY", ""),
 
 		PixMaxOrdersPer24h:     getEnvAsInt("PIX_MAX_ORDERS_PER_24H", 5),
 		PixMaxBrlPer24h:        getEnvAsFloat("PIX_MAX_BRL_PER_24H", 20000.0),
