@@ -190,27 +190,27 @@ func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]flo
 	}
 
 	prices := map[string]float64{
-		"BRL":            data.Tether.Brl,
-		"USD":            data.Tether.Usd,
-		"EUR":            data.Tether.Eur,
-		"BTCUSDT":        data.Bitcoin.Usd / data.Tether.Usd,
-		"ETHUSDT":        data.Ethereum.Usd / data.Tether.Usd,
-		"BNBUSDT":        data.Binancecoin.Usd / data.Tether.Usd,
-		"EURUSD":         data.Tether.Usd / data.Tether.Eur,
-		"USDTBRL":        data.Tether.Brl,
-		"USDTUSD":        data.Tether.Usd,
-		"USDTEUR":        data.Tether.Eur,
-		"BTCUSDT_SOURCE": data.Bitcoin.Usd,
-		"ETHUSDT_SOURCE": data.Ethereum.Usd,
-		"BNBUSDT_SOURCE": data.Binancecoin.Usd,
+		"BRL":             data.Tether.Brl,
+		"USD":             data.Tether.Usd,
+		"EUR":             data.Tether.Eur,
+		"BTCUSDT":         data.Bitcoin.Usd / data.Tether.Usd,
+		"ETHUSDT":         data.Ethereum.Usd / data.Tether.Usd,
+		"BNBUSDT":         data.Binancecoin.Usd / data.Tether.Usd,
+		"EURUSD":          data.Tether.Usd / data.Tether.Eur,
+		"USDTBRL":         data.Tether.Brl,
+		"USDTUSD":         data.Tether.Usd,
+		"USDTEUR":         data.Tether.Eur,
+		"BTCUSDT_SOURCE":  data.Bitcoin.Usd,
+		"ETHUSDT_SOURCE":  data.Ethereum.Usd,
+		"BNBUSDT_SOURCE":  data.Binancecoin.Usd,
 		"LINKUSDT_SOURCE": data.Chainlink.Usd,
 		"AVAXUSDT_SOURCE": data.Avalanche.Usd,
-		"USDT_CHANGE24H": data.Tether.Brl24hChange,
-		"BTC_CHANGE24H":  data.Bitcoin.Brl24hChange,
-		"ETH_CHANGE24H":  data.Ethereum.Brl24hChange,
-		"BNB_CHANGE24H":  data.Binancecoin.Brl24hChange,
-		"LINK_CHANGE24H": data.Chainlink.Brl24hChange,
-		"AVAX_CHANGE24H": data.Avalanche.Brl24hChange,
+		"USDT_CHANGE24H":  data.Tether.Brl24hChange,
+		"BTC_CHANGE24H":   data.Bitcoin.Brl24hChange,
+		"ETH_CHANGE24H":   data.Ethereum.Brl24hChange,
+		"BNB_CHANGE24H":   data.Binancecoin.Brl24hChange,
+		"LINK_CHANGE24H":  data.Chainlink.Brl24hChange,
+		"AVAX_CHANGE24H":  data.Avalanche.Brl24hChange,
 	}
 
 	if prices["BRL"] <= 0 || prices["USD"] <= 0 {
@@ -244,14 +244,14 @@ func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]flo
 
 func (pw *PriceWorker) fetchBinancePrices(ctx context.Context) (map[string]float64, string, error) {
 	symbols := map[string]string{
-		"BRL":     "USDTBRL",
-		"USDTBRL": "USDTBRL",
-		"BTCUSDT": "BTCUSDT",
-		"ETHUSDT": "ETHUSDT",
-		"BNBUSDT": "BNBUSDT",
+		"BRL":      "USDTBRL",
+		"USDTBRL":  "USDTBRL",
+		"BTCUSDT":  "BTCUSDT",
+		"ETHUSDT":  "ETHUSDT",
+		"BNBUSDT":  "BNBUSDT",
 		"LINKUSDT": "LINKUSDT",
 		"AVAXUSDT": "AVAXUSDT",
-		"EURUSD":  "EURUSDT",
+		"EURUSD":   "EURUSDT",
 	}
 	prices := map[string]float64{"USD": 1, "USDTUSD": 1}
 
