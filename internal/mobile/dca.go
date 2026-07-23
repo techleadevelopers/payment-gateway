@@ -31,7 +31,7 @@ func (s *Server) handleDCACreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network nao suportada para DCA"})
 		return
 	}
-	if !s.mobileLiquidityPairSupported(tokenSymbol, network) {
+	if !s.mobileBuyLiquidityPairSupported(tokenSymbol, network) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "par token_symbol/network nao suportado para DCA"})
 		return
 	}
