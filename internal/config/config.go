@@ -94,34 +94,42 @@ type Config struct {
 	PixWebhookSecret   string
 
 	// Tesouraria / signer / sweep
-	TreasuryHot             string
-	TreasuryCold            string
-	SignerUrl               string
-	SignerNetwork           string
-	SignerHmacSecret        string
-	BscRpcUrls              string
-	BscUsdtContract         string
-	BscChainID              int64
-	BscTreasuryContract     string
-	PolygonRpcUrls          string
-	PolygonUsdtContract     string
-	PolygonChainID          int64
-	PolygonTreasuryContract string
-	BaseRpcUrls             string
-	BaseUsdcContract        string
-	BaseChainID             int64
-	ArbitrumRpcUrls         string
-	ArbitrumUsdcContract    string
-	ArbitrumChainID         int64
-	EthereumRpcUrls         string
-	EthereumUsdcContract    string
-	EthereumChainID         int64
-	EnableSweepWorker       bool
-	EnableSweepStub         bool
-	SweepBatchUsdtMin       float64
-	SweepBatchUsdtMax       float64
-	SweepFrequencyMs        int
-	BscGasReserveBNB        float64
+	TreasuryHot              string
+	TreasuryCold             string
+	SignerUrl                string
+	SignerNetwork            string
+	SignerHmacSecret         string
+	BscRpcUrls               string
+	BscUsdtContract          string
+	BscChainID               int64
+	BscTreasuryContract      string
+	PolygonRpcUrls           string
+	PolygonUsdtContract      string
+	PolygonChainID           int64
+	PolygonTreasuryContract  string
+	BaseRpcUrls              string
+	BaseUsdcContract         string
+	BaseChainID              int64
+	ArbitrumRpcUrls          string
+	ArbitrumUsdcContract     string
+	ArbitrumChainID          int64
+	EthereumRpcUrls          string
+	EthereumUsdcContract     string
+	EthereumChainID          int64
+	SolanaEnabled            bool
+	SolanaRpcUrls            string
+	SolanaCluster            string
+	SolanaWithdrawalsEnabled bool
+	SolanaScanIntervalSec    int
+	SolanaTxScanIntervalSec  int
+	SolanaMinConfirmations   int
+	SolanaMaxSendLamports    int64
+	EnableSweepWorker        bool
+	EnableSweepStub          bool
+	SweepBatchUsdtMin        float64
+	SweepBatchUsdtMax        float64
+	SweepFrequencyMs         int
+	BscGasReserveBNB         float64
 
 	// SMTP / mensagens
 	SMTPHost       string
@@ -268,10 +276,10 @@ func LoadConfig() *Config {
 		BuyRateSpreadBps:              getEnvPercentAsBps("FEE_BUY_SPREAD_PERCENT", getEnvAsInt("FEE_BUY_SPREAD_BPS", 100)),
 		LiquidityRouterEnabled:        getEnvAsBool("LIQUIDITY_ROUTER_ENABLED", false),
 		LiquidityQuoteTimeoutMs:       getEnvAsInt("LIQUIDITY_QUOTE_TIMEOUT_MS", 2500),
-		LiquidityAllowedPairs:         strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_PAIRS", "USDT:BSC,BTC:BITCOIN::8,BNB:BSC::18,USDC:BASE:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913:6,ETH:BASE::18,USDC:ARBITRUM:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:6,ETH:ARBITRUM::18,USDC:ETHEREUM:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48:6,ETH:ETHEREUM::18")),
-		LiquidityAllowedAssets:        strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_ASSETS", "USDT,BTC,BNB,USDC,ETH")),
-		LiquidityAllowedNetworks:      strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_NETWORKS", "BSC,POLYGON,BITCOIN,BASE,ARBITRUM,ETHEREUM")),
-		SupportedNetworks:             strings.ToUpper(getEnv("SUPPORTED_NETWORKS", getEnv("LIQUIDITY_ALLOWED_NETWORKS", "BSC,POLYGON,BITCOIN,BASE,ARBITRUM,ETHEREUM"))),
+		LiquidityAllowedPairs:         strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_PAIRS", "USDT:BSC,BTC:BITCOIN::8,BNB:BSC::18,SOL:SOLANA::9,USDC:BASE:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913:6,ETH:BASE::18,USDC:ARBITRUM:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:6,ETH:ARBITRUM::18,USDC:ETHEREUM:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48:6,ETH:ETHEREUM::18")),
+		LiquidityAllowedAssets:        strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_ASSETS", "USDT,BTC,BNB,SOL,USDC,ETH")),
+		LiquidityAllowedNetworks:      strings.ToUpper(getEnv("LIQUIDITY_ALLOWED_NETWORKS", "BSC,POLYGON,BITCOIN,SOLANA,BASE,ARBITRUM,ETHEREUM")),
+		SupportedNetworks:             strings.ToUpper(getEnv("SUPPORTED_NETWORKS", getEnv("LIQUIDITY_ALLOWED_NETWORKS", "BSC,POLYGON,BITCOIN,SOLANA,BASE,ARBITRUM,ETHEREUM"))),
 		LiquidityHotWalletFirstAssets: strings.ToUpper(getEnv("LIQUIDITY_ROUTER_HOT_WALLET_FIRST_ASSETS", getEnv("LIQUIDITY_ROUTER_SKIP_ASSETS", "USDT"))),
 		LiquidityProviderURLs:         getEnv("LIQUIDITY_PROVIDER_URLS", ""),
 		LiquidityProviderAPIKey:       getEnv("LIQUIDITY_PROVIDER_API_KEY", ""),
@@ -310,34 +318,42 @@ func LoadConfig() *Config {
 		EfiPixFeeBps:       getEnvAsInt("EFI_PIX_FEE_BPS", 119),
 		PixWebhookSecret:   getEnv("PIX_WEBHOOK_SECRET", ""),
 
-		TreasuryHot:             getEnv("TREASURY_HOT", ""),
-		TreasuryCold:            getEnv("TREASURY_COLD", ""),
-		SignerUrl:               getEnv("SIGNER_URL", ""),
-		SignerNetwork:           strings.ToLower(getEnv("SIGNER_NETWORK", "bsc")),
-		SignerHmacSecret:        getEnv("SIGNER_HMAC_SECRET", ""),
-		BscRpcUrls:              getBscRpcUrls(),
-		BscUsdtContract:         getEnv("BSC_USDT_CONTRACT", getEnv("BSC_TOKEN_CONTRACT", "")),
-		BscChainID:              int64(getEnvAsInt("BSC_CHAIN_ID", 56)),
-		BscTreasuryContract:     getEnv("BSC_TREASURY_CONTRACT", ""),
-		PolygonRpcUrls:          getPolygonRpcUrls(),
-		PolygonUsdtContract:     getEnv("POLYGON_USDT_CONTRACT", getEnv("POLYGON_TOKEN_CONTRACT", "")),
-		PolygonChainID:          int64(getEnvAsInt("POLYGON_CHAIN_ID", 137)),
-		PolygonTreasuryContract: getEnv("POLYGON_TREASURY_CONTRACT", ""),
-		BaseRpcUrls:             getChainRpcUrls("BASE", []string{"BASE_RPC_URLS", "BASE_RPC_URL", "ALCHEMY_BASE_RPC_URL_1", "ALCHEMY_BASE_RPC_URL_2", "ALCHEMY_BASE_RPC_URL", "ALCHEMY_BASE_FALLBACK_RPC_URL"}),
-		BaseUsdcContract:        getEnv("BASE_USDC_CONTRACT", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
-		BaseChainID:             int64(getEnvAsInt("BASE_CHAIN_ID", 8453)),
-		ArbitrumRpcUrls:         getChainRpcUrls("ARBITRUM", []string{"ARBITRUM_RPC_URLS", "ARBITRUM_RPC_URL", "ARB_RPC_URLS", "ARB_RPC_URL", "ALCHEMY_ARBITRUM_RPC_URL_1", "ALCHEMY_ARBITRUM_RPC_URL_2", "ALCHEMY_ARBITRUM_RPC_URL", "ALCHEMY_ARBITRUM_FALLBACK_RPC_URL"}),
-		ArbitrumUsdcContract:    getEnv("ARBITRUM_USDC_CONTRACT", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
-		ArbitrumChainID:         int64(getEnvAsInt("ARBITRUM_CHAIN_ID", 42161)),
-		EthereumRpcUrls:         getChainRpcUrls("ETHEREUM", []string{"ETHEREUM_RPC_URLS", "ETHEREUM_RPC_URL", "ETH_RPC_URLS", "ETH_RPC_URL", "ALCHEMY_ETHEREUM_RPC_URL_1", "ALCHEMY_ETHEREUM_RPC_URL_2", "ALCHEMY_ETHEREUM_RPC_URL", "ALCHEMY_ETHEREUM_FALLBACK_RPC_URL"}),
-		EthereumUsdcContract:    getEnv("ETHEREUM_USDC_CONTRACT", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
-		EthereumChainID:         int64(getEnvAsInt("ETHEREUM_CHAIN_ID", 1)),
-		EnableSweepWorker:       getEnvAsBool("ENABLE_SWEEP_WORKER", false),
-		EnableSweepStub:         getEnvAsBool("ENABLE_SWEEP_STUB", false),
-		SweepBatchUsdtMin:       getEnvAsFloat("SWEEP_BATCH_USDT_MIN", 0),
-		SweepBatchUsdtMax:       getEnvAsFloat("SWEEP_BATCH_USDT_MAX", 1_000_000),
-		SweepFrequencyMs:        getEnvAsInt("SWEEP_FREQUENCY_MS", 80800),
-		BscGasReserveBNB:        getEnvAsFloat("BSC_GAS_RESERVE_BNB", 0.003),
+		TreasuryHot:              getEnv("TREASURY_HOT", ""),
+		TreasuryCold:             getEnv("TREASURY_COLD", ""),
+		SignerUrl:                getEnv("SIGNER_URL", ""),
+		SignerNetwork:            strings.ToLower(getEnv("SIGNER_NETWORK", "bsc")),
+		SignerHmacSecret:         getEnv("SIGNER_HMAC_SECRET", ""),
+		BscRpcUrls:               getBscRpcUrls(),
+		BscUsdtContract:          getEnv("BSC_USDT_CONTRACT", getEnv("BSC_TOKEN_CONTRACT", "")),
+		BscChainID:               int64(getEnvAsInt("BSC_CHAIN_ID", 56)),
+		BscTreasuryContract:      getEnv("BSC_TREASURY_CONTRACT", ""),
+		PolygonRpcUrls:           getPolygonRpcUrls(),
+		PolygonUsdtContract:      getEnv("POLYGON_USDT_CONTRACT", getEnv("POLYGON_TOKEN_CONTRACT", "")),
+		PolygonChainID:           int64(getEnvAsInt("POLYGON_CHAIN_ID", 137)),
+		PolygonTreasuryContract:  getEnv("POLYGON_TREASURY_CONTRACT", ""),
+		BaseRpcUrls:              getChainRpcUrls("BASE", []string{"BASE_RPC_URLS", "BASE_RPC_URL", "ALCHEMY_BASE_RPC_URL_1", "ALCHEMY_BASE_RPC_URL_2", "ALCHEMY_BASE_RPC_URL", "ALCHEMY_BASE_FALLBACK_RPC_URL"}),
+		BaseUsdcContract:         getEnv("BASE_USDC_CONTRACT", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+		BaseChainID:              int64(getEnvAsInt("BASE_CHAIN_ID", 8453)),
+		ArbitrumRpcUrls:          getChainRpcUrls("ARBITRUM", []string{"ARBITRUM_RPC_URLS", "ARBITRUM_RPC_URL", "ARB_RPC_URLS", "ARB_RPC_URL", "ALCHEMY_ARBITRUM_RPC_URL_1", "ALCHEMY_ARBITRUM_RPC_URL_2", "ALCHEMY_ARBITRUM_RPC_URL", "ALCHEMY_ARBITRUM_FALLBACK_RPC_URL"}),
+		ArbitrumUsdcContract:     getEnv("ARBITRUM_USDC_CONTRACT", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
+		ArbitrumChainID:          int64(getEnvAsInt("ARBITRUM_CHAIN_ID", 42161)),
+		EthereumRpcUrls:          getChainRpcUrls("ETHEREUM", []string{"ETHEREUM_RPC_URLS", "ETHEREUM_RPC_URL", "ETH_RPC_URLS", "ETH_RPC_URL", "ALCHEMY_ETHEREUM_RPC_URL_1", "ALCHEMY_ETHEREUM_RPC_URL_2", "ALCHEMY_ETHEREUM_RPC_URL", "ALCHEMY_ETHEREUM_FALLBACK_RPC_URL"}),
+		EthereumUsdcContract:     getEnv("ETHEREUM_USDC_CONTRACT", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+		EthereumChainID:          int64(getEnvAsInt("ETHEREUM_CHAIN_ID", 1)),
+		SolanaEnabled:            getEnvAsBool("SOLANA_ENABLED", true),
+		SolanaRpcUrls:            getChainRpcUrls("SOLANA", []string{"SOLANA_RPC_URLS", "SOLANA_RPC_URL", "HELIUS_SOLANA_RPC_URL", "QUICKNODE_SOLANA_RPC_URL", "CHAINSTACK_SOLANA_RPC_URL"}),
+		SolanaCluster:            strings.ToLower(getEnv("SOLANA_CLUSTER", "mainnet")),
+		SolanaWithdrawalsEnabled: getEnvAsBool("SOLANA_WITHDRAWALS_ENABLED", false),
+		SolanaScanIntervalSec:    getEnvAsInt("SOLANA_SCAN_INTERVAL_SEC", 30),
+		SolanaTxScanIntervalSec:  getEnvAsInt("SOLANA_TX_SCAN_INTERVAL_SEC", 20),
+		SolanaMinConfirmations:   getEnvAsInt("SOLANA_MIN_CONFIRMATIONS", 1),
+		SolanaMaxSendLamports:    int64(getEnvAsInt("SOLANA_MAX_SEND_LAMPORTS", 0)),
+		EnableSweepWorker:        getEnvAsBool("ENABLE_SWEEP_WORKER", false),
+		EnableSweepStub:          getEnvAsBool("ENABLE_SWEEP_STUB", false),
+		SweepBatchUsdtMin:        getEnvAsFloat("SWEEP_BATCH_USDT_MIN", 0),
+		SweepBatchUsdtMax:        getEnvAsFloat("SWEEP_BATCH_USDT_MAX", 1_000_000),
+		SweepFrequencyMs:         getEnvAsInt("SWEEP_FREQUENCY_MS", 80800),
+		BscGasReserveBNB:         getEnvAsFloat("BSC_GAS_RESERVE_BNB", 0.003),
 
 		SMTPHost:            getEnv("SMTP_HOST", ""),
 		SMTPPort:            getEnvAsInt("SMTP_PORT", 587),
