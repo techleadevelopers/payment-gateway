@@ -25,6 +25,12 @@ const (
 	// Native USDC on Polygon (Circle, 2024+). The former 0x2791… was bridged USDC.e (deprecated).
 	polygonUSDCContractMobile = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
 	defaultPolygonUSDTMobile  = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
+	bscETHContractMobile      = "0x2170Ed0880ac9A755fd29B2688956BD959F933F8"
+	polygonETHContractMobile  = "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"
+	bscLINKContractMobile     = "0xF8A0BF9cF54Bb92F17374d9e9A321E6a111a51bD"
+	polygonLINKContractMobile = "0x53E0bca35eC356BD5ddDFebbd1Fc0fD03FaBad39"
+	bscAVAXContractMobile     = "0x1CE0c2827e2eF14D5C4f29a091d735A204794041"
+	polygonAVAXContractMobile = "0x2C89bbc92BD86F8075d1DEcc58C7F4E0107f286b"
 )
 
 func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +89,7 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	nativeTransfer := token == "" && liquidity.IsNativeAsset(asset, network)
 	rawAmount, err := parseTokenAmount(req.Amount, decimals)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -116,20 +123,40 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recipient := common.HexToAddress(to)
-	tokenAddress := common.HexToAddress(token)
-	txHash, err := s.sendCustodialMobileERC20Transfer(
-		r.Context(),
-		keyRecord.EncryptedPrivateKey,
-		from,
-		recipient,
-		tokenAddress,
-		rawAmount,
-		network,
-		int64(chainID),
-	)
+	var tokenAddress common.Address
+	var txHash string
+	if nativeTransfer {
+		txHash, err = s.sendCustodialMobileNativeTransfer(
+			r.Context(),
+			keyRecord.EncryptedPrivateKey,
+			from,
+			recipient,
+			rawAmount,
+			network,
+			int64(chainID),
+		)
+	} else {
+		tokenAddress = common.HexToAddress(token)
+		txHash, err = s.sendCustodialMobileERC20Transfer(
+			r.Context(),
+			keyRecord.EncryptedPrivateKey,
+			from,
+			recipient,
+			tokenAddress,
+			rawAmount,
+			network,
+			int64(chainID),
+		)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
+	}
+	tokenContract := tokenAddress.Hex()
+	mode := "backend_custodial_erc20_transfer"
+	if nativeTransfer {
+		tokenContract = ""
+		mode = "backend_custodial_native_evm_transfer"
 	}
 
 	_ = mobileDB(s.db).RecordMobileWalletTransfer(
@@ -137,7 +164,7 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 		user.ID,
 		from,
 		recipient.Hex(),
-		tokenAddress.Hex(),
+		tokenContract,
 		asset,
 		network,
 		req.Amount,
@@ -147,13 +174,13 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 	)
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"mode":           "backend_custodial_erc20_transfer",
+		"mode":           mode,
 		"from":           from,
 		"tx_hash":        txHash,
 		"chainId":        chainID,
 		"network":        network,
 		"asset":          asset,
-		"token_contract": tokenAddress.Hex(),
+		"token_contract": tokenContract,
 		"recipient":      recipient.Hex(),
 		"amount":         req.Amount,
 		"amount_raw":     rawAmount.String(),
@@ -203,6 +230,7 @@ func (s *Server) handleWalletTransferQuote(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	nativeTransfer := token == "" && liquidity.IsNativeAsset(asset, network)
 	rawAmount, err := parseTokenAmount(req.Amount, decimals)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -219,7 +247,15 @@ func (s *Server) handleWalletTransferQuote(w http.ResponseWriter, r *http.Reques
 	from := common.HexToAddress(*user.WalletAddress)
 	recipient := common.HexToAddress(to)
 	tokenAddress := common.HexToAddress(token)
-	data := common.FromHex(erc20TransferCalldata(recipient, rawAmount))
+	toAddress := tokenAddress
+	value := big.NewInt(0)
+	var data []byte
+	if nativeTransfer {
+		toAddress = recipient
+		value = rawAmount
+	} else {
+		data = common.FromHex(erc20TransferCalldata(recipient, rawAmount))
+	}
 
 	// Try each RPC URL in order — failover so a down primary node does not block
 	// fee estimation for all users (mirrors sendCustodialMobileERC20Transfer).
@@ -237,7 +273,7 @@ func (s *Server) handleWalletTransferQuote(w http.ResponseWriter, r *http.Reques
 			c.Close()
 			continue
 		}
-		gasLimit, quoteRPCErr = c.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &tokenAddress, Value: big.NewInt(0), Data: data})
+		gasLimit, quoteRPCErr = c.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &toAddress, Value: value, Data: data})
 		c.Close()
 		if quoteRPCErr == nil {
 			break
@@ -247,8 +283,12 @@ func (s *Server) handleWalletTransferQuote(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "falha ao estimar gas: todos os RPCs indisponiveis"})
 		return
 	}
-	if gasLimit < 65_000 {
-		gasLimit = 65_000
+	minGasLimit := uint64(65_000)
+	if nativeTransfer {
+		minGasLimit = 21_000
+	}
+	if gasLimit < minGasLimit {
+		gasLimit = minGasLimit
 	}
 	gasLimitWithBuffer := gasLimit + gasLimit/5
 	feeWei := new(big.Int).Mul(new(big.Int).SetUint64(gasLimitWithBuffer), gasPrice)
@@ -261,12 +301,17 @@ func (s *Server) handleWalletTransferQuote(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"asset":                     asset,
-		"network":                   network,
-		"chainId":                   chainID,
-		"from":                      from.Hex(),
-		"recipient":                 recipient.Hex(),
-		"token_contract":            tokenAddress.Hex(),
+		"asset":     asset,
+		"network":   network,
+		"chainId":   chainID,
+		"from":      from.Hex(),
+		"recipient": recipient.Hex(),
+		"token_contract": func() string {
+			if nativeTransfer {
+				return ""
+			}
+			return tokenAddress.Hex()
+		}(),
 		"amount":                    req.Amount,
 		"amount_raw":                rawAmount.String(),
 		"decimals":                  decimals,
@@ -355,6 +400,79 @@ func (s *Server) sendCustodialMobileERC20Transfer(ctx context.Context, encrypted
 	return signed.Hash().Hex(), nil
 }
 
+func (s *Server) sendCustodialMobileNativeTransfer(ctx context.Context, encryptedPrivateKey, expectedFrom string, recipient common.Address, amount *big.Int, network string, expectedChainID int64) (string, error) {
+	codec, err := privacy.New(s.mobileWalletEncryptionSecret())
+	if err != nil {
+		return "", err
+	}
+	privateKeyHex, err := codec.Decrypt(encryptedPrivateKey)
+	if err != nil {
+		return "", fmt.Errorf("falha ao abrir chave custodial")
+	}
+	key, err := crypto.HexToECDSA(strings.TrimPrefix(strings.TrimSpace(privateKeyHex), "0x"))
+	if err != nil {
+		return "", fmt.Errorf("chave custodial invalida")
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	if !strings.EqualFold(from.Hex(), expectedFrom) {
+		return "", fmt.Errorf("chave custodial nao corresponde a wallet do usuario")
+	}
+
+	rpcURLs := s.mobileTransferRPCURLs(network)
+	if len(rpcURLs) == 0 {
+		return "", fmt.Errorf("%s RPC nao configurado para transferencia mobile", network)
+	}
+	txCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	var client *ethclient.Client
+	var dialErr error
+	for _, rpcURL := range rpcURLs {
+		c, err := ethclient.DialContext(txCtx, rpcURL)
+		if err == nil {
+			client = c
+			break
+		}
+		dialErr = fmt.Errorf("RPC %s: %w", rpcURL, err)
+	}
+	if client == nil {
+		return "", fmt.Errorf("falha ao conectar RPC %s: %w", network, dialErr)
+	}
+	defer client.Close()
+
+	chainID, err := client.ChainID(txCtx)
+	if err != nil {
+		return "", fmt.Errorf("falha ao ler chainId: %w", err)
+	}
+	if expectedChainID > 0 && chainID.Int64() != expectedChainID {
+		return "", fmt.Errorf("chainId invalido: esperado %d recebido %d", expectedChainID, chainID.Int64())
+	}
+	nonce, err := client.PendingNonceAt(txCtx, from)
+	if err != nil {
+		return "", fmt.Errorf("falha ao ler nonce: %w", err)
+	}
+	gasPrice, err := client.SuggestGasPrice(txCtx)
+	if err != nil {
+		return "", fmt.Errorf("falha ao estimar gas price: %w", err)
+	}
+	gasLimit, err := client.EstimateGas(txCtx, ethereum.CallMsg{From: from, To: &recipient, Value: amount})
+	if err != nil {
+		return "", fmt.Errorf("falha ao estimar gas: %w", err)
+	}
+	if gasLimit < 21_000 {
+		gasLimit = 21_000
+	}
+	tx := types.NewTransaction(nonce, recipient, amount, gasLimit+gasLimit/5, gasPrice, nil)
+	signed, err := types.SignTx(tx, types.LatestSignerForChainID(chainID), key)
+	if err != nil {
+		return "", fmt.Errorf("falha ao assinar transferencia: %w", err)
+	}
+	if err := client.SendTransaction(txCtx, signed); err != nil {
+		return "", fmt.Errorf("falha ao enviar transferencia: %w", err)
+	}
+	return signed.Hash().Hex(), nil
+}
+
 func normalizeMobileTransferNetwork(network string) string {
 	normalized := liquidity.NormalizeNetwork(network)
 	if strings.TrimSpace(network) == "" {
@@ -367,6 +485,23 @@ func normalizeMobileTransferNetwork(network string) string {
 }
 
 func (s *Server) mobileTransferToken(asset, network string) (string, int, int, error) {
+	asset = strings.ToUpper(strings.TrimSpace(asset))
+	network = normalizeMobileTransferNetwork(network)
+	if network == "" {
+		return "", 0, 0, fmt.Errorf("network EVM nao suportada ou desabilitada")
+	}
+	if pair, ok := s.resolveMobileLiquidityPair(asset, network); ok {
+		pair = liquidity.EnrichPair(pair)
+		if pair.TokenStandard == "NATIVE" {
+			return "", pair.Decimals, s.mobileTransferChainID(pair.Network), nil
+		}
+		if pair.TokenStandard == "ERC20" {
+			if !common.IsHexAddress(pair.ContractAddress) {
+				return "", 0, 0, fmt.Errorf("%s %s contrato ERC20 nao configurado", pair.Network, pair.Asset)
+			}
+			return pair.ContractAddress, pair.Decimals, s.mobileTransferChainID(pair.Network), nil
+		}
+	}
 	switch network {
 	case "BSC":
 		switch asset {
@@ -377,6 +512,12 @@ func (s *Server) mobileTransferToken(asset, network string) (string, int, int, e
 			return s.cfg.BscUsdtContract, 18, s.mobileTransferChainID("BSC"), nil
 		case "USDC":
 			return bscUSDCContractMobile, 18, s.mobileTransferChainID("BSC"), nil
+		case "ETH":
+			return bscETHContractMobile, 18, s.mobileTransferChainID("BSC"), nil
+		case "LINK":
+			return bscLINKContractMobile, 18, s.mobileTransferChainID("BSC"), nil
+		case "AVAX":
+			return bscAVAXContractMobile, 18, s.mobileTransferChainID("BSC"), nil
 		}
 	case "POLYGON":
 		switch asset {
@@ -388,6 +529,12 @@ func (s *Server) mobileTransferToken(asset, network string) (string, int, int, e
 			return token, 6, s.mobileTransferChainID("POLYGON"), nil
 		case "USDC":
 			return polygonUSDCContractMobile, 6, s.mobileTransferChainID("POLYGON"), nil
+		case "ETH":
+			return polygonETHContractMobile, 18, s.mobileTransferChainID("POLYGON"), nil
+		case "LINK":
+			return polygonLINKContractMobile, 18, s.mobileTransferChainID("POLYGON"), nil
+		case "AVAX":
+			return polygonAVAXContractMobile, 18, s.mobileTransferChainID("POLYGON"), nil
 		}
 	case "BASE":
 		if asset == "USDC" && s.cfg != nil && common.IsHexAddress(s.cfg.BaseUsdcContract) {
