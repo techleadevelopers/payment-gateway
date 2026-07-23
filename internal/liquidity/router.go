@@ -57,6 +57,10 @@ type Execution struct {
 	ExternalOrderID string
 	Status          string
 	TxHash          string
+	Asset           string
+	Network         string
+	TokenContract   string
+	DestAddress     string
 	DeliveredAmount float64
 	Metadata        map[string]any
 }
@@ -105,6 +109,9 @@ func (r *Router) QuoteAll(ctx context.Context, req Request) []Quote {
 			if quote.TotalCostBRL <= 0 || quote.CryptoAmount <= 0 {
 				return
 			}
+			if !quoteMatchesRequest(req, quote) {
+				return
+			}
 			ch <- quote
 		}(provider)
 	}
@@ -144,6 +151,9 @@ func (r *Router) ExecuteBest(ctx context.Context, req Request) (Quote, []Quote, 
 		}
 		if exec.Provider == "" {
 			exec.Provider = best.Provider
+		}
+		if !executionMatchesRequest(req, exec) {
+			return best, quotes, exec, fmt.Errorf("liquidity: provider execution mismatch")
 		}
 		return best, quotes, exec, nil
 	}
@@ -208,17 +218,76 @@ func normalizeQuote(req Request, quote Quote, providerName string) Quote {
 	return quote
 }
 
-func normalizeNetwork(network string) string {
+func quoteMatchesRequest(req Request, quote Quote) bool {
+	if !strings.EqualFold(quote.Asset, req.Asset) {
+		return false
+	}
+	if normalizeNetwork(quote.Network) != normalizeNetwork(req.Network) {
+		return false
+	}
+	if strings.TrimSpace(req.TokenContract) != "" && !strings.EqualFold(strings.TrimSpace(quote.TokenContract), strings.TrimSpace(req.TokenContract)) {
+		return false
+	}
+	if req.TokenDecimals > 0 && quote.TokenDecimals != req.TokenDecimals {
+		return false
+	}
+	if req.CryptoAmount > 0 && quote.CryptoAmount+cryptoAmountTolerance(req.CryptoAmount) < req.CryptoAmount {
+		return false
+	}
+	return true
+}
+
+func executionMatchesRequest(req Request, exec Execution) bool {
+	if strings.TrimSpace(exec.Asset) != "" && !strings.EqualFold(exec.Asset, req.Asset) {
+		return false
+	}
+	if strings.TrimSpace(exec.Network) != "" && normalizeNetwork(exec.Network) != normalizeNetwork(req.Network) {
+		return false
+	}
+	if strings.TrimSpace(exec.TokenContract) != "" && !strings.EqualFold(strings.TrimSpace(exec.TokenContract), strings.TrimSpace(req.TokenContract)) {
+		return false
+	}
+	if strings.TrimSpace(exec.DestAddress) != "" && !strings.EqualFold(strings.TrimSpace(exec.DestAddress), strings.TrimSpace(req.DestAddress)) {
+		return false
+	}
+	if req.CryptoAmount > 0 && exec.DeliveredAmount > 0 && exec.DeliveredAmount+cryptoAmountTolerance(req.CryptoAmount) < req.CryptoAmount {
+		return false
+	}
+	return true
+}
+
+func cryptoAmountTolerance(amount float64) float64 {
+	if amount <= 0 {
+		return 0
+	}
+	return amount * 0.005
+}
+
+func NormalizeNetwork(network string) string {
 	switch strings.ToUpper(strings.TrimSpace(network)) {
-	case "BEP20", "BEP-20", "BINANCE", "BNB", "BSC":
+	case "BEP20", "BEP-20", "BINANCE", "BINANCE_SMART_CHAIN", "BNB", "BSC":
 		return "BSC"
 	case "POL", "MATIC", "POLYGON":
 		return "POLYGON"
-	case "BTC", "BITCOIN", "MAINNET":
+	case "BASE", "BASE_MAINNET":
+		return "BASE"
+	case "ARB", "ARBITRUM", "ARBITRUM_ONE":
+		return "ARBITRUM"
+	case "ETH", "ETHEREUM", "ERC20", "ERC-20":
+		return "ETHEREUM"
+	case "BTC", "BITCOIN", "BTC_MAINNET", "MAINNET":
 		return "BITCOIN"
+	case "SOL", "SOLANA":
+		return "SOLANA"
+	case "APT", "APTOS":
+		return "APTOS"
 	default:
 		return strings.ToUpper(strings.TrimSpace(network))
 	}
+}
+
+func normalizeNetwork(network string) string {
+	return NormalizeNetwork(network)
 }
 
 func firstNonEmpty(values ...string) string {
