@@ -239,6 +239,9 @@ func isMobileAllowedOrigin(origin, configured string) bool {
 	if normalized == "https://chainfx.store" || normalized == "https://www.chainfx.store" {
 		return true
 	}
+	if strings.HasPrefix(normalized, "http://localhost:") || strings.HasPrefix(normalized, "http://127.0.0.1:") {
+		return true
+	}
 	return strings.HasPrefix(normalized, "https://swapped-cryptocurrensy-") &&
 		strings.HasSuffix(normalized, "-d3v-techle4ds-projects.vercel.app")
 }
