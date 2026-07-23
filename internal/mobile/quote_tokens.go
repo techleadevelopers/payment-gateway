@@ -14,6 +14,7 @@ import (
 type mobileQuoteClaims struct {
 	Side      string  `json:"side"`
 	Asset     string  `json:"asset"`
+	Network   string  `json:"network,omitempty"`
 	Amount    float64 `json:"amount"`
 	Rate      float64 `json:"rate"`
 	Fee       float64 `json:"fee"`
@@ -24,6 +25,7 @@ type mobileQuoteClaims struct {
 func (s *Server) issueMobileQuote(claims mobileQuoteClaims) (string, error) {
 	claims.Side = strings.ToLower(strings.TrimSpace(claims.Side))
 	claims.Asset = strings.ToUpper(strings.TrimSpace(claims.Asset))
+	claims.Network = strings.ToUpper(strings.TrimSpace(claims.Network))
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		return "", err
@@ -35,7 +37,7 @@ func (s *Server) issueMobileQuote(claims mobileQuoteClaims) (string, error) {
 	return "mq_" + encodedPayload + "." + signature, nil
 }
 
-func (s *Server) verifyMobileQuote(raw, side, asset string, amount float64, now time.Time) (*mobileQuoteClaims, error) {
+func (s *Server) verifyMobileQuote(raw, side, asset string, amount float64, now time.Time, networks ...string) (*mobileQuoteClaims, error) {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "mq_") {
 		return nil, fmt.Errorf("quote_id invalido")
@@ -61,6 +63,9 @@ func (s *Server) verifyMobileQuote(raw, side, asset string, amount float64, now 
 	}
 	if !strings.EqualFold(claims.Side, side) || !strings.EqualFold(claims.Asset, asset) {
 		return nil, fmt.Errorf("quote_id nao corresponde a operacao")
+	}
+	if len(networks) > 0 && strings.TrimSpace(claims.Network) != "" && !strings.EqualFold(claims.Network, networks[0]) {
+		return nil, fmt.Errorf("quote_id nao corresponde a rede")
 	}
 	if math.Abs(claims.Amount-amount) > 0.000001 {
 		return nil, fmt.Errorf("quote_id nao corresponde ao valor")
