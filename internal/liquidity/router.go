@@ -39,6 +39,7 @@ type Quote struct {
 	Network            string
 	TokenContract      string
 	TokenDecimals      int
+	DestAddress        string
 	FiatCostBRL        float64
 	ProviderFeeBRL     float64
 	NetworkFeeBRL      float64
@@ -200,6 +201,7 @@ func normalizeQuote(req Request, quote Quote, providerName string) Quote {
 	quote.Asset = strings.ToUpper(strings.TrimSpace(firstNonEmpty(quote.Asset, req.Asset)))
 	quote.Network = normalizeNetwork(firstNonEmpty(quote.Network, req.Network))
 	quote.TokenContract = strings.TrimSpace(firstNonEmpty(quote.TokenContract, req.TokenContract))
+	quote.DestAddress = strings.TrimSpace(firstNonEmpty(quote.DestAddress, req.DestAddress))
 	if quote.TokenDecimals <= 0 {
 		quote.TokenDecimals = req.TokenDecimals
 	}
@@ -225,7 +227,10 @@ func quoteMatchesRequest(req Request, quote Quote) bool {
 	if normalizeNetwork(quote.Network) != normalizeNetwork(req.Network) {
 		return false
 	}
-	if strings.TrimSpace(req.TokenContract) != "" && !strings.EqualFold(strings.TrimSpace(quote.TokenContract), strings.TrimSpace(req.TokenContract)) {
+	if !strings.EqualFold(strings.TrimSpace(quote.TokenContract), strings.TrimSpace(req.TokenContract)) {
+		return false
+	}
+	if strings.TrimSpace(quote.DestAddress) != "" && !strings.EqualFold(strings.TrimSpace(quote.DestAddress), strings.TrimSpace(req.DestAddress)) {
 		return false
 	}
 	if req.TokenDecimals > 0 && quote.TokenDecimals != req.TokenDecimals {
