@@ -57,6 +57,14 @@ type CoinGeckoResponse struct {
 		Usd          float64 `json:"usd"`
 		Brl24hChange float64 `json:"brl_24h_change"`
 	} `json:"avalanche-2"`
+	Solana struct {
+		Usd          float64 `json:"usd"`
+		Brl24hChange float64 `json:"brl_24h_change"`
+	} `json:"solana"`
+	Aptos struct {
+		Usd          float64 `json:"usd"`
+		Brl24hChange float64 `json:"brl_24h_change"`
+	} `json:"aptos"`
 }
 
 type BinanceTickerResponse struct {
@@ -168,7 +176,7 @@ func (pw *PriceWorker) fetchPrice() {
 
 func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]float64, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin,ethereum,binancecoin,chainlink,avalanche-2&vs_currencies=brl,usd,eur&include_24hr_change=true", nil)
+		"https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin,ethereum,binancecoin,chainlink,avalanche-2,solana,aptos&vs_currencies=brl,usd,eur&include_24hr_change=true", nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -205,12 +213,16 @@ func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]flo
 		"BNBUSDT_SOURCE":  data.Binancecoin.Usd,
 		"LINKUSDT_SOURCE": data.Chainlink.Usd,
 		"AVAXUSDT_SOURCE": data.Avalanche.Usd,
+		"SOLUSDT_SOURCE":  data.Solana.Usd,
+		"APTUSDT_SOURCE":  data.Aptos.Usd,
 		"USDT_CHANGE24H":  data.Tether.Brl24hChange,
 		"BTC_CHANGE24H":   data.Bitcoin.Brl24hChange,
 		"ETH_CHANGE24H":   data.Ethereum.Brl24hChange,
 		"BNB_CHANGE24H":   data.Binancecoin.Brl24hChange,
 		"LINK_CHANGE24H":  data.Chainlink.Brl24hChange,
 		"AVAX_CHANGE24H":  data.Avalanche.Brl24hChange,
+		"SOL_CHANGE24H":   data.Solana.Brl24hChange,
+		"APT_CHANGE24H":   data.Aptos.Brl24hChange,
 	}
 
 	if prices["BRL"] <= 0 || prices["USD"] <= 0 {
@@ -239,6 +251,12 @@ func (pw *PriceWorker) fetchCoinGeckoPrices(ctx context.Context) (map[string]flo
 	if data.Avalanche.Usd <= 0 {
 		delete(prices, "AVAXUSDT_SOURCE")
 	}
+	if data.Solana.Usd <= 0 {
+		delete(prices, "SOLUSDT_SOURCE")
+	}
+	if data.Aptos.Usd <= 0 {
+		delete(prices, "APTUSDT_SOURCE")
+	}
 	return prices, "coingecko", nil
 }
 
@@ -251,6 +269,8 @@ func (pw *PriceWorker) fetchBinancePrices(ctx context.Context) (map[string]float
 		"BNBUSDT":  "BNBUSDT",
 		"LINKUSDT": "LINKUSDT",
 		"AVAXUSDT": "AVAXUSDT",
+		"SOLUSDT":  "SOLUSDT",
+		"APTUSDT":  "APTUSDT",
 		"EURUSD":   "EURUSDT",
 	}
 	prices := map[string]float64{"USD": 1, "USDTUSD": 1}
@@ -287,6 +307,14 @@ func (pw *PriceWorker) fetchBinancePrices(ctx context.Context) (map[string]float
 		if symbol == "AVAXUSDT" {
 			prices["AVAXUSDT_SOURCE"] = price
 			prices["AVAX_CHANGE24H"] = change24h
+		}
+		if symbol == "SOLUSDT" {
+			prices["SOLUSDT_SOURCE"] = price
+			prices["SOL_CHANGE24H"] = change24h
+		}
+		if symbol == "APTUSDT" {
+			prices["APTUSDT_SOURCE"] = price
+			prices["APT_CHANGE24H"] = change24h
 		}
 		if symbol == "EURUSDT" && price > 0 {
 			prices["EUR"] = 1 / price
