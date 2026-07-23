@@ -26,12 +26,12 @@ func (s *Server) handleDCACreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tokenSymbol := strings.ToUpper(strings.TrimSpace(req.TokenSymbol))
-	network := normalizeDCANetwork(req.Network)
+	network := normalizeMobileBuyNetwork(req.Network)
 	if network == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC ou POLYGON"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC, POLYGON ou BITCOIN"})
 		return
 	}
-	if !mobileDCAPairSupported(tokenSymbol, network) {
+	if !s.mobileLiquidityPairSupported(tokenSymbol, network) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "par token_symbol/network nao suportado para DCA"})
 		return
 	}
@@ -149,29 +149,6 @@ func (s *Server) handleDCAStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func normalizeDCANetwork(network string) string {
-	switch strings.ToUpper(strings.TrimSpace(network)) {
-	case "", "BEP20", "BEP-20", "BSC":
-		return "BSC"
-	case "POL", "MATIC", "POLYGON":
-		return "POLYGON"
-	default:
-		return ""
-	}
-}
-
-func mobileDCAPairSupported(symbol, network string) bool {
-	if network != "BSC" && network != "POLYGON" {
-		return false
-	}
-	switch strings.ToUpper(strings.TrimSpace(symbol)) {
-	case "USDT", "BTC", "BNB":
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *Server) enrichDCAList(list []models.DCAStrategy) ([]map[string]any, map[string]any) {
 	out := make([]map[string]any, 0, len(list))
 	totalInvested := 0.0
@@ -208,8 +185,9 @@ func (s *Server) enrichDCAList(list []models.DCAStrategy) ([]map[string]any, map
 		"pnl_brl":               pnl,
 		"roi":                   dcaROI(pnl, totalInvested),
 		"chart_points":          dcaChartPoints(totalInvested, currentValue),
-		"supported_tokens":      []string{"USDT", "BTC", "BNB"},
-		"supported_networks":    []string{"BSC", "POLYGON"},
+		"supported_tokens":      s.mobileLiquiditySupportedTokens(),
+		"supported_networks":    s.mobileLiquiditySupportedNetworks(),
+		"supported_pairs":       s.mobileLiquiditySupportedPairs(),
 		"supported_pair_policy": "DCA usa apenas pares com compra real habilitada",
 	}
 }
