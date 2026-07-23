@@ -21,6 +21,8 @@ type Request struct {
 	UserID          string
 	Asset           string
 	Network         string
+	TokenContract   string
+	TokenDecimals   int
 	FiatCurrency    string
 	AmountBRL       float64
 	CryptoAmount    float64
@@ -35,6 +37,8 @@ type Quote struct {
 	ExternalQuoteID    string
 	Asset              string
 	Network            string
+	TokenContract      string
+	TokenDecimals      int
 	FiatCostBRL        float64
 	ProviderFeeBRL     float64
 	NetworkFeeBRL      float64
@@ -166,6 +170,10 @@ func quoteScore(q Quote) float64 {
 func normalizeRequest(req Request) Request {
 	req.Asset = strings.ToUpper(strings.TrimSpace(req.Asset))
 	req.Network = normalizeNetwork(req.Network)
+	req.TokenContract = strings.TrimSpace(req.TokenContract)
+	if req.TokenDecimals <= 0 {
+		req.TokenDecimals = 18
+	}
 	req.FiatCurrency = strings.ToUpper(strings.TrimSpace(req.FiatCurrency))
 	if req.FiatCurrency == "" {
 		req.FiatCurrency = "BRL"
@@ -181,6 +189,10 @@ func normalizeQuote(req Request, quote Quote, providerName string) Quote {
 	quote.ProviderType = strings.ToLower(strings.TrimSpace(quote.ProviderType))
 	quote.Asset = strings.ToUpper(strings.TrimSpace(firstNonEmpty(quote.Asset, req.Asset)))
 	quote.Network = normalizeNetwork(firstNonEmpty(quote.Network, req.Network))
+	quote.TokenContract = strings.TrimSpace(firstNonEmpty(quote.TokenContract, req.TokenContract))
+	if quote.TokenDecimals <= 0 {
+		quote.TokenDecimals = req.TokenDecimals
+	}
 	if quote.CryptoAmount <= 0 {
 		quote.CryptoAmount = req.CryptoAmount
 	}
