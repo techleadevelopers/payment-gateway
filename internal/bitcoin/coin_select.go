@@ -68,6 +68,13 @@ func SelectUTXOs(utxos []UTXO, amountSats, feeRateSatVB, dustLimitSats int64) (
 		fee := int64(EstimateVSize(len(chosen), nOut)) * feeRateSatVB
 		total := amountSats + fee
 
+		// Se nao cobre destino + troco, ainda pode ser uma transacao valida
+		// sem output de troco quando o restante seria dust.
+		feeNoChange := int64(EstimateVSize(len(chosen), 1)) * feeRateSatVB
+		if accumulated >= amountSats+feeNoChange && accumulated-(amountSats+feeNoChange) < dustLimitSats {
+			return chosen, 0, accumulated - amountSats, nil
+		}
+
 		if accumulated >= total {
 			change := accumulated - total
 
