@@ -5,12 +5,12 @@ import (
 )
 
 type Pair struct {
-	Asset           string
-	Network         string
-	ContractAddress string
-	Decimals        int
-	Family          string
-	TokenStandard   string
+	Asset           string `json:"asset"`
+	Network         string `json:"network"`
+	ContractAddress string `json:"contract_address"`
+	Decimals        int    `json:"decimals"`
+	Family          string `json:"family"`
+	TokenStandard   string `json:"token_standard"`
 }
 
 type PairPolicy struct {
