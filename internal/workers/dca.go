@@ -44,6 +44,7 @@ type dcaStrategy struct {
 	ID          string
 	UserID      string
 	TokenSymbol string
+	Network     string
 	AmountBRL   float64
 	Frequency   string
 }
@@ -58,7 +59,7 @@ func (dw *DCAWorker) runDue(ctx context.Context) {
 	defer tx.Rollback() //nolint:errcheck
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, user_id, token_symbol, amount_brl, frequency
+		SELECT id, user_id, token_symbol, network, amount_brl, frequency
 		FROM   dca_strategies
 		WHERE  active = true
 		  AND  next_execution <= NOW()
@@ -74,7 +75,7 @@ func (dw *DCAWorker) runDue(ctx context.Context) {
 	var strategies []dcaStrategy
 	for rows.Next() {
 		var s dcaStrategy
-		if err := rows.Scan(&s.ID, &s.UserID, &s.TokenSymbol, &s.AmountBRL, &s.Frequency); err != nil {
+		if err := rows.Scan(&s.ID, &s.UserID, &s.TokenSymbol, &s.Network, &s.AmountBRL, &s.Frequency); err != nil {
 			slog.Warn("DCAWorker: scan error", "err", err)
 			continue
 		}
@@ -136,7 +137,7 @@ func (dw *DCAWorker) execute(ctx context.Context, s dcaStrategy) {
 		OrderID: s.ID,
 		Payload: map[string]any{
 			"user_id": s.UserID, "token_symbol": s.TokenSymbol,
-			"amount_brl": s.AmountBRL, "source": "dca", "strategy_id": s.ID,
+			"network": s.Network, "amount_brl": s.AmountBRL, "source": "dca", "strategy_id": s.ID,
 		},
 	})
 }
