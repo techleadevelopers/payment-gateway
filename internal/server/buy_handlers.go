@@ -61,16 +61,12 @@ func (s *Server) handleCreateBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	asset := strings.ToUpper(defaultString(req.Asset, "USDT"))
-	if !buyAssetSupported(asset) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "asset nao suportado nesta fase"})
+	deliveryNetwork := normalizeBuyDeliveryNetwork(defaultString(req.Network, s.deliveryNetwork()))
+	if !s.buyLiquidityPairSupported(asset, deliveryNetwork) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "par asset/network nao suportado para compra"})
 		return
 	}
-	deliveryNetwork := normalizeStablecoinNetwork(defaultString(req.Network, s.deliveryNetwork()))
-	if deliveryNetwork != "BSC" && deliveryNetwork != "POLYGON" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "network deve ser BSC ou POLYGON"})
-		return
-	}
-	if !isEVMDeliveryAddress(req.Address) {
+	if !validBuyDeliveryAddress(deliveryNetwork, req.Address) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("endereco %s invalido", deliveryNetwork)})
 		return
 	}
