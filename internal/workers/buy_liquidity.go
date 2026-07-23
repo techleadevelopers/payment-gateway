@@ -225,6 +225,15 @@ func hydrateAndValidateLiquidityPair(cfg *config.Config, pair liquidity.Pair) (l
 			if pair.Decimals == 18 {
 				pair.Decimals = 6
 			}
+		case "USDC:BASE":
+			pair.ContractAddress = strings.TrimSpace(cfg.BaseUsdcContract)
+			pair.Decimals = 6
+		case "USDC:ARBITRUM":
+			pair.ContractAddress = strings.TrimSpace(cfg.ArbitrumUsdcContract)
+			pair.Decimals = 6
+		case "USDC:ETHEREUM":
+			pair.ContractAddress = strings.TrimSpace(cfg.EthereumUsdcContract)
+			pair.Decimals = 6
 		}
 	}
 	pair = liquidity.EnrichPair(pair)
