@@ -103,7 +103,7 @@ func (db *DB) CreateQuote(ctx context.Context, in QuoteInput) (*Quote, error) {
 		strings.ToUpper(strings.TrimSpace(in.Network)),
 		strings.ToUpper(strings.TrimSpace(in.FiatCurrency)), normalizeDBLower(in.PaymentMethod),
 		in.AmountMinor, in.CryptoAmountUnits, in.Rate, in.MarketRate, in.FeeMinor,
-		in.ExpiresAt.UTC(), nullableString(in.APIKeyHash), in.BodyHash)
+		in.ExpiresAt.UTC(), strings.TrimSpace(in.APIKeyHash), in.BodyHash)
 	if err != nil {
 		return nil, err
 	}
