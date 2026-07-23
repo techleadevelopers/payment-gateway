@@ -150,6 +150,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/price", s.handlePrice)
 	mux.HandleFunc("GET /api/quote", s.handleQuote)
 	mux.HandleFunc("POST /api/quote", s.handleQuote)
+	mux.HandleFunc("GET /api/buy/pairs", s.handleBuyPairs)
 	mux.HandleFunc("POST /api/buy", s.handleCreateBuy)
 	mux.HandleFunc("GET /api/buy/{id}", s.handleGetBuy)
 	mux.HandleFunc("GET /api/buy/{id}/stream", s.handleBuyStream)
