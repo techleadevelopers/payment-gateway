@@ -13,6 +13,7 @@ import (
 	"payment-gateway/internal/paymaster"
 	"payment-gateway/internal/psp"
 	"payment-gateway/internal/rpc"
+	"payment-gateway/internal/solana"
 )
 
 // pspHealthProbeInterval controls how often the PSP Router's providers are
@@ -43,11 +44,13 @@ type WorkerManager struct {
 	PaymasterService    *paymaster.Service
 	PSPRouter           *psp.Router // optional; set by cmd/api/main.go before StartAll when Efí is configured
 	// BTC rail — nil when BTC_ENABLED=false or when the BTC config is absent.
-	BTCSvc    *bitcoin.Service
-	BTCWorker *bitcoin.BTCWorker
-	db        *database.DB
-	cfg       *config.Config
-	wg        sync.WaitGroup
+	BTCSvc       *bitcoin.Service
+	BTCWorker    *bitcoin.BTCWorker
+	SolanaSvc    *solana.Service
+	SolanaWorker *solana.Worker
+	db           *database.DB
+	cfg          *config.Config
+	wg           sync.WaitGroup
 }
 
 func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service, pool *rpc.Pool) *WorkerManager {
@@ -68,6 +71,15 @@ func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service
 	// Wire event sink so the BTC worker publishes deposit/withdrawal events to the main bus.
 	if btcWorker != nil {
 		btcWorker.SetSink(&btcEventSinkAdapter{bus: bus})
+	}
+	solanaSvc, err := solana.NewService(db, cfg)
+	if err != nil {
+		slog.Warn("solana: falha ao inicializar servico, rail desabilitada", "error", err)
+		solanaSvc = nil
+	}
+	solanaWorker := solana.NewWorker(solanaSvc)
+	if solanaWorker != nil {
+		solanaWorker.SetSink(&solanaEventSinkAdapter{bus: bus})
 	}
 
 	priceWorker := NewPriceWorker(bus)
@@ -90,6 +102,8 @@ func NewWorkerManager(db *database.DB, cfg *config.Config, mailer *email.Service
 		PaymasterService:    paymasterSvc,
 		BTCSvc:              btcSvc,
 		BTCWorker:           btcWorker,
+		SolanaSvc:           solanaSvc,
+		SolanaWorker:        solanaWorker,
 		db:                  db,
 		cfg:                 cfg,
 	}
@@ -105,6 +119,9 @@ func (wm *WorkerManager) StartAll(ctx context.Context) {
 	}
 	if wm.BTCWorker != nil {
 		workerCount++ // + BTC deposit scanner + confirmation tracker
+	}
+	if wm.SolanaWorker != nil {
+		workerCount++ // + Solana deposit scanner + confirmation tracker
 	}
 	wm.wg.Add(workerCount)
 
@@ -198,6 +215,12 @@ func (wm *WorkerManager) StartAll(ctx context.Context) {
 			wm.BTCWorker.Start(ctx)
 		}()
 	}
+	if wm.SolanaWorker != nil {
+		go func() {
+			defer wm.wg.Done()
+			wm.SolanaWorker.Start(ctx)
+		}()
+	}
 
 	slog.Info("Todos os workers iniciados com sucesso", "count", workerCount)
 }
@@ -279,4 +302,16 @@ func (a *btcEventSinkAdapter) PublishBTCEvent(eventType string, payload map[stri
 		OrderID: orderID,
 		Payload: payload,
 	})
+}
+
+type solanaEventSinkAdapter struct {
+	bus *EventBus
+}
+
+func (a *solanaEventSinkAdapter) PublishSolanaEvent(eventType string, payload map[string]any) {
+	if a.bus == nil {
+		return
+	}
+	orderID, _ := payload["user_id"].(string)
+	a.bus.Publish(Event{Type: eventType, OrderID: orderID, Payload: payload})
 }
