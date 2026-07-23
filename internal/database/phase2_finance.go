@@ -56,14 +56,14 @@ type QuoteInput struct {
 }
 
 type QuoteConsumeInput struct {
-	ID           string
-	Side         string
-	Asset        string
-	Network      string
-	FiatCurrency string
+	ID            string
+	Side          string
+	Asset         string
+	Network       string
+	FiatCurrency  string
 	PaymentMethod string
-	AmountMinor  int64
-	APIKeyHash   string
+	AmountMinor   int64
+	APIKeyHash    string
 }
 
 type IdempotencyRecord struct {
