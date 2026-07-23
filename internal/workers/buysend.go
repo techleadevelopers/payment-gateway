@@ -17,6 +17,7 @@ import (
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/database"
 	"payment-gateway/internal/httpclient"
+	"payment-gateway/internal/liquidity"
 	"payment-gateway/internal/security"
 	"payment-gateway/internal/transactions"
 )
@@ -27,15 +28,18 @@ type BuySendWorker struct {
 	cfg    *config.Config
 	client *http.Client
 	sem    chan struct{}
+	router *liquidity.Router
 }
 
 func NewBuySendWorker(bus *EventBus, db *database.DB, cfg *config.Config) *BuySendWorker {
+	client := httpclient.Default()
 	return &BuySendWorker{
 		bus:    bus,
 		db:     db,
 		cfg:    cfg,
-		client: httpclient.Default(),
+		client: client,
 		sem:    make(chan struct{}, 8),
+		router: newBuyLiquidityRouter(cfg, client),
 	}
 }
 
