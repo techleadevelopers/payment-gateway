@@ -100,6 +100,40 @@ func TestRouterExecuteBestReturnsExecution(t *testing.T) {
 	}
 }
 
+func TestRouterRejectsMismatchedProviderQuote(t *testing.T) {
+	router := NewRouter(
+		quoteProvider{name: "wrong-network", quote: Quote{Asset: "BTC", Network: "SOLANA", TotalCostBRL: 100, CryptoAmount: 0.001}},
+		quoteProvider{name: "underfilled", quote: Quote{Asset: "BTC", Network: "BITCOIN", TotalCostBRL: 99, CryptoAmount: 0.0001}},
+	)
+
+	_, _, err := router.BestQuote(context.Background(), Request{
+		OrderID:      "buy-1",
+		Asset:        "BTC",
+		Network:      "BITCOIN",
+		CryptoAmount: 0.001,
+	})
+	if !errors.Is(err, ErrNoProviderQuote) {
+		t.Fatalf("expected ErrNoProviderQuote, got %v", err)
+	}
+}
+
+func TestRouterRejectsMismatchedExecution(t *testing.T) {
+	router := NewRouter(executableProvider{
+		quoteProvider: quoteProvider{name: "partner-a", quote: Quote{Asset: "SOL", Network: "SOLANA", TotalCostBRL: 100, CryptoAmount: 1}},
+		exec:          Execution{Status: "sent", TxHash: "sig", Network: "APTOS"},
+	})
+
+	_, _, _, err := router.ExecuteBest(context.Background(), Request{
+		OrderID:      "buy-1",
+		Asset:        "SOL",
+		Network:      "SOLANA",
+		CryptoAmount: 1,
+	})
+	if err == nil {
+		t.Fatal("expected execution mismatch error")
+	}
+}
+
 func TestPairPolicyAllowsOnlyExplicitAssetNetworkPairs(t *testing.T) {
 	policy := NewPairPolicy("USDT:BSC:0x55d398326f99059ff775485246999027b3197955:18,AVAX:BSC:0x0000000000000000000000000000000000000001:18,ETH:POLYGON:0x7ceb23fd6bc0add59e62ac25578270cff1b9f619:18")
 
