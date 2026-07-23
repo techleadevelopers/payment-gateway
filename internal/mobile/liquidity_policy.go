@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"payment-gateway/internal/liquidity"
+	"payment-gateway/internal/solana"
 )
 
 func normalizeMobileBuyNetwork(network string) string {
@@ -19,26 +20,42 @@ func normalizeMobileBuyNetwork(network string) string {
 }
 
 func (s *Server) mobileLiquidityPairSupported(asset, network string) bool {
+	_, ok := s.resolveMobileLiquidityPair(asset, network)
+	return ok
+}
+
+func (s *Server) resolveMobileLiquidityPair(asset, network string) (liquidity.Pair, bool) {
 	if s == nil || s.cfg == nil {
-		return false
+		return liquidity.Pair{}, false
 	}
 	asset = strings.ToUpper(strings.TrimSpace(asset))
 	network = normalizeMobileBuyNetwork(network)
 	if asset == "" || network == "" {
-		return false
+		return liquidity.Pair{}, false
 	}
 	if !s.mobileNetworkEnabled(network) {
-		return false
+		return liquidity.Pair{}, false
 	}
 	if !s.mobileBuyPairExecutableWithoutRouter(asset, network) && !s.cfg.LiquidityRouterEnabled {
-		return false
+		return liquidity.Pair{}, false
 	}
 	policy := liquidity.NewPairPolicy(s.cfg.LiquidityAllowedPairs)
 	if !policy.Empty() {
-		return policy.Allows(asset, network)
+		pair, ok := policy.Resolve(asset, network)
+		if !ok {
+			return liquidity.Pair{}, false
+		}
+		return s.hydrateAndValidateMobileLiquidityPair(pair)
 	}
-	return containsCSVFoldMobile(s.cfg.LiquidityAllowedAssets, asset) &&
-		containsCSVFoldMobile(s.cfg.LiquidityAllowedNetworks, network)
+	if !containsCSVFoldMobile(s.cfg.LiquidityAllowedAssets, asset) ||
+		!containsCSVFoldMobile(s.cfg.LiquidityAllowedNetworks, network) {
+		return liquidity.Pair{}, false
+	}
+	pair, ok := liquidity.ParsePair(asset + ":" + network)
+	if !ok {
+		return liquidity.Pair{}, false
+	}
+	return s.hydrateAndValidateMobileLiquidityPair(pair)
 }
 
 func (s *Server) mobileLiquiditySupportedPairs() []map[string]any {
@@ -47,12 +64,26 @@ func (s *Server) mobileLiquiditySupportedPairs() []map[string]any {
 	}
 	policy := liquidity.NewPairPolicy(s.cfg.LiquidityAllowedPairs)
 	pairs := policy.Pairs()
+	if policy.Empty() {
+		for _, asset := range splitMobilePolicyItems(s.cfg.LiquidityAllowedAssets) {
+			for _, network := range splitMobilePolicyItems(s.cfg.LiquidityAllowedNetworks) {
+				pairs = append(pairs, liquidity.Pair{Asset: asset, Network: network})
+			}
+		}
+	}
 	out := make([]map[string]any, 0, len(pairs))
+	seen := map[string]bool{}
 	for _, pair := range pairs {
-		pair = liquidity.EnrichPair(pair)
-		if !s.mobileNetworkEnabled(pair.Network) {
+		resolved, ok := s.resolveMobileLiquidityPair(pair.Asset, pair.Network)
+		if !ok {
 			continue
 		}
+		pair = resolved
+		key := pair.Asset + ":" + pair.Network
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		hotWalletEnabled := s.mobileBuyPairExecutableWithoutRouter(pair.Asset, pair.Network)
 		routerEnabled := s.cfg.LiquidityRouterEnabled
 		buyEnabled := hotWalletEnabled || routerEnabled
@@ -81,6 +112,60 @@ func (s *Server) mobileLiquiditySupportedPairs() []map[string]any {
 		})
 	}
 	return out
+}
+
+func (s *Server) hydrateAndValidateMobileLiquidityPair(pair liquidity.Pair) (liquidity.Pair, bool) {
+	if s == nil || s.cfg == nil {
+		return liquidity.Pair{}, false
+	}
+	pair.Asset = strings.ToUpper(strings.TrimSpace(pair.Asset))
+	pair.Network = normalizeMobileBuyNetwork(pair.Network)
+	pair.ContractAddress = strings.TrimSpace(pair.ContractAddress)
+	if pair.Asset == "" || pair.Network == "" {
+		return liquidity.Pair{}, false
+	}
+	if pair.Decimals <= 0 {
+		pair.Decimals = liquidity.DefaultDecimals(pair.Asset, pair.Network)
+	}
+	if pair.ContractAddress == "" {
+		switch pair.Asset + ":" + pair.Network {
+		case "USDT:BSC":
+			pair.ContractAddress = strings.TrimSpace(s.cfg.BscUsdtContract)
+		case "USDT:POLYGON":
+			pair.ContractAddress = strings.TrimSpace(s.cfg.PolygonUsdtContract)
+			if pair.Decimals == 18 {
+				pair.Decimals = 6
+			}
+		case "USDC:BASE":
+			pair.ContractAddress = strings.TrimSpace(s.cfg.BaseUsdcContract)
+			pair.Decimals = 6
+		case "USDC:ARBITRUM":
+			pair.ContractAddress = strings.TrimSpace(s.cfg.ArbitrumUsdcContract)
+			pair.Decimals = 6
+		case "USDC:ETHEREUM":
+			pair.ContractAddress = strings.TrimSpace(s.cfg.EthereumUsdcContract)
+			pair.Decimals = 6
+		}
+	}
+	pair = liquidity.EnrichPair(pair)
+	if mobileLiquidityPairIsNative(pair) {
+		return pair, true
+	}
+	if liquidity.IsEVMNetwork(pair.Network) {
+		return pair, looksLikeMobileEVMAddress(pair.ContractAddress)
+	}
+	if pair.Network == "SOLANA" {
+		return pair, solana.ValidateAddress(pair.ContractAddress) == nil
+	}
+	if pair.Network == "APTOS" {
+		return pair, looksLikeMobileFixedHexAddress(pair.ContractAddress, 64)
+	}
+	return liquidity.Pair{}, false
+}
+
+func mobileLiquidityPairIsNative(pair liquidity.Pair) bool {
+	return liquidity.IsNativeAsset(pair.Asset, pair.Network) ||
+		(pair.Asset == "BTC" && pair.Network == "BITCOIN")
 }
 
 func (s *Server) mobileBuyPairExecutableWithoutRouter(asset, network string) bool {
@@ -176,6 +261,32 @@ func containsCSVFoldMobile(raw, value string) bool {
 		}
 	}
 	return false
+}
+
+func looksLikeMobileEVMAddress(address string) bool {
+	address = strings.TrimSpace(address)
+	if !strings.HasPrefix(address, "0x") || len(address) != 42 {
+		return false
+	}
+	for _, ch := range address[2:] {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') && (ch < 'A' || ch > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func looksLikeMobileFixedHexAddress(address string, hexLen int) bool {
+	address = strings.TrimSpace(address)
+	if !strings.HasPrefix(address, "0x") || len(address) != hexLen+2 {
+		return false
+	}
+	for _, ch := range address[2:] {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') && (ch < 'A' || ch > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func splitMobilePolicyItems(raw string) []string {
