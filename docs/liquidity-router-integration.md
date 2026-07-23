@@ -59,6 +59,59 @@ AVAX permitido genericamente
 
 O par carrega `asset`, `network`, `contract_address` e `decimals`. Isso impede entregar token certo na rede errada ou aceitar provider com contrato diferente.
 
+## Provider BingX
+
+O BingX route e um provider de inventario cripto, nao um on-ramp PIX. O PIX entra na ChainFX via Efí/banco; a BingX usa saldo spot preexistente da conta ChainFX, normalmente USDT, para comprar o ativo e sacar para o endereco do usuario.
+
+Fluxo:
+
+```text
+PIX confirmado
+BuySendWorker recebe buy.paid
+LiquidityRouter seleciona bingx
+BingX market buy: USDT -> ativo
+BingX withdraw: ativo -> wallet do usuario
+Backend persiste quote, execution, external_order_id, withdrawal_id/tx_hash
+```
+
+Variaveis:
+
+```env
+BINGX_ENABLED=false
+BINGX_API_BASE_URL=https://open-api.bingx.com
+BINGX_API_KEY=
+BINGX_API_SECRET=
+BINGX_RECV_WINDOW_MS=5000
+BINGX_ALLOWED_ASSETS=BTC,ETH,BNB,SOL,LINK,AVAX
+BINGX_ALLOWED_NETWORKS=BITCOIN,BSC,POLYGON,SOLANA,BASE,ARBITRUM,ETHEREUM
+BINGX_TAKER_FEE_BPS=10
+BINGX_WITHDRAW_FEE_USDT=0
+BINGX_MARKET_BUY_MODE=quantity
+BINGX_TRADE_ENABLED=false
+BINGX_WITHDRAW_ENABLED=false
+```
+
+Ativacao segura:
+
+1. Criar API key na BingX em API Management com permissao Spot Trading.
+2. Preencher `BINGX_API_KEY` e `BINGX_API_SECRET` somente em Railway/.env.
+3. Subir com `BINGX_ENABLED=true`, `BINGX_TRADE_ENABLED=false`, `BINGX_WITHDRAW_ENABLED=false` para validar quote.
+4. Ligar `BINGX_TRADE_ENABLED=true` com valor pequeno e `BINGX_WITHDRAW_ENABLED=false`; a ordem fica `pending_withdrawal` apos compra spot.
+5. Para saque automatico, habilitar permissao Withdraw na key, vincular o IP fixo da infra e so entao ligar `BINGX_WITHDRAW_ENABLED=true`.
+
+Probe seguro sem trade/withdraw:
+
+```http
+POST /api/admin/liquidity/bingx/probe
+Authorization: Bearer <admin-session-ou-sk_live>
+X-Admin-Console-Key: <ADMIN_CONSOLE_KEY>
+Content-Type: application/json
+
+{"asset":"SOL","network":"SOLANA","cryptoAmount":0.01}
+```
+
+Esse probe chama market data publico e endpoints privados assinados de conta/balance. Ele nao chama `trade/order` nem `withdraw/apply`.
+
 ## Rotas Publicas BUY
 
 ### Catalogo
