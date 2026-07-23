@@ -65,6 +65,7 @@ type Config struct {
 	BingXAllowedNetworks          string
 	BingXTakerFeeBps              int
 	BingXWithdrawFeeUSDT          float64
+	BingXMarketBuyMode            string
 	BingXTradeEnabled             bool
 	BingXWithdrawEnabled          bool
 	SellRateBps                   int
@@ -303,6 +304,7 @@ func LoadConfig() *Config {
 		BingXAllowedNetworks:          strings.ToUpper(getEnv("BINGX_ALLOWED_NETWORKS", "BITCOIN,BSC,POLYGON,SOLANA,BASE,ARBITRUM,ETHEREUM")),
 		BingXTakerFeeBps:              getEnvAsInt("BINGX_TAKER_FEE_BPS", 10),
 		BingXWithdrawFeeUSDT:          getEnvAsFloat("BINGX_WITHDRAW_FEE_USDT", 0),
+		BingXMarketBuyMode:            strings.ToLower(getEnv("BINGX_MARKET_BUY_MODE", "quantity")),
 		BingXTradeEnabled:             getEnvAsBool("BINGX_TRADE_ENABLED", false),
 		BingXWithdrawEnabled:          getEnvAsBool("BINGX_WITHDRAW_ENABLED", false),
 		SellRateBps:                   getEnvAsInt("SELL_RATE_BPS", 0),
