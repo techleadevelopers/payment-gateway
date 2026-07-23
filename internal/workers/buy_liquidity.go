@@ -30,6 +30,24 @@ func newBuyLiquidityRouter(cfg *config.Config, client *http.Client) *liquidity.R
 			Client:       client,
 		})
 	}
+	if cfg.BingXEnabled {
+		providers = append(providers, &liquidity.BingXProvider{
+			BaseURL:            cfg.BingXAPIBaseURL,
+			APIKey:             cfg.BingXAPIKey,
+			APISecret:          cfg.BingXAPISecret,
+			RecvWindowMS:       cfg.BingXRecvWindowMs,
+			AllowedAssets:      cfg.BingXAllowedAssets,
+			AllowedNetworks:    cfg.BingXAllowedNetworks,
+			TakerFeeBps:        cfg.BingXTakerFeeBps,
+			WithdrawFeeUSDT:    cfg.BingXWithdrawFeeUSDT,
+			MarketBuyMode:      cfg.BingXMarketBuyMode,
+			TradeEnabled:       cfg.BingXTradeEnabled,
+			WithdrawEnabled:    cfg.BingXWithdrawEnabled,
+			Client:             client,
+			DeliverySLASeconds: 900,
+			ReliabilityBps:     9200,
+		})
+	}
 	return liquidity.NewRouter(providers...)
 }
 
