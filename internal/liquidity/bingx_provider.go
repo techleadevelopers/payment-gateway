@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultBingXBaseURL = "https://open-api.bingx.com"
-	bingXProviderName  = "bingx"
+	bingXProviderName   = "bingx"
 )
 
 type BingXProvider struct {
@@ -31,6 +31,7 @@ type BingXProvider struct {
 	AllowedNetworks     string
 	TakerFeeBps         int
 	WithdrawFeeUSDT     float64
+	MarketBuyMode       string
 	TradeEnabled        bool
 	WithdrawEnabled     bool
 	Client              *http.Client
@@ -137,7 +138,7 @@ func (p *BingXProvider) Execute(ctx context.Context, req Request, quote Quote) (
 	if amount <= 0 {
 		return Execution{}, fmt.Errorf("bingx: quantidade invalida")
 	}
-	orderID, orderPayload, err := p.placeMarketBuy(ctx, symbol, amount)
+	orderID, orderPayload, err := p.placeMarketBuy(ctx, symbol, amount, parseFloatAny(quote.Metadata["providerCostUSDT"]))
 	if err != nil {
 		return Execution{}, err
 	}
@@ -210,12 +211,19 @@ func (p *BingXProvider) depthAskUSDT(ctx context.Context, symbol string) (float6
 	return parseBingXPrice(raw)
 }
 
-func (p *BingXProvider) placeMarketBuy(ctx context.Context, symbol string, amount float64) (string, map[string]any, error) {
+func (p *BingXProvider) placeMarketBuy(ctx context.Context, symbol string, amount, providerCostUSDT float64) (string, map[string]any, error) {
 	params := map[string]string{
-		"symbol":   symbol,
-		"side":     "BUY",
-		"type":     "MARKET",
-		"quantity": formatBingXAmount(amount),
+		"symbol": symbol,
+		"side":   "BUY",
+		"type":   "MARKET",
+	}
+	if strings.EqualFold(strings.TrimSpace(p.MarketBuyMode), "quote_order_qty") {
+		if providerCostUSDT <= 0 {
+			return "", nil, fmt.Errorf("bingx: providerCostUSDT ausente para quote_order_qty")
+		}
+		params["quoteOrderQty"] = formatBingXAmount(providerCostUSDT)
+	} else {
+		params["quantity"] = formatBingXAmount(amount)
 	}
 	raw, err := p.signedRequest(ctx, http.MethodPost, "/openApi/spot/v1/trade/order", params)
 	if err != nil {
