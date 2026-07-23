@@ -51,6 +51,8 @@ func (p StaticProvider) Quote(_ context.Context, req Request) (Quote, error) {
 		ExternalQuoteID:    "static-" + req.OrderID,
 		Asset:              req.Asset,
 		Network:            req.Network,
+		TokenContract:      req.TokenContract,
+		TokenDecimals:      req.TokenDecimals,
 		FiatCostBRL:        baseCost,
 		ProviderFeeBRL:     p.FeeBRL,
 		NetworkFeeBRL:      p.NetworkFeeBRL,
