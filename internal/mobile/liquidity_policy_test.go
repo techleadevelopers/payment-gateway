@@ -144,3 +144,32 @@ func TestMobileLiquiditySupportedPairsKeepsUSDTBSCWithExtendedProductionPairs(t 
 		t.Fatalf("expected supported pairs to include USDT:BSC, got %+v", s.mobileLiquiditySupportedPairs())
 	}
 }
+
+func TestMobileLiquiditySupportedPairsKeepsUSDTBSCWhenAllowedPairsValueIsQuoted(t *testing.T) {
+	const allowedPairs = `"USDT:BSC:0x55d398326f99059fF775485246999027B3197955:18,BTC:BITCOIN::8,SOL:SOLANA::9"`
+	s := &Server{cfg: &config.Config{
+		LiquidityRouterEnabled:   true,
+		LiquidityAllowedPairs:    allowedPairs,
+		LiquidityAllowedAssets:   "USDT,BTC,SOL",
+		LiquidityAllowedNetworks: "BSC,BITCOIN,SOLANA",
+		SupportedNetworks:        "BSC,BITCOIN,SOLANA",
+		BscUsdtContract:          "0x55d398326f99059fF775485246999027B3197955",
+		LiquidityProviderURLs:    "mock=https://liquidity-provider.local",
+	}}
+
+	if !s.mobileBuyLiquidityPairSupported("USDT", "BSC") {
+		t.Fatalf("expected quoted env value to keep USDT:BSC buy-enabled")
+	}
+	foundUSDTBSC := false
+	for _, pair := range s.mobileLiquiditySupportedPairs() {
+		if pair["asset"] == "USDT" && pair["network"] == "BSC" {
+			foundUSDTBSC = true
+			if pair["buy_enabled"] != true {
+				t.Fatalf("expected quoted USDT:BSC buy_enabled=true, got %+v", pair)
+			}
+		}
+	}
+	if !foundUSDTBSC {
+		t.Fatalf("expected supported pairs to include USDT:BSC, got %+v", s.mobileLiquiditySupportedPairs())
+	}
+}
