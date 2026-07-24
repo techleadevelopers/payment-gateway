@@ -34,6 +34,8 @@ type mobileWalletToken struct {
 	UpdatedAt time.Time
 }
 
+var errMobileTransferAlreadyRecorded = errors.New("mobile wallet transfer already recorded")
+
 type createMobileUserInput struct {
 	Email               string
 	PasswordHash        string
@@ -322,13 +324,19 @@ func (q *mobileQueries) RecordMobileWalletTransfer(ctx context.Context, userID, 
 	if err := q.ensureMobileWalletTransferSchema(ctx); err != nil {
 		return err
 	}
-	_, err := q.sql.ExecContext(ctx, `
+	res, err := q.sql.ExecContext(ctx, `
                 INSERT INTO mobile_wallet_transfers
                   (user_id, from_address, to_address, token_contract, asset, network, amount, amount_raw, tx_hash, idempotency_key)
                 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10,''))
-                ON CONFLICT (tx_hash) DO NOTHING`,
+                ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`,
 		userID, from, to, token, asset, network, amount, amountRaw, txHash, idempotencyKey)
-	return err
+	if err != nil {
+		return err
+	}
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		return errMobileTransferAlreadyRecorded
+	}
+	return nil
 }
 
 func (q *mobileQueries) UpsertWalletToken(ctx context.Context, userID, network, contract, symbol, name string, decimals int) (*mobileWalletToken, error) {
@@ -423,6 +431,13 @@ func (q *mobileQueries) ensureMobileWalletTransferSchema(ctx context.Context) er
 	_, err = q.sql.ExecContext(ctx, `
                 CREATE INDEX IF NOT EXISTS idx_mobile_wallet_transfers_user_created
                   ON mobile_wallet_transfers (user_id, created_at DESC)`)
+	if err != nil {
+		return err
+	}
+	_, err = q.sql.ExecContext(ctx, `
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_mobile_wallet_transfers_user_idempotency
+                  ON mobile_wallet_transfers (user_id, idempotency_key)
+                  WHERE idempotency_key IS NOT NULL`)
 	return err
 }
 
