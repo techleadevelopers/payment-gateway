@@ -87,9 +87,6 @@ func (s *Server) buyPairHasExecutionRoute(pair liquidity.Pair) bool {
 	if strings.TrimSpace(s.cfg.BingXAPIKey) == "" || strings.TrimSpace(s.cfg.BingXAPISecret) == "" {
 		return false
 	}
-	if strings.EqualFold(pair.Asset, "USDT") {
-		return false
-	}
 	return containsCSVFoldServer(s.cfg.BingXAllowedAssets, pair.Asset) &&
 		containsCSVFoldServer(s.cfg.BingXAllowedNetworks, pair.Network)
 }
