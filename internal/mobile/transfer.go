@@ -124,6 +124,34 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 
 	recipient := common.HexToAddress(to)
 	var tokenAddress common.Address
+	if !nativeTransfer {
+		tokenAddress = common.HexToAddress(token)
+	}
+	tokenContract := tokenAddress.Hex()
+	mode := "backend_custodial_erc20_transfer"
+	if nativeTransfer {
+		tokenContract = ""
+		mode = "backend_custodial_native_evm_transfer"
+	}
+
+	// Pre-record the transfer as pending BEFORE broadcasting on-chain.
+	// This ensures that if the HTTP response fails after a successful broadcast,
+	// the idempotency key will block a duplicate retry from double-sending.
+	idempKey := idempotencyKeyFromCtx(r.Context())
+	_ = mobileDB(s.db).RecordMobileWalletTransfer(
+		r.Context(),
+		user.ID,
+		from,
+		recipient.Hex(),
+		tokenContract,
+		asset,
+		network,
+		req.Amount,
+		rawAmount.String(),
+		"pending:"+idempKey, // placeholder until broadcast confirms
+		idempKey,
+	)
+
 	var txHash string
 	if nativeTransfer {
 		txHash, err = s.sendCustodialMobileNativeTransfer(
@@ -136,7 +164,6 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 			int64(chainID),
 		)
 	} else {
-		tokenAddress = common.HexToAddress(token)
 		txHash, err = s.sendCustodialMobileERC20Transfer(
 			r.Context(),
 			keyRecord.EncryptedPrivateKey,
@@ -149,29 +176,22 @@ func (s *Server) handleWalletTransfer(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if err != nil {
+		// Update the pending record with the failure so the idempotency entry reflects reality.
+		_, _ = s.db.SQL.ExecContext(r.Context(), `
+			UPDATE mobile_wallet_transfers
+			SET tx_hash = $1, status = 'failed'
+			WHERE idempotency_key = $2
+		`, "failed:"+err.Error(), idempKey)
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
-	tokenContract := tokenAddress.Hex()
-	mode := "backend_custodial_erc20_transfer"
-	if nativeTransfer {
-		tokenContract = ""
-		mode = "backend_custodial_native_evm_transfer"
-	}
 
-	_ = mobileDB(s.db).RecordMobileWalletTransfer(
-		r.Context(),
-		user.ID,
-		from,
-		recipient.Hex(),
-		tokenContract,
-		asset,
-		network,
-		req.Amount,
-		rawAmount.String(),
-		txHash,
-		idempotencyKeyFromCtx(r.Context()),
-	)
+	// Broadcast succeeded — update the record with the real txHash.
+	_, _ = s.db.SQL.ExecContext(r.Context(), `
+		UPDATE mobile_wallet_transfers
+		SET tx_hash = $1, status = 'submitted'
+		WHERE idempotency_key = $2
+	`, txHash, idempKey)
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"mode":           mode,
