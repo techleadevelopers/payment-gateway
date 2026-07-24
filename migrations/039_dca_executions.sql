@@ -6,9 +6,9 @@ CREATE TABLE IF NOT EXISTS dca_executions (
     strategy_id   UUID NOT NULL REFERENCES dca_strategies(id) ON DELETE CASCADE,
     buy_order_id  UUID REFERENCES buy_orders(id) ON DELETE SET NULL,
     status        TEXT NOT NULL DEFAULT 'pending',   -- pending | completed | failed
-    amount_brl    NUMERIC(18,8) NOT NULL,
-    crypto_amount NUMERIC(18,8),
-    rate_brl      NUMERIC(18,8),
+    amount_brl    NUMERIC(38,18) NOT NULL,
+    crypto_amount NUMERIC(38,18),
+    rate_brl      NUMERIC(38,18),
     error_message TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
