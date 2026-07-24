@@ -122,16 +122,20 @@ func TestBingXExecutePlacesSignedMarketBuyAndStopsBeforeWithdraw(t *testing.T) {
 	}
 }
 
-func TestBingXRejectsDirectUSDT(t *testing.T) {
+func TestBingXQuotesDirectUSDTWithoutSpotPair(t *testing.T) {
 	provider := &BingXProvider{AllowedAssets: "USDT,SOL", AllowedNetworks: "BSC,SOLANA"}
-	_, err := provider.Quote(context.Background(), Request{
+	quote, err := provider.Quote(context.Background(), Request{
+		OrderID:      "buy-usdt",
 		Asset:        "USDT",
 		Network:      "BSC",
 		CryptoAmount: 10,
 		DestAddress:  "0x0000000000000000000000000000000000000001",
 	})
-	if err == nil {
-		t.Fatal("expected USDT direct route to be rejected")
+	if err != nil {
+		t.Fatalf("expected USDT direct route to be quoted: %v", err)
+	}
+	if quote.Asset != "USDT" || quote.CryptoAmount != 10 || quote.Metadata["symbol"] != "USDT" {
+		t.Fatalf("unexpected USDT quote: %+v", quote)
 	}
 }
 
