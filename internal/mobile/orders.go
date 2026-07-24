@@ -54,16 +54,31 @@ func (s *Server) handleMobileBuyQuote(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao indisponivel"})
 		return
 	}
-	fee, feeBreakdown := s.mobileBuyFee(req.AmountBRL)
+	totalMargin, feeBreakdown := s.mobileBuyFee(req.AmountBRL)
+	fee := s.mobileBuyVisibleFee(req.AmountBRL, totalMargin)
+	embeddedSpread := roundMoney(totalMargin - fee)
+	quoteBRL := req.AmountBRL - embeddedSpread
+	if quoteBRL <= 0 {
+		quoteBRL = req.AmountBRL
+		embeddedSpread = 0
+	}
+	cryptoAmount := roundCrypto(quoteBRL / rate)
+	if cryptoAmount <= 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "cotacao indisponivel"})
+		return
+	}
+	displayRate := roundRateLocal(req.AmountBRL / cryptoAmount)
 	totalFiat := roundMoney(req.AmountBRL + fee)
-	cryptoAmount := roundCrypto(req.AmountBRL / rate)
+	feeBreakdown["display_fee_brl"] = fee
+	feeBreakdown["embedded_spread_brl"] = embeddedSpread
+	feeBreakdown["total_margin_brl"] = totalMargin
 	expiresAt := time.Now().UTC().Add(time.Duration(s.mobileRateLockSec()) * time.Second)
 	quoteID, err := s.issueMobileQuote(mobileQuoteClaims{
 		Side:      "buy",
 		Asset:     asset,
 		Network:   network,
 		Amount:    req.AmountBRL,
-		Rate:      rate,
+		Rate:      displayRate,
 		Fee:       fee,
 		Total:     totalFiat,
 		ExpiresAt: expiresAt.Unix(),
@@ -87,7 +102,7 @@ func (s *Server) handleMobileBuyQuote(w http.ResponseWriter, r *http.Request) {
 		"crypto_amount":  cryptoAmount,
 		"cryptoAmount":   cryptoAmount,
 		"receive_amount": cryptoAmount,
-		"rate":           rate,
+		"rate":           displayRate,
 		"market_rate":    roundRateLocal(marketRate),
 		"marketRate":     roundRateLocal(marketRate),
 		"feeBreakdown":   feeBreakdown,
@@ -210,8 +225,8 @@ func (s *Server) handleMobileBuy(w http.ResponseWriter, r *http.Request) {
 		"address":       req.DestAddress,
 		"network":       network,
 		"paymentMethod": req.PaymentMethod,
-		"quoteId":       req.QuoteID,
 		"rateLocked":    claims.Rate,
+		"feeBRL":        claims.Fee,
 		"paymentToken":  firstNonEmptyStr(req.PaymentToken, req.Card.PaymentToken),
 		"cardBrand":     firstNonEmptyStr(req.CardBrand, req.Card.Brand),
 		"installments":  firstPositiveIntMobile(req.Installments, req.Card.Installments, 1),
@@ -810,6 +825,20 @@ func (s *Server) mobileBuyFee(amountBRL float64) (float64, map[string]any) {
 		"min_fee_brl":     minFee,
 		"total_fee_brl":   totalFee,
 	}
+}
+
+func (s *Server) mobileBuyVisibleFee(amountBRL, totalMarginBRL float64) float64 {
+	if totalMarginBRL <= 0 {
+		return 0
+	}
+	fee := math.Ceil((amountBRL*0.0185+1.99)*100) / 100
+	if fee < 4.99 {
+		fee = 4.99
+	}
+	if fee > totalMarginBRL {
+		return roundMoney(totalMarginBRL)
+	}
+	return fee
 }
 
 func (s *Server) mobileSellQuote(amountUSDT, marketRate float64) (sellRate, payoutBRL, spreadBRL float64, spreadBps int) {
