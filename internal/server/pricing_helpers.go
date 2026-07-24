@@ -44,6 +44,66 @@ func (s *Server) buyFeeBreakdown(amountBRL float64) buyFeeBreakdown {
 	}
 }
 
+type buyQuotePricing struct {
+	Rate           float64
+	MarketRate     float64
+	FeeFiat        float64
+	TotalFiat      float64
+	PayoutFiat     float64
+	CryptoAmount   float64
+	TotalMargin    float64
+	EmbeddedSpread float64
+	FeeBreakdown   buyFeeBreakdown
+}
+
+func (s *Server) buyQuotePricing(amountFiat float64, fiatCurrency string, rate float64, marketRate float64) buyQuotePricing {
+	totalMargin := s.transactionFee(amountFiat, fiatCurrency, rate)
+	visibleFee := totalMargin
+	if strings.EqualFold(fiatCurrency, "BRL") {
+		visibleFee = s.buyVisibleFee(amountFiat, totalMargin)
+	}
+	embeddedSpread := round2(totalMargin - visibleFee)
+	quoteFiat := amountFiat - embeddedSpread
+	if quoteFiat <= 0 {
+		quoteFiat = amountFiat
+		embeddedSpread = 0
+	}
+	cryptoAmount := quoteFiat / rate
+	displayRate := rate
+	if cryptoAmount > 0 {
+		displayRate = roundRate(amountFiat / cryptoAmount)
+	}
+	breakdown := s.buyFeeBreakdown(amountFiat)
+	breakdown.DisplayFee = visibleFee
+	breakdown.EmbeddedSpread = embeddedSpread
+	breakdown.TotalMargin = totalMargin
+	return buyQuotePricing{
+		Rate:           displayRate,
+		MarketRate:     marketRate,
+		FeeFiat:        visibleFee,
+		TotalFiat:      round2(amountFiat + visibleFee),
+		PayoutFiat:     amountFiat,
+		CryptoAmount:   cryptoAmount,
+		TotalMargin:    totalMargin,
+		EmbeddedSpread: embeddedSpread,
+		FeeBreakdown:   breakdown,
+	}
+}
+
+func (s *Server) buyVisibleFee(amountBRL, totalMarginBRL float64) float64 {
+	if totalMarginBRL <= 0 {
+		return 0
+	}
+	fee := math.Ceil((amountBRL*0.0185+1.99)*100) / 100
+	if fee < 4.99 {
+		fee = 4.99
+	}
+	if fee > totalMarginBRL {
+		return round2(totalMarginBRL)
+	}
+	return fee
+}
+
 func (s *Server) buyFeeBreakdownMinor(amountBRL money.MoneyMinor) (string, int, money.MoneyMinor, money.MoneyMinor, money.MoneyMinor, money.MoneyMinor) {
 	bps := s.cfg.BuyTier3Bps
 	tier := "tier3"
