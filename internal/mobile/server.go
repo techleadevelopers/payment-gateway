@@ -5,7 +5,9 @@ package mobile
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -239,11 +241,24 @@ func isMobileAllowedOrigin(origin, configured string) bool {
 	if normalized == "https://chainfx.store" || normalized == "https://www.chainfx.store" {
 		return true
 	}
-	if strings.HasPrefix(normalized, "http://localhost:") || strings.HasPrefix(normalized, "http://127.0.0.1:") {
+	if isMobileLocalDevOrigin(normalized) {
 		return true
 	}
 	return strings.HasPrefix(normalized, "https://swapped-cryptocurrensy-") &&
 		strings.HasSuffix(normalized, "-d3v-techle4ds-projects.vercel.app")
+}
+
+func isMobileLocalDevOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "localhost" || host == "127.0.0.1" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsPrivate()
 }
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
